@@ -1,0 +1,39 @@
+# 전략 파라미터 - .kis.yaml 포맷과 호환되도록 단순화
+# 사용:
+#   from src.config import settings
+#   import yaml
+#   with open("configs/strategy.yaml") as f: cfg = yaml.safe_load(f)
+
+strategies:
+  golden_cross:
+    short_window: 5
+    long_window: 20
+    # 추가 필터 (구현 시)
+    # min_volume: 1000000        # 일거래량 최소
+    # trend_filter_ma: 60        # 이 MA 위에서만 진입
+
+  # 다음 전략 추가 시 여기에 정의
+  # momentum:
+  #   lookback: 20
+  #   top_n: 5
+
+universe:
+  # 백테스트·봇이 대상으로 삼을 종목 목록
+  default:
+    - { symbol: "005930", name: "삼성전자" }
+    - { symbol: "000660", name: "SK하이닉스" }
+    - { symbol: "035420", name: "NAVER" }
+    - { symbol: "035720", name: "카카오" }
+    - { symbol: "005380", name: "현대차" }
+
+risk:
+  # 종목 1개당 자본의 최대 비율
+  max_position_weight: 0.20
+  # 최대 동시 포지션 수
+  max_concurrent_positions: 5
+  # 손절 (% 단위)
+  stop_loss_pct: 0.03
+  # 익절
+  take_profit_pct: 0.05
+  # 일일 손실 한도 (이 % 손실 시 봇 자동 정지)
+  daily_loss_limit_pct: 0.05
