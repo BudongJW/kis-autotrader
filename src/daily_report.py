@@ -1,4 +1,4 @@
-"""일일 실적 기록 — 매일 장 마감 후 실행.
+"""일일 실적 기록 + 장 후 학습 — 매일 장 마감 후 실행.
 
 기록 내용:
   - 당일 거래 결과 (매수/매도 가격, 수량, 손익)
@@ -6,7 +6,9 @@
   - 시장 환경 분석 결과
   - 대상 ETF 시세 정보
 
-이 데이터가 축적되면 옵티마이저의 학습 데이터가 된다.
+학습:
+  - TA 신호 적중률 평가 → 가중치 피드백
+  - 시장 패턴 분석
 """
 
 from __future__ import annotations
@@ -98,6 +100,14 @@ def main() -> None:
         ])
 
     print(f"  기록 완료: {DAILY_LOG_PATH}")
+
+    # 장 후 학습 실행
+    print()
+    try:
+        from src.market_learner import post_market
+        post_market(client)
+    except Exception as e:
+        print(f"  장 후 학습 실패: {e}")
 
 
 if __name__ == "__main__":

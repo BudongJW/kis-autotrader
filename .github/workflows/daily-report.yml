@@ -50,6 +50,13 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      - name: Download learning data
+        uses: actions/download-artifact@v4
+        with:
+          name: learning-data
+          path: logs/
+        continue-on-error: true
+
       - name: Run daily report
         env:
           PYTHONPATH: '.'
@@ -63,3 +70,14 @@ jobs:
           path: logs/daily_report.csv
           overwrite: true
           retention-days: 180
+
+      - name: Upload learning data
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-data
+          path: |
+            logs/market_history.json
+            logs/ta_accuracy.json
+          overwrite: true
+          retention-days: 180
+        if: always()

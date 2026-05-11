@@ -1,0 +1,101 @@
+name: Market Learning
+
+on:
+  schedule:
+    # 장 전 학습: 08:30 KST (= 23:30 전날 UTC)
+    - cron: '30 23 * * 0-4'
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'pre (장전) / post (장후)'
+        required: false
+        default: 'pre'
+
+env:
+  TZ: Asia/Seoul
+
+permissions:
+  contents: write
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env
+        run: |
+          cat > .env << 'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+
+      - name: Download learning data
+        uses: actions/download-artifact@v4
+        with:
+          name: learning-data
+          path: logs/
+        continue-on-error: true
+
+      - name: Download token cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kis-token-cache
+          path: .
+        continue-on-error: true
+
+      - name: Run market learning
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          PHASE="${{ github.event.inputs.phase || 'pre' }}"
+          python -m src.market_learner --phase $PHASE
+
+      - name: Commit config updates
+        run: |
+          git config user.name "kis-autotrader-bot"
+          git config user.email "bot@kis-autotrader"
+          git add configs/strategy.yaml
+          if git diff --cached --quiet; then
+            echo "No config changes"
+          else
+            git commit -m "auto: 시장 학습 파라미터 갱신 $(date +'%Y-%m-%d %H:%M')"
+            git push
+          fi
+
+      - name: Upload learning data
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-data
+          path: |
+            logs/market_history.json
+            logs/ta_accuracy.json
+          overwrite: true
+          retention-days: 180
+        if: always()
+
+      - name: Upload token cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: kis-token-cache
+          path: .kis_token_cache.json
+          overwrite: true
+          retention-days: 1
+        if: always()

@@ -35,6 +35,7 @@ from src.risk_manager import (
     check_stop_loss, check_turbulence, record_buy, remove_position,
     load_positions, get_strategy_expectancy,
 )
+from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.utils.logger import log
 
 MARKET_OPEN = dtime(9, 0)
@@ -359,13 +360,27 @@ def main() -> None:
         print("  시장 변동성 급등. 신규 매수 차단. 현금 보유.")
         return
 
+    # ── 시장 신뢰도 + 장중 적응 ──
+    confidence = get_market_confidence()
+    intraday = get_intraday_regime_adjustment(client)
+    print(f"  [시장 신뢰도] {confidence:.0%} | {intraday['reason']}")
+
+    # 신뢰도가 낮으면 투자 비율 축소
+    size_factor = max(0.3, confidence)  # 최소 30%, 최대 100%
+    if intraday.get("reduce_size"):
+        size_factor *= 0.7  # 장중 급변 시 추가 30% 축소
+
     # ETF 보유 여부에 따라 예산 동적 배분
     etf_held = any(s in universe_syms for s in holdings)
     surge_held = any(s not in universe_syms for s in holdings)
 
-    etf_budget = etf_budget_cap if not etf_held else 0
+    etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
     remaining = cash - etf_budget if not etf_held else cash
-    surge_budget = min(surge_budget_cap, remaining) if not surge_held else 0
+    surge_budget = int(min(surge_budget_cap, remaining) * size_factor) if not surge_held else 0
+
+    if size_factor < 1.0:
+        print(f"  [배분 조정] 신뢰도 반영: ETF {etf_budget:,}원, 급등주 {surge_budget:,}원 "
+              f"(x{size_factor:.0%})")
 
     # 전략 A: ETF
     etf_used = run_etf_strategy(client, etf_budget, holdings, universe, args.dry_run)
