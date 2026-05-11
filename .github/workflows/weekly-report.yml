@@ -1,25 +1,18 @@
-name: KIS AutoTrader
+name: Weekly Performance Report
 
 on:
   schedule:
-    # KST = UTC+9
-    # 09:00~15:30 KST = 00:00~06:30 UTC
-    # 평일(월~금) 5분 간격 실행
-    - cron: '*/5 0-6 * * 1-5'
+    # 매주 토요일 09:00 KST (금요일 24:00 UTC)
+    - cron: '0 0 * * 6'
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'dry-run 모드 (true/false)'
-        required: false
-        default: 'false'
 
 env:
   TZ: Asia/Seoul
 
 jobs:
-  trade:
+  report:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v4
@@ -50,22 +43,33 @@ jobs:
           path: logs/
         continue-on-error: true
 
-      - name: Run bot (single check)
+      - name: Generate report
         env:
           PYTHONPATH: '.'
-          PYTHONIOENCODING: 'utf-8'
         run: |
-          DRY_RUN_FLAG=""
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            DRY_RUN_FLAG="--dry-run"
-          fi
-          python -m src.bot.single_run $DRY_RUN_FLAG
+          python -c "
+          from src.tracker import get_summary
+          from src.kis_client import KISClient
+          from src.bot.single_run import load_universe, get_available_cash
+
+          client = KISClient()
+          cash = get_available_cash(client)
+          s = get_summary()
+          universe = load_universe()
+
+          print('=== 주간 성과 리포트 ===')
+          print(f'현재 예수금: {cash:,}원')
+          print(f'누적 거래: {s[\"total_trades\"]}건')
+          print(f'총 매수금: {s[\"total_invested\"]:,}원')
+          print(f'총 매도금: {s[\"total_returned\"]:,}원')
+          print(f'손익: {s[\"pnl\"]:+,}원 ({s[\"pnl_pct\"]:+.2f}%)')
+          print(f'대상 종목: {[u[\"name\"] for u in universe]}')
+          "
 
       - name: Upload trade log
         uses: actions/upload-artifact@v4
         with:
           name: trade-log
           path: logs/trades.csv
-          overwrite: true
           retention-days: 90
         if: always()
