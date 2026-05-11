@@ -18,13 +18,17 @@ strategies:
   #   top_n: 5
 
 universe:
-  # 백테스트·봇이 대상으로 삼을 종목 목록
+  # 변동성 돌파 백테스트(2024~2025) Sharpe > 0 상위 8종목
+  # 마지막 갱신: 2026-05-11
   default:
-    - { symbol: "005930", name: "삼성전자" }
-    - { symbol: "000660", name: "SK하이닉스" }
-    - { symbol: "035420", name: "NAVER" }
-    - { symbol: "035720", name: "카카오" }
-    - { symbol: "005380", name: "현대차" }
+    - { symbol: "010130", name: "고려아연" }      # Sharpe 1.37
+    - { symbol: "005930", name: "삼성전자" }      # Sharpe 1.10
+    - { symbol: "000660", name: "SK하이닉스" }    # Sharpe 0.93
+    - { symbol: "035900", name: "JYP Ent." }    # Sharpe 0.80
+    - { symbol: "196170", name: "알테오젠" }      # Sharpe 0.78
+    - { symbol: "011200", name: "HMM" }         # Sharpe 0.69
+    - { symbol: "066570", name: "LG전자" }       # Sharpe 0.60
+    - { symbol: "015760", name: "한국전력" }      # Sharpe 0.38
 
 risk:
   # 종목 1개당 자본의 최대 비율
