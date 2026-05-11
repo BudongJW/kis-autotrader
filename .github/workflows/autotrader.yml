@@ -53,4 +53,4 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
-          python -m src.bot.single_run --symbol 005930 $DRY_RUN_FLAG
+          python -m src.bot.single_run $DRY_RUN_FLAG
