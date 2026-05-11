@@ -1,0 +1,71 @@
+name: Update Investment Journal
+
+on:
+  schedule:
+    # 매일 16:10 KST (= 07:10 UTC) — 장 마감 후 일일 노트 생성
+    - cron: '10 7 * * 1-5'
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  update-journal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout autotrader
+        uses: actions/checkout@v4
+
+      - name: Checkout journal repo
+        uses: actions/checkout@v4
+        with:
+          repository: BudongJW/kis-trading-journal
+          token: ${{ secrets.JOURNAL_PAT }}
+          path: journal
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env
+        run: |
+          cat > .env << 'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+
+      - name: Download trade log
+        uses: actions/download-artifact@v4
+        with:
+          name: trade-log
+          path: logs/
+        continue-on-error: true
+
+      - name: Generate journal
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: python -m src.journal
+
+      - name: Push to journal repo
+        run: |
+          cd journal
+          git config user.name "kis-autotrader-bot"
+          git config user.email "bot@kis-autotrader"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "auto: $(date +%Y-%m-%d) 투자 일지 업데이트"
+            git push
+          fi

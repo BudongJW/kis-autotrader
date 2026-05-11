@@ -66,6 +66,35 @@ jobs:
           fi
           python -m src.bot.single_run $DRY_RUN_FLAG
 
+      - name: Checkout journal repo
+        uses: actions/checkout@v4
+        with:
+          repository: BudongJW/kis-trading-journal
+          token: ${{ secrets.JOURNAL_PAT }}
+          path: journal
+        continue-on-error: true
+
+      - name: Update portfolio status
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: python -m src.journal_quick
+        continue-on-error: true
+
+      - name: Push journal update
+        run: |
+          cd journal
+          git config user.name "kis-autotrader-bot"
+          git config user.email "bot@kis-autotrader"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No journal changes"
+          else
+            git commit -m "auto: portfolio update $(date +'%H:%M')"
+            git push
+          fi
+        continue-on-error: true
+
       - name: Upload trade log
         uses: actions/upload-artifact@v4
         with:
