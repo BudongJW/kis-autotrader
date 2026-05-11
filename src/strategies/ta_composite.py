@@ -44,16 +44,29 @@ class TAScore:
     SELL_THRESHOLD = -40
 
 
-def compute_ta_score(df: pd.DataFrame) -> TAScore:
+
+# 기본 가중치 (합계 = 1.0). 옵티마이저가 strategy.yaml에서 덮어쓸 수 있음.
+DEFAULT_WEIGHTS = {
+    "rsi": 0.20,
+    "macd": 0.20,
+    "bb": 0.15,
+    "stoch": 0.15,
+    "adx": 0.15,
+    "ma": 0.15,
+}
+
+
+def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
     """OHLCV DataFrame에서 기술적 지표를 계산하고 종합 점수를 반환.
 
     Args:
         df: 컬럼 ['open','high','low','close','volume'], 최소 60행 이상.
-            최신 행이 마지막.
+        weights: 지표별 가중치 dict. None이면 DEFAULT_WEIGHTS 사용.
 
     Returns:
         TAScore — 종합 점수와 개별 지표 점수
     """
+    w = weights or DEFAULT_WEIGHTS
     if len(df) < 60:
         return TAScore(
             total=0, rsi_score=0, macd_score=0, bb_score=0,
@@ -114,8 +127,18 @@ def compute_ta_score(df: pd.DataFrame) -> TAScore:
     cur_price = float(close.iloc[-1])
     ma_score = _score_ma_alignment(cur_price, ma5, ma10, ma20, ma60)
 
-    # ── 종합 ──
-    total = rsi_score + macd_score + bb_score + stoch_score + adx_score + ma_score
+    # ── 종합 (가중치 적용) ──
+    # 각 raw score를 -1~+1로 정규화 후 가중합산, 다시 -100~+100 스케일
+    raw_scores = {
+        "rsi": rsi_score / 20.0,      # -20~+20 → -1~+1
+        "macd": macd_score / 20.0,
+        "bb": bb_score / 15.0,
+        "stoch": stoch_score / 15.0,
+        "adx": adx_score / 15.0,
+        "ma": ma_score / 15.0,
+    }
+    weighted = sum(raw_scores[k] * w.get(k, 0) for k in raw_scores)
+    total = weighted * 100  # -100 ~ +100
     total = max(-100, min(100, total))
 
     if total >= TAScore.BUY_THRESHOLD:

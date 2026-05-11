@@ -22,6 +22,7 @@ import yaml
 
 from src.backtest.runner import load_history, run_backtest
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
+from src.strategies.ta_composite import DEFAULT_WEIGHTS
 from src.market_regime import analyze_regime
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -145,6 +146,9 @@ def update_config(results: list[OptResult]) -> None:
         "backtest_return": round(best.total_return * 100, 2),
         "backtest_mdd": round(best.mdd * 100, 2),
     }
+
+    # TA 가중치 (향후 최적화 대상, 현재는 기본값 저장)
+    cfg["strategies"]["ta_weights"] = {k: round(v, 3) for k, v in DEFAULT_WEIGHTS.items()}
 
     # universe 업데이트 (Sharpe > 0 상위 3개)
     top = results[:3]
