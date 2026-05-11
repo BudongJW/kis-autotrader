@@ -48,6 +48,13 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      - name: Download token cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kis-token-cache
+          path: .
+        continue-on-error: true
+
       - name: Run bot
         env:
           PYTHONPATH: '.'
@@ -66,4 +73,13 @@ jobs:
           path: logs/trades.csv
           overwrite: true
           retention-days: 90
+        if: always()
+
+      - name: Upload token cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: kis-token-cache
+          path: .kis_token_cache.json
+          overwrite: true
+          retention-days: 1
         if: always()
