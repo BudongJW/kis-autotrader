@@ -1,0 +1,56 @@
+name: KIS AutoTrader
+
+on:
+  schedule:
+    # KST = UTC+9
+    # 09:00~15:30 KST = 00:00~06:30 UTC
+    # 평일(월~금) 5분 간격 실행
+    - cron: '*/5 0-6 * * 1-5'
+  workflow_dispatch:
+    # 수동 실행 (테스트용)
+    inputs:
+      dry_run:
+        description: 'dry-run 모드 (true/false)'
+        required: false
+        default: 'false'
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pykrx
+
+      - name: Create .env
+        run: |
+          cat > .env << 'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+
+      - name: Run bot (single check)
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          python -m src.bot.single_run --symbol 005930 $DRY_RUN_FLAG

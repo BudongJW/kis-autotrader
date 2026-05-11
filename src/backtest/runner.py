@@ -20,9 +20,11 @@ import pandas as pd
 
 from src.strategies.base import BaseStrategy, SignalType
 from src.strategies.golden_cross import GoldenCrossStrategy
+from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "golden_cross": GoldenCrossStrategy,
+    "volatility_breakout": VolatilityBreakoutStrategy,
 }
 
 
@@ -38,26 +40,25 @@ class BacktestResult:
 
 
 def load_history(symbol: str, start: str, end: str) -> pd.DataFrame:
-    """과거 시세 로드.
+    """KRX에서 실제 과거 OHLCV 시세를 로드한다 (pykrx 사용)."""
+    from pykrx import stock as krx
 
-    TODO: 집에서 실제 KIS API 또는 pykrx 등으로 채울 것.
-    현재는 더미 데이터를 반환하므로 백테스트 실행은 가능하지만 결과는 무의미.
-    """
-    dates = pd.date_range(start=start, end=end, freq="B")
-    rng = np.random.default_rng(seed=42)
-    # 단순 랜덤워크 (실제로는 KIS API의 inquire-daily-itemchartprice 사용)
-    returns = rng.normal(loc=0.0003, scale=0.015, size=len(dates))
-    close = 70000 * np.cumprod(1 + returns)
-    df = pd.DataFrame(
-        {
-            "open": close * (1 + rng.normal(0, 0.003, len(dates))),
-            "high": close * (1 + np.abs(rng.normal(0, 0.005, len(dates)))),
-            "low": close * (1 - np.abs(rng.normal(0, 0.005, len(dates)))),
-            "close": close,
-            "volume": rng.integers(1_000_000, 10_000_000, len(dates)),
-        },
-        index=dates,
-    )
+    start_fmt = start.replace("-", "")
+    end_fmt = end.replace("-", "")
+
+    df = krx.get_market_ohlcv_by_date(start_fmt, end_fmt, symbol)
+    if df.empty:
+        raise RuntimeError(f"시세 데이터 없음: {symbol} ({start} ~ {end})")
+
+    df = df.rename(columns={
+        "시가": "open",
+        "고가": "high",
+        "저가": "low",
+        "종가": "close",
+        "거래량": "volume",
+    })
+    df = df[["open", "high", "low", "close", "volume"]]
+    df = df[df["volume"] > 0]  # 거래 없는 날 제외
     return df
 
 
@@ -75,10 +76,23 @@ def run_backtest(
     equity_curve = []
     trades: list[float] = []  # 거래별 손익 (%)
 
+    is_overnight = strategy.name == "volatility_breakout"
+
     for i in range(strategy.required_lookback, len(history)):
         window = history.iloc[: i + 1]
-        signal = strategy.generate_signal("BACKTEST", window)
         price = float(window["close"].iloc[-1])
+
+        # 변동성 돌파: 보유 중이면 당일 시가에 익일 매도
+        if is_overnight and position_qty > 0:
+            sell_price = float(window["open"].iloc[-1])
+            proceeds = position_qty * sell_price * (1 - fee_rate - tax_rate)
+            pnl_pct = (sell_price - position_avg_price) / position_avg_price
+            trades.append(pnl_pct)
+            capital += proceeds
+            position_qty = 0
+            position_avg_price = 0.0
+
+        signal = strategy.generate_signal("BACKTEST", window)
 
         if signal.type == SignalType.BUY and position_qty == 0:
             qty = int(capital * 0.95 // price)  # 95% 투입, 수수료 여유
@@ -149,9 +163,7 @@ def main() -> None:
     print(f"Sharpe:       {result.sharpe:.2f}")
     print(f"승률:         {result.win_rate:.2%}")
     print(f"거래 횟수:    {result.num_trades}")
-    print(
-        f"\n⚠️ 현재 load_history()는 더미 데이터. 실제 운영 전 KIS API 또는 pykrx로 교체 필요."
-    )
+    print(f"\n📊 데이터 출처: KRX (pykrx), 샘플 기간: {args.start} ~ {args.end}")
 
 
 if __name__ == "__main__":
