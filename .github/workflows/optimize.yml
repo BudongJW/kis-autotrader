@@ -1,0 +1,60 @@
+name: Weekly Optimize
+
+on:
+  schedule:
+    # 매주 일요일 10:00 KST (= 토요일 01:00 UTC)
+    - cron: '0 1 * * 0'
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Seoul
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pykrx
+
+      - name: Create .env
+        run: |
+          cat > .env << 'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+
+      - name: Run optimizer
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: python -m src.optimizer
+
+      - name: Commit updated config
+        run: |
+          git config user.name "kis-autotrader-bot"
+          git config user.email "bot@kis-autotrader"
+          git add configs/strategy.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "auto: 주간 파라미터 최적화 $(date +%Y-%m-%d)"
+            git push
+          fi

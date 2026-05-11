@@ -33,10 +33,20 @@ SELL_WINDOW_END = dtime(9, 10)
 CONFIG_PATH = Path("configs/strategy.yaml")
 
 
-def load_universe() -> list[dict]:
+def load_config() -> dict:
     with CONFIG_PATH.open(encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        return yaml.safe_load(f)
+
+
+def load_universe() -> list[dict]:
+    cfg = load_config()
     return cfg.get("universe", {}).get("default", [])
+
+
+def load_strategy_params() -> dict:
+    """strategy.yaml에서 최적화된 파라미터를 로드."""
+    cfg = load_config()
+    return cfg.get("strategies", {}).get("volatility_breakout", {})
 
 
 def get_all_holdings(client: KISClient) -> dict[str, int]:
@@ -92,7 +102,13 @@ def main() -> None:
         sys.exit(1)
 
     client = KISClient()
-    strategy = VolatilityBreakoutStrategy()
+
+    # strategy.yaml에서 최적화된 파라미터 로드
+    params = load_strategy_params()
+    k = params.get("k", 0.5)
+    ma = params.get("trend_ma", 20)
+    strategy = VolatilityBreakoutStrategy(k=k, trend_ma=ma)
+    print(f"  전략: K={k}, MA={ma} (optimized: {params.get('optimized_at', 'default')})")
 
     # universe에 있는 종목만 필터링
     universe_symbols = {s["symbol"] for s in universe}

@@ -1,21 +1,16 @@
-name: KIS AutoTrader
+name: Daily Report
 
 on:
   schedule:
-    # 평일 09:00~15:30 KST (= 00:00~06:30 UTC), 5분 간격
-    - cron: '*/5 0-6 * * 1-5'
+    # 평일 16:00 KST (= 07:00 UTC) 장 마감 후
+    - cron: '0 7 * * 1-5'
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'dry-run 모드 (true/false)'
-        required: false
-        default: 'false'
 
 env:
   TZ: Asia/Seoul
 
 jobs:
-  trade:
+  report:
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
@@ -41,29 +36,30 @@ jobs:
           KIS_ACCOUNT_PROD_CODE=01
           ENVEOF
 
-      - name: Download trade log
+      - name: Download logs
         uses: actions/download-artifact@v4
         with:
           name: trade-log
           path: logs/
         continue-on-error: true
 
-      - name: Run bot
+      - name: Download daily log
+        uses: actions/download-artifact@v4
+        with:
+          name: daily-log
+          path: logs/
+        continue-on-error: true
+
+      - name: Run daily report
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
-        run: |
-          DRY_RUN_FLAG=""
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            DRY_RUN_FLAG="--dry-run"
-          fi
-          python -m src.bot.single_run $DRY_RUN_FLAG
+        run: python -m src.daily_report
 
-      - name: Upload trade log
+      - name: Upload daily log
         uses: actions/upload-artifact@v4
         with:
-          name: trade-log
-          path: logs/trades.csv
+          name: daily-log
+          path: logs/daily_report.csv
           overwrite: true
-          retention-days: 90
-        if: always()
+          retention-days: 180
