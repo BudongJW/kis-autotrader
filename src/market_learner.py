@@ -285,8 +285,10 @@ def pre_market(client: KISClient) -> None:
     # 3. 시장 전체 건강도
     print("\n[3] 시장 건강도 분석...")
     breadth = analyze_market_breadth(client)
-    print(f"  KOSPI 5일: {breadth.get('kospi_5d', '?'):+.1f}%")
-    print(f"  KOSDAQ 5일: {breadth.get('kosdaq_5d', '?'):+.1f}%")
+    kospi_5d = breadth.get('kospi_5d')
+    kosdaq_5d = breadth.get('kosdaq_5d')
+    print(f"  KOSPI 5일: {kospi_5d:+.1f}%" if isinstance(kospi_5d, (int, float)) else f"  KOSPI 5일: N/A")
+    print(f"  KOSDAQ 5일: {kosdaq_5d:+.1f}%" if isinstance(kosdaq_5d, (int, float)) else f"  KOSDAQ 5일: N/A")
     print(f"  건강도: {breadth.get('health', 'unknown')}")
 
     # 4. TA 가중치 최적화

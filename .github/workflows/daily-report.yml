@@ -27,7 +27,7 @@ jobs:
 
       - name: Create .env
         run: |
-          cat > .env << 'ENVEOF'
+          cat > .env <<'ENVEOF'
           MODE=live
           KIS_APPKEY=${{ secrets.KIS_APPKEY }}
           KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
@@ -35,6 +35,7 @@ jobs:
           KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
           KIS_ACCOUNT_PROD_CODE=01
           ENVEOF
+          sed -i 's/^[[:space:]]*//' .env
 
       - name: Download logs
         uses: actions/download-artifact@v4

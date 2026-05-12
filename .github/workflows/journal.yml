@@ -43,6 +43,7 @@ jobs:
           KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
           KIS_ACCOUNT_PROD_CODE=01
           ENVEOF
+          sed -i 's/^[[:space:]]*//' .env
 
       - name: Download trade log
         uses: actions/download-artifact@v4
