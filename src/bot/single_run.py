@@ -1,13 +1,13 @@
-"""단일 실행 봇 — GitHub Actions용 (이중 전략 + 리스크 관리).
+"""자동매매 봇 — 1분 간격 연속 감시 + 단일 실행 겸용.
+
+실행 모드:
+  --loop     : 1분 간격 연속 감시 (장 시작~마감). GitHub Actions 장시간 실행용.
+  (기본)     : 1회 체크 후 종료. 5분 cron 백업용.
 
 전략 A: ETF 변동성 돌파 (기대값 기반 동적 배분)
-  - strategy.yaml의 universe ETF 대상
-  - 목표가 돌파 + TA 확인 시 매수
-
 전략 B: 급등주 단타 (기대값 기반 동적 배분)
-  - KIS API 등락률 순위로 급등 종목 탐지 + TA 확인
 
-리스크 관리:
+리스크 관리 (1분마다 체크):
   - 장중 손절매: -3% 도달 시 즉시 매도
   - 추적 손절: +1.5% 도달 후 고점 대비 -1% 시 매도
   - 동적 ROI: 보유 시간별 최소 수익률 도달 시 청산
@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, time as dtime
+import time as time_mod
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 
 import yaml
@@ -48,6 +49,11 @@ CONFIG_PATH = Path("configs/strategy.yaml")
 # 기본 자본 배분 비율 (기대값 데이터 없을 때)
 DEFAULT_ETF_RATIO = 0.60
 DEFAULT_SURGE_RATIO = 0.40
+
+# 루프 간격 (초)
+RISK_CHECK_INTERVAL = 60       # 리스크 체크: 1분
+STRATEGY_CHECK_INTERVAL = 300  # 전략 체크: 5분
+TURBULENCE_CHECK_INTERVAL = 180  # 터뷸런스 체크: 3분
 
 
 def load_config() -> dict:
@@ -296,11 +302,12 @@ def run_surge_strategy(client: KISClient, budget: int, holdings: dict,
     return 0
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="KIS 이중 전략 봇")
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
+# ──────────────────────────────────────────────────────────
+# 1회 실행 (기존 5분 cron 호환)
+# ──────────────────────────────────────────────────────────
 
+def run_once(dry_run: bool) -> None:
+    """1회 체크: 리스크 관리 + 전략 실행."""
     now = datetime.now()
     t = now.time()
 
@@ -331,13 +338,13 @@ def main() -> None:
 
     # ── 09:00~09:10 전일 보유분 전량 매도 ──
     if MARKET_OPEN <= t <= SELL_WINDOW_END and holdings:
-        sell_holdings(client, holdings, universe_syms, "시가매도", args.dry_run)
+        sell_holdings(client, holdings, universe_syms, "시가매도", dry_run)
         return
 
     # ── 장중 리스크 체크: 손절/추적손절/ROI ──
     if holdings:
         print("  [리스크 체크]")
-        holdings = check_risk_and_sell(client, holdings, universe_syms, args.dry_run)
+        holdings = check_risk_and_sell(client, holdings, universe_syms, dry_run)
         if not holdings:
             cash = get_available_cash(client)
             etf_budget_cap = int(cash * etf_ratio)
@@ -345,7 +352,7 @@ def main() -> None:
 
     # ── 15:20 이후 미매도 청산 ──
     if t > MARKET_CLOSE and holdings:
-        sell_holdings(client, holdings, universe_syms, "장마감청산", args.dry_run)
+        sell_holdings(client, holdings, universe_syms, "장마감청산", dry_run)
         return
 
     # ── 장중: 두 전략 실행 ──
@@ -383,19 +390,204 @@ def main() -> None:
               f"(x{size_factor:.0%})")
 
     # 전략 A: ETF
-    etf_used = run_etf_strategy(client, etf_budget, holdings, universe, args.dry_run)
+    etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
 
     # 전략 B: 급등주
     if surge_budget > 0:
         actual_surge_budget = surge_budget if etf_used == 0 else max(0, cash - etf_used)
         if actual_surge_budget >= 10000:
             run_surge_strategy(client, actual_surge_budget, holdings,
-                             universe_syms, args.dry_run)
+                             universe_syms, dry_run)
     elif surge_held:
         print("  [급등주] 이미 보유 중.")
 
     if etf_used == 0 and not etf_held:
         print("  돌파/급등 없음. 현금 보유.")
+
+
+# ──────────────────────────────────────────────────────────
+# 연속 감시 루프 (1분 간격)
+# ──────────────────────────────────────────────────────────
+
+def run_loop(dry_run: bool) -> None:
+    """1분 간격 연속 감시. 장 시작~마감까지 실행.
+
+    매 1분: 보유 종목 리스크 체크 (손절/추적손절/ROI)
+    매 5분: 전략 실행 (변동성 돌파 + 급등주 스캐닝)
+    매 3분: 터뷸런스 필터 갱신
+
+    리스크 체크는 가격만 조회하므로 API 부하 최소화.
+    전략 실행은 일봉 + TA 계산이 포함되어 5분 간격으로 실행.
+    """
+    summary = get_summary()
+    print(f"{'=' * 60}")
+    print(f"[루프 모드] 1분 간격 연속 감시 시작")
+    print(f"  mode={settings.mode.value} | dry_run={dry_run}")
+    print(f"  거래: {summary['total_trades']}건, PnL: {summary['pnl']:+,}원")
+    print(f"  리스크 체크: {RISK_CHECK_INTERVAL}초 | 전략 체크: {STRATEGY_CHECK_INTERVAL}초")
+    print(f"{'=' * 60}")
+
+    client = KISClient()
+    universe = load_universe()
+    universe_syms = {s["symbol"] for s in universe}
+
+    last_strategy_check = 0.0     # epoch. 전략 체크 마지막 시각
+    last_turbulence_check = 0.0   # epoch. 터뷸런스 체크 마지막 시각
+    sold_at_open = False          # 시가 매도 완료 여부
+    is_turbulent = False          # 현재 터뷸런스 상태
+    bought_today = False          # 오늘 매수 완료 여부
+
+    while True:
+        now = datetime.now()
+        t = now.time()
+        epoch_now = time_mod.time()
+
+        # ── 장 마감 → 종료 ──
+        if t > MARKET_END:
+            print(f"\n[{now:%H:%M:%S}] 장 마감. 루프 종료.")
+            break
+
+        # ── 장 시작 전 → 대기 ──
+        if t < MARKET_OPEN:
+            wait = (datetime.combine(now.date(), MARKET_OPEN) - now).total_seconds()
+            wait = min(wait, 60)  # 최대 60초씩 대기 (중간에 체크)
+            if wait > 10:
+                print(f"[{now:%H:%M:%S}] 장 시작 대기 ({wait:.0f}초)")
+            time_mod.sleep(max(1, wait))
+            continue
+
+        # ── 보유 현황 조회 ──
+        holdings = get_all_holdings(client)
+
+        # ── 09:00~09:10 시가 매도 ──
+        if MARKET_OPEN <= t <= SELL_WINDOW_END and not sold_at_open:
+            if holdings:
+                print(f"\n[{now:%H:%M:%S}] === 시가 매도 ===")
+                sell_holdings(client, holdings, universe_syms, "시가매도", dry_run)
+                holdings = get_all_holdings(client)
+            sold_at_open = True
+            time_mod.sleep(RISK_CHECK_INTERVAL)
+            continue
+
+        # ── 리스크 체크 (매 1분) — 보유 종목 가격 확인 ──
+        if holdings:
+            risk_sold = False
+            for symbol, qty in list(holdings.items()):
+                price = get_price(client, symbol)
+                if price <= 0:
+                    continue
+
+                should_sell, reason = check_stop_loss(symbol, price)
+                if should_sell:
+                    tag = "ETF" if symbol in universe_syms else "급등주"
+                    print(f"\n[{now:%H:%M:%S}] [리스크] {tag} {symbol} {qty}주 "
+                          f"@ {price:,}원 — {reason}")
+                    if not dry_run:
+                        resp = client.order_cash(symbol, qty=qty, side="sell")
+                        rt = resp.get("rt_cd")
+                        print(f"  응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
+                        if rt == "0":
+                            log_trade(symbol, tag, "sell", qty, price)
+                            remove_position(symbol)
+                            risk_sold = True
+                    else:
+                        print("  (dry-run)")
+                        risk_sold = True
+
+            if risk_sold:
+                holdings = get_all_holdings(client)
+                bought_today = False  # 손절 후 재매수 허용
+
+        # ── 15:20 이후 미매도 청산 ──
+        if t > MARKET_CLOSE and holdings:
+            print(f"\n[{now:%H:%M:%S}] === 장마감 청산 ===")
+            sell_holdings(client, holdings, universe_syms, "장마감청산", dry_run)
+            time_mod.sleep(RISK_CHECK_INTERVAL)
+            continue
+
+        # ── 매수 시간 지남 ──
+        if t > MARKET_CLOSE:
+            time_mod.sleep(RISK_CHECK_INTERVAL)
+            continue
+
+        # ── 터뷸런스 체크 (매 3분) ──
+        if epoch_now - last_turbulence_check >= TURBULENCE_CHECK_INTERVAL:
+            is_turbulent, turb_reason = check_turbulence(client)
+            last_turbulence_check = epoch_now
+            if is_turbulent:
+                print(f"[{now:%H:%M:%S}] [터뷸런스] {turb_reason}")
+
+        # ── 전략 체크 (매 5분) — 신규 매수 탐색 ──
+        if (epoch_now - last_strategy_check >= STRATEGY_CHECK_INTERVAL
+                and not bought_today
+                and not is_turbulent
+                and t > SELL_WINDOW_END):
+
+            last_strategy_check = epoch_now
+            cash = get_available_cash(client)
+            if cash < 10000:
+                time_mod.sleep(RISK_CHECK_INTERVAL)
+                continue
+
+            # 기대값 기반 동적 배분
+            expectancy = get_strategy_expectancy()
+            etf_ratio = expectancy.get("etf", DEFAULT_ETF_RATIO)
+            surge_ratio = expectancy.get("surge", DEFAULT_SURGE_RATIO)
+            etf_budget_cap = int(cash * etf_ratio)
+            surge_budget_cap = int(cash * surge_ratio)
+
+            # 시장 신뢰도 반영
+            confidence = get_market_confidence()
+            intraday = get_intraday_regime_adjustment(client)
+            size_factor = max(0.3, confidence)
+            if intraday.get("reduce_size"):
+                size_factor *= 0.7
+
+            print(f"\n[{now:%H:%M:%S}] === 전략 체크 ===")
+            print(f"  예수금: {cash:,}원 | 신뢰도: {confidence:.0%} "
+                  f"| {intraday['reason']}")
+
+            etf_held = any(s in universe_syms for s in holdings)
+            surge_held = any(s not in universe_syms for s in holdings)
+
+            etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
+            remaining_cash = cash - etf_budget if not etf_held else cash
+            surge_budget = int(min(surge_budget_cap, remaining_cash) * size_factor) if not surge_held else 0
+
+            # 전략 A: ETF
+            etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
+            if etf_used > 0:
+                bought_today = True
+
+            # 전략 B: 급등주
+            if surge_budget > 0 and not bought_today:
+                actual_surge_budget = surge_budget if etf_used == 0 else max(0, cash - etf_used)
+                if actual_surge_budget >= 10000:
+                    surge_used = run_surge_strategy(client, actual_surge_budget,
+                                                   holdings, universe_syms, dry_run)
+                    if surge_used > 0:
+                        bought_today = True
+
+            if not bought_today and not etf_held:
+                print("  돌파/급등 없음. 현금 보유.")
+
+        # ── 1분 대기 ──
+        elapsed = time_mod.time() - epoch_now
+        sleep_time = max(1, RISK_CHECK_INTERVAL - elapsed)
+        time_mod.sleep(sleep_time)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="KIS 자동매매 봇")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--loop", action="store_true",
+                        help="1분 간격 연속 감시 (장 시작~마감)")
+    args = parser.parse_args()
+
+    if args.loop:
+        run_loop(args.dry_run)
+    else:
+        run_once(args.dry_run)
 
 
 if __name__ == "__main__":

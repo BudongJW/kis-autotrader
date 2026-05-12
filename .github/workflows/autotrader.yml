@@ -2,14 +2,26 @@ name: KIS AutoTrader
 
 on:
   schedule:
-    # 평일 09:00~15:30 KST (= 00:00~06:30 UTC), 5분 간격
-    - cron: '*/5 0-6 * * 1-5'
+    # 메인: 08:55 KST (= 23:55 전날 UTC) — 장 시작 전 루프 시작
+    - cron: '55 23 * * 0-4'
+    # 백업: 12:00 KST (= 03:00 UTC) — 메인 실패 시 후반 커버
+    - cron: '0 3 * * 1-5'
+    # 안전망: 15:15 KST (= 06:15 UTC) — 장 마감 전 청산 보장
+    - cron: '15 6 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:
         description: 'dry-run 모드 (true/false)'
         required: false
         default: 'false'
+      mode:
+        description: 'loop (연속감시) / once (1회)'
+        required: false
+        default: 'loop'
+
+concurrency:
+  group: autotrader
+  cancel-in-progress: false
 
 env:
   TZ: Asia/Seoul
@@ -17,7 +29,7 @@ env:
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 400  # GitHub 최대 360분으로 클램프됨. 09:00~15:00 커버
 
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +91,12 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
-          python -m src.bot.single_run $DRY_RUN_FLAG
+          MODE="${{ github.event.inputs.mode || 'loop' }}"
+          if [ "$MODE" = "once" ]; then
+            python -m src.bot.single_run $DRY_RUN_FLAG
+          else
+            python -m src.bot.single_run --loop $DRY_RUN_FLAG
+          fi
 
       - name: Checkout journal repo
         uses: actions/checkout@v4
