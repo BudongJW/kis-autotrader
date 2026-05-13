@@ -40,7 +40,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pykrx
+        run: pip install -r requirements.txt pykrx hmmlearn optuna lightgbm scikit-learn
 
       - name: Create .env
         run: |
@@ -65,7 +65,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kis-token-cache
-          path: .
+          path: logs/
         continue-on-error: true
 
       - name: Download positions
@@ -79,6 +79,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: learning-data
+          path: logs/
+        continue-on-error: true
+
+      - name: Download ML models
+        uses: actions/download-artifact@v4
+        with:
+          name: ml-models
           path: logs/
         continue-on-error: true
 
@@ -149,7 +156,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kis-token-cache
-          path: .kis_token_cache.json
+          path: logs/.kis_token_cache.json
           overwrite: true
           retention-days: 1
+        if: always()
+
+      - name: Upload slippage log
+        uses: actions/upload-artifact@v4
+        with:
+          name: slippage-log
+          path: logs/slippage.json
+          overwrite: true
+          retention-days: 90
         if: always()

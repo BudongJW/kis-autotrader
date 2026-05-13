@@ -28,7 +28,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pykrx
+        run: pip install -r requirements.txt pykrx hmmlearn optuna lightgbm scikit-learn
 
       - name: Create .env
         run: |
@@ -59,3 +59,14 @@ jobs:
             git commit -m "auto: 주간 파라미터 최적화 $(date +%Y-%m-%d)"
             git push
           fi
+
+      - name: Upload ML models
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-models
+          path: |
+            logs/lgbm_model.pkl
+            logs/lgbm_features.json
+          overwrite: true
+          retention-days: 30
+        if: always()

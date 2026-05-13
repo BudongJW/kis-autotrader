@@ -32,6 +32,7 @@ from src.kis_client import KISClient
 from src.bot.runner import fetch_recent_history
 from src.market_regime import analyze_regime
 from src.strategies.ta_composite import compute_ta_score, DEFAULT_WEIGHTS
+from src.strategies.hmm_regime import detect_regime_from_prices, get_regime_action
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -93,6 +94,9 @@ def load_ta_accuracy() -> dict:
         "stoch": {"correct": 0, "total": 0},
         "adx": {"correct": 0, "total": 0},
         "ma": {"correct": 0, "total": 0},
+        "obv": {"correct": 0, "total": 0},
+        "mfi": {"correct": 0, "total": 0},
+        "atr": {"correct": 0, "total": 0},
     }
 
 
@@ -273,6 +277,21 @@ def pre_market(client: KISClient) -> None:
         print(f"  시장 환경 분석 실패: {e}")
         regime = None
 
+    # 1.5. HMM 레짐 탐지 (선형 분석 보완)
+    hmm_regime = None
+    hmm_action = None
+    try:
+        kospi_prices = kospi_hist["close"].astype(float) if regime else None
+        if kospi_prices is not None and len(kospi_prices) >= 65:
+            hmm_regime = detect_regime_from_prices(kospi_prices)
+            hmm_action = get_regime_action(hmm_regime)
+            print(f"\n  [HMM] {hmm_regime.detail}")
+            print(f"  [HMM] 전환 확률: " +
+                  ", ".join(f"{k}={v:.0%}" for k, v in hmm_regime.transition_prob.items()))
+            print(f"  [HMM] 행동: {hmm_action['reason']}")
+    except Exception as e:
+        print(f"  [HMM] 레짐 탐지 실패: {e}")
+
     # 2. 섹터 모멘텀
     print("\n[2] 섹터 모멘텀 스캔...")
     sectors = analyze_sector_momentum(client)
@@ -324,6 +343,13 @@ def pre_market(client: KISClient) -> None:
         vb["k"] = new_k
         print(f"  K: {current_k} → {new_k}")
 
+        # HMM K값 조정 적용
+        if hmm_action:
+            new_k = round(new_k * hmm_action["k_adjustment"], 2)
+            new_k = max(0.3, min(0.7, new_k))
+            vb["k"] = new_k
+            print(f"  K (HMM 조정): → {new_k}")
+
         cfg["market_regime"] = {
             "trend": regime.trend,
             "volatility": regime.volatility,
@@ -331,6 +357,11 @@ def pre_market(client: KISClient) -> None:
             "vol_percentile": regime.vol_percentile,
             "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
+
+        if hmm_regime:
+            cfg["market_regime"]["hmm_state"] = hmm_regime.state
+            cfg["market_regime"]["hmm_confidence"] = hmm_regime.confidence
+            cfg["market_regime"]["hmm_transition"] = hmm_regime.transition_prob
 
     # TA 가중치 저장
     cfg.setdefault("strategies", {})["ta_weights"] = new_weights
@@ -354,6 +385,8 @@ def pre_market(client: KISClient) -> None:
         "regime_volatility": regime.volatility if regime else "unknown",
         "trend_score": regime.trend_score if regime else 0,
         "vol_percentile": regime.vol_percentile if regime else 50,
+        "hmm_state": hmm_regime.state if hmm_regime else "unknown",
+        "hmm_confidence": hmm_regime.confidence if hmm_regime else 0,
         "breadth": breadth.get("health", "unknown"),
         "kospi_5d": breadth.get("kospi_5d", 0),
         "kosdaq_5d": breadth.get("kosdaq_5d", 0),

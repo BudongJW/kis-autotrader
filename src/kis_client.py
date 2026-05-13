@@ -44,6 +44,15 @@ class KISClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _safe_post(self, path: str, *, tr_id: str, body: dict[str, Any]) -> dict:
+        """HTTP 에러를 잡아서 rt_cd='E'로 반환. 루프 크래시 방지."""
+        try:
+            return self._post(path, tr_id=tr_id, body=body)
+        except requests.exceptions.HTTPError as e:
+            return {"rt_cd": "E", "msg1": f"HTTP 에러: {e}", "msg_cd": "HTTP_ERR"}
+        except requests.exceptions.RequestException as e:
+            return {"rt_cd": "E", "msg1": f"요청 실패: {e}", "msg_cd": "REQ_ERR"}
+
     # ------------------------------------------------------------------
     # 시세
     # ------------------------------------------------------------------
@@ -101,13 +110,32 @@ class KISClient:
             price: 지정가 가격 (시장가 시 0)
             side: "buy" 또는 "sell"
             order_type: 00=지정가, 01=시장가
+
+        15:20 이후에는 시장가 주문이 거부되므로 자동으로 지정가 전환.
         """
+        from datetime import datetime, time as dtime
+
         if side == "buy":
             tr_id = TR_ORDER_CASH_LIVE_BUY if settings.is_live else TR_ORDER_CASH_PAPER_BUY
         elif side == "sell":
             tr_id = TR_ORDER_CASH_LIVE_SELL if settings.is_live else TR_ORDER_CASH_PAPER_SELL
         else:
             raise ValueError(f"side는 'buy' 또는 'sell'이어야 함: {side}")
+
+        # 15:20 이후 시장가 → 지정가 자동 전환
+        now_time = datetime.now().time()
+        if order_type == "01" and now_time >= dtime(15, 20):
+            if price <= 0:
+                # 현재가 조회해서 지정가로 전환
+                try:
+                    resp = self.get_price(symbol)
+                    if resp.get("rt_cd") == "0":
+                        price = int(resp["output"]["stck_prpr"])
+                except Exception:
+                    pass
+            if price > 0:
+                order_type = "00"
+                print(f"  [주문] 15:20 이후 → 지정가 전환 ({symbol} @ {price:,}원)")
 
         body = {
             "CANO": settings.kis_account_no,
@@ -117,7 +145,7 @@ class KISClient:
             "ORD_QTY": str(qty),
             "ORD_UNPR": str(price),
         }
-        return self._post(
+        return self._safe_post(
             "/uapi/domestic-stock/v1/trading/order-cash",
             tr_id=tr_id,
             body=body,

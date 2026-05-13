@@ -33,7 +33,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt hmmlearn
 
       - name: Create .env
         run: |
@@ -58,7 +58,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kis-token-cache
-          path: .
+          path: logs/
         continue-on-error: true
 
       - name: Run market learning
@@ -96,7 +96,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kis-token-cache
-          path: .kis_token_cache.json
+          path: logs/.kis_token_cache.json
           overwrite: true
           retention-days: 1
         if: always()

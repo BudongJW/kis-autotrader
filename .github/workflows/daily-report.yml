@@ -23,7 +23,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pykrx
+        run: pip install -r requirements.txt pykrx hmmlearn
 
       - name: Create .env
         run: |

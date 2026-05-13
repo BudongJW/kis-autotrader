@@ -31,7 +31,28 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt hmmlearn
+
+      - name: Download slippage log
+        uses: actions/download-artifact@v4
+        with:
+          name: slippage-log
+          path: logs/
+        continue-on-error: true
+
+      - name: Download ML models
+        uses: actions/download-artifact@v4
+        with:
+          name: ml-models
+          path: logs/
+        continue-on-error: true
+
+      - name: Download learning data
+        uses: actions/download-artifact@v4
+        with:
+          name: learning-data
+          path: logs/
+        continue-on-error: true
 
       - name: Create .env
         run: |

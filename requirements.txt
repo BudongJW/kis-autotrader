@@ -17,6 +17,7 @@ jupyter>=1.0.0
 ipykernel>=6.29.0
 
 # --- 백테스트 ---
+pykrx>=0.3.0
 backtrader>=1.9.78
 # vectorbt>=0.26.0  # 선택: 벡터화된 백테스트 (성능 ↑)
 
@@ -24,6 +25,12 @@ backtrader>=1.9.78
 ta>=0.11.0
 pandas-ta>=0.3.14b1
 # TA-Lib>=0.4.28  # 선택: 더 빠르지만 C 컴파일 필요
+
+# --- ML 모델 ---
+hmmlearn>=0.3.0
+optuna>=3.6.0
+lightgbm>=4.3.0
+scikit-learn>=1.4.0
 
 # --- 비동기·실시간 ---
 websockets>=12.0

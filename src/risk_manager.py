@@ -157,6 +157,91 @@ def check_turbulence(client: KISClient) -> tuple[bool, str]:
         return False, f"확인 실패: {e}"
 
 
+def kelly_fraction(win_rate: float, avg_win: float, avg_loss: float,
+                   half: bool = True) -> float:
+    """Kelly Criterion 최적 투입 비율.
+
+    f* = p - (1-p)/b  where p=win_rate, b=avg_win/avg_loss
+    half=True면 Half-Kelly (f*/2) 사용 — 현실적 안전 마진.
+
+    Returns:
+        0.0 ~ 1.0 사이 최적 투입 비율. 음수이면 0 반환 (배팅 부적합).
+    """
+    if avg_loss <= 0 or win_rate <= 0:
+        return 0.0
+
+    b = avg_win / avg_loss  # payoff ratio
+    f_star = win_rate - (1 - win_rate) / b
+
+    if f_star <= 0:
+        return 0.0
+
+    if half:
+        f_star *= 0.5  # Half-Kelly
+
+    # 상한 클램프: 최대 25% (과도한 집중 방지)
+    return min(f_star, 0.25)
+
+
+def get_kelly_position_size(strategy: str = "combined") -> float:
+    """최근 거래 이력으로부터 Kelly 기반 포지션 비율 계산.
+
+    Args:
+        strategy: "etf", "surge", "combined"
+
+    Returns:
+        0.0 ~ 0.25 사이 투입 비율
+    """
+    import csv
+    from src.tracker import TRADE_LOG_PATH
+
+    if not TRADE_LOG_PATH.exists():
+        return 0.10  # 기본값: 10%
+
+    buys: dict[str, list] = {}
+    pnl_list: list[float] = []
+
+    with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            symbol = row.get("symbol", "")
+            side = row.get("side", "")
+            price = int(row.get("price", 0))
+            name = row.get("name", "")
+
+            if side == "buy":
+                buys.setdefault(symbol, []).append({"price": price, "name": name})
+            elif side == "sell" and symbol in buys and buys[symbol]:
+                buy_info = buys[symbol].pop(0)
+                pnl_pct = (price - buy_info["price"]) / buy_info["price"]
+                is_etf = any(kw in buy_info["name"]
+                             for kw in ["KODEX", "TIGER", "KOSEF", "ACE"])
+                if strategy == "combined":
+                    pnl_list.append(pnl_pct)
+                elif strategy == "etf" and is_etf:
+                    pnl_list.append(pnl_pct)
+                elif strategy == "surge" and not is_etf:
+                    pnl_list.append(pnl_pct)
+
+    if len(pnl_list) < 5:
+        return 0.10  # 샘플 부족 → 보수적
+
+    wins = [p for p in pnl_list if p > 0]
+    losses = [p for p in pnl_list if p <= 0]
+    win_rate = len(wins) / len(pnl_list)
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = abs(sum(losses) / len(losses)) if losses else 0.01
+
+    fraction = kelly_fraction(win_rate, avg_win, avg_loss, half=True)
+    log.info("kelly_sizing",
+             strategy=strategy,
+             win_rate=f"{win_rate:.1%}",
+             avg_win=f"{avg_win:+.2%}",
+             avg_loss=f"{avg_loss:.2%}",
+             kelly_f=f"{fraction:.1%}")
+    return fraction
+
+
 def get_strategy_expectancy() -> dict[str, float]:
     """전략별 기대값 계산 (최근 거래 기반).
 

@@ -1,6 +1,6 @@
 """기술적 지표 복합 스코어링 — 다중 TA 지표 기반 매매 판단.
 
-6가지 기술적 지표를 분석해 -100 ~ +100 사이의 종합 점수를 산출.
+9가지 기술적 지표를 분석해 -100 ~ +100 사이의 종합 점수를 산출.
 점수가 높을수록 매수 유리, 낮을수록 매도/관망 신호.
 
 사용 지표:
@@ -10,9 +10,12 @@
   4. Stochastic (14,3) — 단기 모멘텀
   5. ADX (14) — 추세 강도 (방향성)
   6. 이동평균 정배열 (MA5 > MA10 > MA20 > MA60)
+  7. OBV (On-Balance Volume) — 거래량 기반 매수/매도 압력
+  8. MFI (14) — 자금 흐름 지수 (거래량 가중 RSI)
+  9. ATR 비율 — 변동성 정규화 (현재 ATR / 평균 ATR)
 
 점수 체계:
-  - 각 지표: -20 ~ +20점 (가중치 반영)
+  - 각 지표: 가중치 반영 점수
   - 합산: -100 ~ +100
   - BUY: +40 이상 | SELL: -40 이하 | HOLD: 나머지
 """
@@ -36,8 +39,11 @@ class TAScore:
     stoch_score: float    # -15 ~ +15
     adx_score: float      # -15 ~ +15
     ma_score: float       # -15 ~ +15
-    signal: str           # "BUY" / "SELL" / "HOLD"
-    detail: str           # 사람이 읽을 수 있는 요약
+    obv_score: float = 0.0     # -10 ~ +10
+    mfi_score: float = 0.0     # -10 ~ +10
+    atr_score: float = 0.0     # -10 ~ +10
+    signal: str = "HOLD"  # "BUY" / "SELL" / "HOLD"
+    detail: str = ""      # 사람이 읽을 수 있는 요약
 
     # 기준값
     BUY_THRESHOLD = 40
@@ -47,12 +53,15 @@ class TAScore:
 
 # 기본 가중치 (합계 = 1.0). 옵티마이저가 strategy.yaml에서 덮어쓸 수 있음.
 DEFAULT_WEIGHTS = {
-    "rsi": 0.20,
-    "macd": 0.20,
-    "bb": 0.15,
-    "stoch": 0.15,
-    "adx": 0.15,
-    "ma": 0.15,
+    "rsi": 0.17,
+    "macd": 0.17,
+    "bb": 0.12,
+    "stoch": 0.12,
+    "adx": 0.12,
+    "ma": 0.12,
+    "obv": 0.06,
+    "mfi": 0.06,
+    "atr": 0.06,
 }
 
 
@@ -127,6 +136,20 @@ def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
     cur_price = float(close.iloc[-1])
     ma_score = _score_ma_alignment(cur_price, ma5, ma10, ma20, ma60)
 
+    # ── 7. OBV (On-Balance Volume) — 가중치 10점 ──
+    volume = df["volume"].astype(float)
+    obv_score = _score_obv(close, volume)
+
+    # ── 8. MFI (14) — 가중치 10점 ──
+    mfi_series = ta.mfi(high, low, close, volume, length=14)
+    mfi_score = 0.0
+    if mfi_series is not None and not mfi_series.empty:
+        mfi_val = float(mfi_series.iloc[-1])
+        mfi_score = _score_mfi(mfi_val)
+
+    # ── 9. ATR 비율 — 가중치 10점 ──
+    atr_score = _score_atr_ratio(high, low, close)
+
     # ── 종합 (가중치 적용) ──
     # 각 raw score를 -1~+1로 정규화 후 가중합산, 다시 -100~+100 스케일
     raw_scores = {
@@ -136,6 +159,9 @@ def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
         "stoch": stoch_score / 15.0,
         "adx": adx_score / 15.0,
         "ma": ma_score / 15.0,
+        "obv": obv_score / 10.0,
+        "mfi": mfi_score / 10.0,
+        "atr": atr_score / 10.0,
     }
     weighted = sum(raw_scores[k] * w.get(k, 0) for k in raw_scores)
     total = weighted * 100  # -100 ~ +100
@@ -155,7 +181,10 @@ def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
         f"BB={bb_score:+.0f} "
         f"Stoch={stoch_score:+.0f} "
         f"ADX={adx_score:+.0f} "
-        f"MA={ma_score:+.0f}]"
+        f"MA={ma_score:+.0f} "
+        f"OBV={obv_score:+.0f} "
+        f"MFI={mfi_score:+.0f} "
+        f"ATR={atr_score:+.0f}]"
     )
 
     return TAScore(
@@ -166,6 +195,9 @@ def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
         stoch_score=round(stoch_score, 1),
         adx_score=round(adx_score, 1),
         ma_score=round(ma_score, 1),
+        obv_score=round(obv_score, 1),
+        mfi_score=round(mfi_score, 1),
+        atr_score=round(atr_score, 1),
         signal=signal,
         detail=detail,
     )
@@ -323,3 +355,102 @@ def _score_ma_alignment(price: float, ma5: float, ma10: float,
             score -= 3.75
 
     return max(-15, min(15, score))
+
+
+def _score_obv(close: pd.Series, volume: pd.Series) -> float:
+    """OBV 점수: -10 ~ +10.
+
+    OBV 추세 (20일 선형회귀 방향)와 가격 추세의 다이버전스를 감지.
+    OBV 상승 + 가격 상승: 건강한 상승 (+)
+    OBV 하락 + 가격 상승: 약세 다이버전스 (-)
+    OBV 상승 + 가격 하락: 강세 다이버전스 (+)
+    """
+    if len(close) < 20:
+        return 0.0
+
+    obv = ta.obv(close, volume)
+    if obv is None or obv.empty:
+        return 0.0
+
+    # 최근 20일 OBV 추세
+    obv_recent = obv.tail(20)
+    obv_slope = float(np.polyfit(range(len(obv_recent)), obv_recent.values, 1)[0])
+
+    # 최근 20일 가격 추세
+    price_recent = close.tail(20)
+    price_slope = float(np.polyfit(range(len(price_recent)), price_recent.values, 1)[0])
+
+    obv_up = obv_slope > 0
+    price_up = price_slope > 0
+
+    if obv_up and price_up:
+        return 7.0    # 건강한 상승
+    elif obv_up and not price_up:
+        return 10.0   # 강세 다이버전스 → 매수 기회
+    elif not obv_up and price_up:
+        return -8.0   # 약세 다이버전스 → 경고
+    else:
+        return -5.0   # 하락 확인
+
+
+def _score_mfi(mfi: float) -> float:
+    """MFI (Money Flow Index) 점수: -10 ~ +10.
+
+    MFI < 20: 과매도 (매수 기회)
+    MFI > 80: 과매수 (매도 경고)
+    MFI 40~60: 중립
+    """
+    if mfi <= 10:
+        return 10.0
+    elif mfi <= 20:
+        return 7.0
+    elif mfi <= 30:
+        return 4.0
+    elif mfi <= 40:
+        return 2.0
+    elif mfi <= 60:
+        return 0.0
+    elif mfi <= 70:
+        return -2.0
+    elif mfi <= 80:
+        return -5.0
+    elif mfi <= 90:
+        return -8.0
+    else:
+        return -10.0
+
+
+def _score_atr_ratio(high: pd.Series, low: pd.Series, close: pd.Series) -> float:
+    """ATR 비율 점수: -10 ~ +10.
+
+    현재 ATR(14) / 평균 ATR(60) 비율로 변동성 상태를 판단.
+    비율 < 0.8: 변동성 수축 (스퀴즈) → 돌파 기대 (+)
+    비율 > 1.5: 변동성 급등 → 리스크 주의 (-)
+    비율 0.8~1.2: 정상 (0)
+    """
+    atr_14 = ta.atr(high, low, close, length=14)
+    atr_60 = ta.atr(high, low, close, length=60)
+
+    if atr_14 is None or atr_60 is None or atr_14.empty or atr_60.empty:
+        return 0.0
+
+    current_atr = float(atr_14.iloc[-1])
+    avg_atr = float(atr_60.iloc[-1])
+
+    if avg_atr <= 0:
+        return 0.0
+
+    ratio = current_atr / avg_atr
+
+    if ratio < 0.6:
+        return 8.0    # 극도의 수축 → 큰 돌파 기대
+    elif ratio < 0.8:
+        return 5.0    # 수축 → 돌파 기대
+    elif ratio < 1.2:
+        return 0.0    # 정상 범위
+    elif ratio < 1.5:
+        return -3.0   # 약간의 확장
+    elif ratio < 2.0:
+        return -7.0   # 높은 변동성
+    else:
+        return -10.0  # 극도의 변동성 → 위험

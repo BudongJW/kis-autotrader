@@ -31,12 +31,10 @@ import pandas as pd
 from src.config import Mode, settings
 from src.kis_client import KISClient
 from src.strategies.base import BaseStrategy, SignalType
-from src.strategies.golden_cross import GoldenCrossStrategy
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
 from src.utils.logger import log
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
-    "golden_cross": GoldenCrossStrategy,
     "volatility_breakout": VolatilityBreakoutStrategy,
 }
 

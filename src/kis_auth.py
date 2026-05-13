@@ -15,7 +15,7 @@ import requests
 
 from src.config import settings
 
-TOKEN_CACHE_PATH = Path(".kis_token_cache.json")
+TOKEN_CACHE_PATH = Path("logs/.kis_token_cache.json")
 TOKEN_REFRESH_MARGIN_SEC = 600  # 만료 10분 전엔 미리 갱신
 
 
@@ -62,6 +62,7 @@ def _load_cached_token() -> TokenBundle | None:
 
 
 def _save_cached_token(bundle: TokenBundle) -> None:
+    TOKEN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with TOKEN_CACHE_PATH.open("w", encoding="utf-8") as f:
         json.dump(bundle.to_dict(), f)
 

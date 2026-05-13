@@ -34,9 +34,11 @@ from src.bot.runner import fetch_recent_history, get_holding_qty
 from src.tracker import log_trade, get_summary
 from src.risk_manager import (
     check_stop_loss, check_turbulence, record_buy, remove_position,
-    load_positions, get_strategy_expectancy,
+    load_positions, get_strategy_expectancy, get_kelly_position_size,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
+from src.execution.twap import TWAPEngine
+from src.strategies.lgbm_predictor import get_prediction_filter
 from src.utils.logger import log
 
 MARKET_OPEN = dtime(9, 0)
@@ -122,20 +124,29 @@ def get_price(client: KISClient, symbol: str) -> int:
 
 
 def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: set,
-                  label: str, dry_run: bool) -> None:
-    """보유 종목 매도."""
+                  label: str, dry_run: bool,
+                  twap_engine: TWAPEngine | None = None) -> None:
+    """보유 종목 매도. TWAP 엔진이 있으면 분할 매도."""
     for symbol, qty in holdings.items():
         price = get_price(client, symbol)
         tag = "ETF" if symbol in universe_syms else "급등주"
         print(f"  [{label}] {tag} {symbol} {qty}주 @ ~{price:,}원")
+
+        if twap_engine and label not in ("시가매도", "장마감청산"):
+            # 일반 매도만 TWAP 분할. 시가매도/장마감청산은 즉시 전량.
+            twap_engine.submit(symbol, qty, "sell", tag, price)
+            continue
+
         if not dry_run:
-            resp = client.order_cash(symbol, qty=qty, side="sell")
+            resp = client.order_cash(symbol, qty=qty, price=price, side="sell")
             rt = resp.get("rt_cd")
             print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
                 log_trade(symbol, tag, "sell", qty, price)
                 remove_position(symbol)
                 log.info(f"{label}_sell", symbol=symbol, qty=qty, price=price)
+            elif rt == "E":
+                log.warning(f"{label}_sell_error", symbol=symbol, msg=resp.get("msg1", ""))
         else:
             print("    (dry-run)")
 
@@ -155,13 +166,15 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
             tag = "ETF" if symbol in universe_syms else "급등주"
             print(f"  [리스크] {tag} {symbol} {qty}주 @ {price:,}원 — {reason}")
             if not dry_run:
-                resp = client.order_cash(symbol, qty=qty, side="sell")
+                resp = client.order_cash(symbol, qty=qty, price=price, side="sell")
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
                     log_trade(symbol, tag, "sell", qty, price)
                     remove_position(symbol)
                     remaining.pop(symbol, None)
+                elif rt == "E":
+                    log.warning("risk_sell_error", symbol=symbol, msg=resp.get("msg1", ""))
             else:
                 print("    (dry-run)")
                 remaining.pop(symbol, None)
@@ -170,7 +183,8 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
 
 
 def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
-                     universe: list[dict], dry_run: bool) -> int:
+                     universe: list[dict], dry_run: bool,
+                     twap_engine: TWAPEngine | None = None) -> int:
     """ETF 변동성 돌파 전략. 사용한 금액을 반환."""
     universe_syms = {s["symbol"] for s in universe}
 
@@ -206,6 +220,14 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 print(f"    TA 거부 (점수 {ta.total:+.0f} ≤ -20). 매수 스킵.")
                 continue
 
+            # LGBM 예측 필터
+            lgbm_filter = get_prediction_filter(client, symbol)
+            if not lgbm_filter["allow"]:
+                print(f"    LGBM 차단: {lgbm_filter['reason']}")
+                continue
+            if lgbm_filter["up_prob"] != 0.5:  # 모델이 있을 때만 출력
+                print(f"    LGBM: 상승 {lgbm_filter['up_prob']:.0%} — {lgbm_filter['reason']}")
+
             qty = int(budget * 0.999 // cur_price)
             if qty <= 0:
                 print(f"    매수 불가 (예산 {budget:,}원, 주가 {cur_price:,}원)")
@@ -213,14 +235,21 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
             total = qty * cur_price
             print(f"    [매수] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 (TA={ta.total:+.0f})")
+
+            if twap_engine:
+                twap_engine.submit(symbol, qty, "buy", name, cur_price)
+                return total
+
             if not dry_run:
-                resp = client.order_cash(symbol, qty=qty, side="buy")
+                resp = client.order_cash(symbol, qty=qty, price=cur_price, side="buy")
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
                     log_trade(symbol, name, "buy", qty, cur_price)
                     record_buy(symbol, cur_price, qty)
                     return total
+                elif rt == "E":
+                    log.warning("etf_buy_error", symbol=symbol, msg=resp.get("msg1", ""))
             else:
                 print("    (dry-run)")
                 return total
@@ -233,7 +262,8 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
 
 def run_surge_strategy(client: KISClient, budget: int, holdings: dict,
-                       universe_syms: set, dry_run: bool) -> int:
+                       universe_syms: set, dry_run: bool,
+                       twap_engine: TWAPEngine | None = None) -> int:
     """급등주 단타 전략. 사용한 금액을 반환."""
     surge_held = {s: q for s, q in holdings.items() if s not in universe_syms}
     if surge_held:
@@ -275,25 +305,31 @@ def run_surge_strategy(client: KISClient, budget: int, holdings: dict,
             print(f"    {c.name} TA 조회 실패: {e}. 스킵.")
             continue
 
-        total = qty * c.price
-        print(f"    [매수] {c.name} {qty}주 @ {c.price:,}원 = {total:,}원 (TA={ta.total:+.0f})")
-        if not dry_run:
-            live_price = get_price(client, c.symbol)
-            if live_price <= 0:
-                print(f"    실시간 가격 조회 실패. 스킵.")
-                continue
-            qty = int(budget * 0.999 // live_price)
-            if qty <= 0:
-                continue
-            total = qty * live_price
+        live_price = get_price(client, c.symbol) if not dry_run else c.price
+        if live_price <= 0:
+            print(f"    실시간 가격 조회 실패. 스킵.")
+            continue
+        qty = int(budget * 0.999 // live_price)
+        if qty <= 0:
+            continue
+        total = qty * live_price
 
-            resp = client.order_cash(c.symbol, qty=qty, side="buy")
+        print(f"    [매수] {c.name} {qty}주 @ {live_price:,}원 = {total:,}원 (TA={ta.total:+.0f})")
+
+        if twap_engine:
+            twap_engine.submit(c.symbol, qty, "buy", c.name, live_price)
+            return total
+
+        if not dry_run:
+            resp = client.order_cash(c.symbol, qty=qty, price=live_price, side="buy")
             rt = resp.get("rt_cd")
             print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
                 log_trade(c.symbol, c.name, "buy", qty, live_price)
                 record_buy(c.symbol, live_price, qty)
                 return total
+            elif rt == "E":
+                log.warning("surge_buy_error", symbol=c.symbol, msg=resp.get("msg1", ""))
         else:
             print("    (dry-run)")
             return total
@@ -430,6 +466,7 @@ def run_loop(dry_run: bool) -> None:
     client = KISClient()
     universe = load_universe()
     universe_syms = {s["symbol"] for s in universe}
+    twap = TWAPEngine()
 
     last_strategy_check = 0.0     # epoch. 전략 체크 마지막 시각
     last_turbulence_check = 0.0   # epoch. 터뷸런스 체크 마지막 시각
@@ -469,6 +506,15 @@ def run_loop(dry_run: bool) -> None:
             time_mod.sleep(RISK_CHECK_INTERVAL)
             continue
 
+        # ── TWAP 트랜치 실행 (매 1분) ──
+        if twap.has_pending():
+            twap_results = twap.tick(client, dry_run)
+            if twap_results:
+                for tr in twap_results:
+                    if tr["side"] == "buy":
+                        bought_today = True
+                holdings = get_all_holdings(client)
+
         # ── 리스크 체크 (매 1분) — 보유 종목 가격 확인 ──
         if holdings:
             risk_sold = False
@@ -483,20 +529,22 @@ def run_loop(dry_run: bool) -> None:
                     print(f"\n[{now:%H:%M:%S}] [리스크] {tag} {symbol} {qty}주 "
                           f"@ {price:,}원 — {reason}")
                     if not dry_run:
-                        resp = client.order_cash(symbol, qty=qty, side="sell")
+                        resp = client.order_cash(symbol, qty=qty, price=price, side="sell")
                         rt = resp.get("rt_cd")
                         print(f"  응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                         if rt == "0":
                             log_trade(symbol, tag, "sell", qty, price)
                             remove_position(symbol)
                             risk_sold = True
+                        elif rt == "E":
+                            log.warning("loop_risk_sell_error", symbol=symbol,
+                                        msg=resp.get("msg1", ""))
                     else:
                         print("  (dry-run)")
                         risk_sold = True
 
             if risk_sold:
                 holdings = get_all_holdings(client)
-                bought_today = False  # 손절 후 재매수 허용
 
         # ── 15:20 이후 미매도 청산 ──
         if t > MARKET_CLOSE and holdings:
@@ -529,12 +577,20 @@ def run_loop(dry_run: bool) -> None:
                 time_mod.sleep(RISK_CHECK_INTERVAL)
                 continue
 
-            # 기대값 기반 동적 배분
-            expectancy = get_strategy_expectancy()
+            # Kelly + 기대값 기반 동적 배분
+            try:
+                expectancy = get_strategy_expectancy()
+            except Exception:
+                expectancy = {"etf": DEFAULT_ETF_RATIO, "surge": DEFAULT_SURGE_RATIO}
             etf_ratio = expectancy.get("etf", DEFAULT_ETF_RATIO)
             surge_ratio = expectancy.get("surge", DEFAULT_SURGE_RATIO)
-            etf_budget_cap = int(cash * etf_ratio)
-            surge_budget_cap = int(cash * surge_ratio)
+
+            # Kelly Criterion: 전체 자본 대비 최적 투입 비율
+            kelly_f = get_kelly_position_size("combined")
+            kelly_cap = max(int(cash * kelly_f), int(cash * 0.10))  # 최소 10%
+
+            etf_budget_cap = min(int(cash * etf_ratio), kelly_cap)
+            surge_budget_cap = min(int(cash * surge_ratio), kelly_cap)
 
             # 시장 신뢰도 반영
             confidence = get_market_confidence()
@@ -544,8 +600,8 @@ def run_loop(dry_run: bool) -> None:
                 size_factor *= 0.7
 
             print(f"\n[{now:%H:%M:%S}] === 전략 체크 ===")
-            print(f"  예수금: {cash:,}원 | 신뢰도: {confidence:.0%} "
-                  f"| {intraday['reason']}")
+            print(f"  예수금: {cash:,}원 | Kelly={kelly_f:.0%} "
+                  f"| 신뢰도: {confidence:.0%} | {intraday['reason']}")
 
             etf_held = any(s in universe_syms for s in holdings)
             surge_held = any(s not in universe_syms for s in holdings)
@@ -554,17 +610,19 @@ def run_loop(dry_run: bool) -> None:
             remaining_cash = cash - etf_budget if not etf_held else cash
             surge_budget = int(min(surge_budget_cap, remaining_cash) * size_factor) if not surge_held else 0
 
-            # 전략 A: ETF
-            etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
+            # 전략 A: ETF (TWAP 분할 매수)
+            etf_used = run_etf_strategy(client, etf_budget, holdings, universe,
+                                        dry_run, twap_engine=twap)
             if etf_used > 0:
                 bought_today = True
 
-            # 전략 B: 급등주
+            # 전략 B: 급등주 (TWAP 분할 매수)
             if surge_budget > 0 and not bought_today:
                 actual_surge_budget = surge_budget if etf_used == 0 else max(0, cash - etf_used)
                 if actual_surge_budget >= 10000:
                     surge_used = run_surge_strategy(client, actual_surge_budget,
-                                                   holdings, universe_syms, dry_run)
+                                                   holdings, universe_syms, dry_run,
+                                                   twap_engine=twap)
                     if surge_used > 0:
                         bought_today = True
 
