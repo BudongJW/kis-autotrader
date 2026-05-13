@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+import pandas_ta as pta
 
 from src.kis_client import KISClient
 from src.bot.runner import fetch_recent_history
@@ -25,9 +26,14 @@ from src.utils.logger import log
 POSITIONS_PATH = Path("logs/positions.json")
 
 # ── 리스크 파라미터 ──
-STOP_LOSS_PCT = -0.03        # -3% 손절
-TRAILING_ACTIVATE_PCT = 0.015  # +1.5% 도달 시 추적 손절 활성화
-TRAILING_STOP_PCT = 0.01      # 고점 대비 -1% 하락 시 매도
+STOP_LOSS_PCT = -0.03        # -3% 손절 (ATR 없을 때 폴백)
+TRAILING_ACTIVATE_PCT = 0.015  # +1.5% 도달 시 추적 손절 활성화 (ATR 없을 때 폴백)
+TRAILING_STOP_PCT = 0.01      # 고점 대비 -1% 하락 시 매도 (ATR 없을 때 폴백)
+
+# ── ATR 기반 동적 손절 파라미터 ──
+ATR_STOP_MULTIPLIER = 1.5     # 손절 = 매수가 - ATR × 1.5
+ATR_TRAILING_ACTIVATE = 2.0   # 추적 손절 활성화 = ATR × 2.0 수익 도달 시
+ATR_TRAILING_DROP = 1.0       # 고점 대비 ATR × 1.0 하락 시 매도
 
 # 동적 ROI 테이블: (보유 시간(분), 최소 수익률)
 # 보유 시간이 길어질수록 낮은 수익률에서도 청산
@@ -58,8 +64,12 @@ def save_positions(positions: dict) -> None:
         json.dump(positions, f, ensure_ascii=False, indent=2)
 
 
-def record_buy(symbol: str, price: int, qty: int) -> None:
-    """매수 체결 시 포지션 기록."""
+def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0) -> None:
+    """매수 체결 시 포지션 기록.
+
+    Args:
+        atr: 매수 시점의 ATR(14) 값. 0이면 고정 비율 손절로 폴백.
+    """
     positions = load_positions()
     positions[symbol] = {
         "buy_price": price,
@@ -69,8 +79,30 @@ def record_buy(symbol: str, price: int, qty: int) -> None:
         "peak_price": price,  # 추적 손절용 최고가
         "hold_days": 0,       # 보유 일수 (장 시작 시 증가)
         "max_hold_days": 5,   # 최대 보유 일수
+        "atr_at_buy": round(atr, 2),  # ATR 기반 동적 손절용
     }
     save_positions(positions)
+
+
+def compute_atr_for_position(history: pd.DataFrame, length: int = 14) -> float:
+    """매수 시점에서 ATR(14) 값을 계산.
+
+    Returns:
+        ATR 값 (원 단위). 계산 불가 시 0.0.
+    """
+    if history is None or len(history) < length + 1:
+        return 0.0
+    try:
+        high = history["high"].astype(float)
+        low = history["low"].astype(float)
+        close = history["close"].astype(float)
+        atr_series = pta.atr(high, low, close, length=length)
+        if atr_series is not None and not atr_series.empty:
+            val = float(atr_series.iloc[-1])
+            return val if not pd.isna(val) else 0.0
+    except Exception:
+        pass
+    return 0.0
 
 
 def remove_position(symbol: str) -> None:
@@ -82,6 +114,9 @@ def remove_position(symbol: str) -> None:
 
 def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
     """손절매 + 추적 손절 + 동적 ROI 확인.
+
+    ATR 정보가 있으면 ATR 기반 동적 손절/추적 손절을 사용하고,
+    없으면 기존 고정 비율로 폴백한다.
 
     Returns:
         (should_sell, reason)
@@ -100,6 +135,7 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
     hold_minutes = (now - buy_time).total_seconds() / 60
 
     pnl_pct = (current_price - buy_price) / buy_price
+    atr = pos.get("atr_at_buy", 0.0)
 
     # 최고가 갱신
     if current_price > peak_price:
@@ -107,19 +143,36 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
         positions[symbol]["peak_price"] = peak_price
         save_positions(positions)
 
-    # 1. 손절매: -3%
-    if pnl_pct <= STOP_LOSS_PCT:
-        return True, f"손절매 ({pnl_pct:+.1%} ≤ {STOP_LOSS_PCT:.0%})"
+    # ── 1. 손절매: ATR 기반 or 고정 비율 ──
+    if atr > 0 and buy_price > 0:
+        stop_distance = atr * ATR_STOP_MULTIPLIER
+        stop_price = buy_price - stop_distance
+        if current_price <= stop_price:
+            stop_pct = stop_distance / buy_price
+            return True, (f"ATR 손절 ({current_price:,}원 ≤ {stop_price:,.0f}원, "
+                          f"ATR={atr:.0f}×{ATR_STOP_MULTIPLIER}, -{stop_pct:.1%})")
+    else:
+        if pnl_pct <= STOP_LOSS_PCT:
+            return True, f"손절매 ({pnl_pct:+.1%} ≤ {STOP_LOSS_PCT:.0%})"
 
-    # 2. 추적 손절: 고점 대비 하락
-    peak_pnl = (peak_price - buy_price) / buy_price
-    if peak_pnl >= TRAILING_ACTIVATE_PCT:
-        drop_from_peak = (current_price - peak_price) / peak_price
-        if drop_from_peak <= -TRAILING_STOP_PCT:
-            return True, (f"추적 손절 (고점 {peak_price:,}원에서 "
-                          f"{drop_from_peak:+.1%} 하락, 수익 {pnl_pct:+.1%})")
+    # ── 2. 추적 손절: ATR 기반 or 고정 비율 ──
+    if atr > 0 and buy_price > 0:
+        trailing_activate_price = buy_price + atr * ATR_TRAILING_ACTIVATE
+        if peak_price >= trailing_activate_price:
+            trailing_stop_price = peak_price - atr * ATR_TRAILING_DROP
+            if current_price <= trailing_stop_price:
+                return True, (f"ATR 추적 손절 (고점 {peak_price:,}원, "
+                              f"ATR 기준 {trailing_stop_price:,.0f}원 이탈, "
+                              f"수익 {pnl_pct:+.1%})")
+    else:
+        peak_pnl = (peak_price - buy_price) / buy_price
+        if peak_pnl >= TRAILING_ACTIVATE_PCT:
+            drop_from_peak = (current_price - peak_price) / peak_price
+            if drop_from_peak <= -TRAILING_STOP_PCT:
+                return True, (f"추적 손절 (고점 {peak_price:,}원에서 "
+                              f"{drop_from_peak:+.1%} 하락, 수익 {pnl_pct:+.1%})")
 
-    # 3. 동적 ROI: 보유 시간별 최소 수익률
+    # ── 3. 동적 ROI: 보유 시간별 최소 수익률 ──
     if pnl_pct > 0:
         for minutes, min_roi in ROI_TABLE:
             if hold_minutes >= minutes and pnl_pct >= min_roi:
@@ -474,3 +527,65 @@ def get_strategy_expectancy() -> dict[str, float]:
             results[key] = round(results[key] / total, 2)
 
     return results
+
+
+def get_drawdown_scale() -> tuple[float, str]:
+    """최근 거래의 연속 손실/수익에 따라 포지션 스케일링 계수 반환.
+
+    - 최근 3연속 손실: 50% 축소
+    - 최근 2연속 손실: 70% 축소
+    - 최근 3연속 수익: 120% 확대 (상한 존재)
+    - 그 외: 100% (기본)
+
+    Returns:
+        (scale_factor, reason)
+    """
+    import csv
+    from src.tracker import TRADE_LOG_PATH
+
+    if not TRADE_LOG_PATH.exists():
+        return 1.0, "거래 기록 없음"
+
+    pnl_list: list[float] = []
+    buys: dict[str, list[int]] = {}
+
+    with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            symbol = row.get("symbol", "")
+            side = row.get("side", "")
+            price = int(row.get("price", 0))
+
+            if side == "buy":
+                buys.setdefault(symbol, []).append(price)
+            elif side == "sell" and symbol in buys and buys[symbol]:
+                buy_price = buys[symbol].pop(0)
+                if buy_price > 0:
+                    pnl_list.append((price - buy_price) / buy_price)
+
+    if len(pnl_list) < 3:
+        return 1.0, f"거래 {len(pnl_list)}건, 스케일링 미적용"
+
+    # 최근 N건의 연속 결과 확인
+    recent = pnl_list[-5:]  # 최근 5건
+    consecutive_loss = 0
+    consecutive_win = 0
+
+    for pnl in reversed(recent):
+        if pnl <= 0:
+            if consecutive_win > 0:
+                break
+            consecutive_loss += 1
+        else:
+            if consecutive_loss > 0:
+                break
+            consecutive_win += 1
+
+    if consecutive_loss >= 3:
+        return 0.5, f"3연속 손실 → 50% 축소"
+    elif consecutive_loss >= 2:
+        return 0.7, f"2연속 손실 → 70% 축소"
+    elif consecutive_win >= 3:
+        return 1.2, f"3연속 수익 → 120% 확대"
+
+    return 1.0, "정상 스케일링"

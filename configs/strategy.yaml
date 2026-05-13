@@ -27,6 +27,24 @@ universe:
     name: KODEX 미국나스닥100TR
   - symbol: 069500
     name: KODEX 200
+  - symbol: '305720'
+    name: KODEX 2차전지산업
+  - symbol: '381180'
+    name: TIGER 미국테크TOP10 INDXX
+  - symbol: '360750'
+    name: TIGER 미국S&P500
+  - symbol: 091170
+    name: KODEX 은행
+  - symbol: '244580'
+    name: KODEX 바이오
+  - symbol: 091180
+    name: KODEX 자동차
+  - symbol: '117680'
+    name: KODEX 철강
+  - symbol: '364690'
+    name: KODEX K-미래차
+  - symbol: '371160'
+    name: TIGER 미국필라델피아반도체나스닥
 risk:
   max_position_weight: 0.2
   max_concurrent_positions: 5

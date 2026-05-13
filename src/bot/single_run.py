@@ -10,8 +10,8 @@
   - Kelly Criterion 포지션 사이징
 
 리스크 관리 (1분마다 체크):
-  - 장중 손절매: -3% 도달 시 즉시 매도
-  - 추적 손절: +1.5% 도달 후 고점 대비 -1% 시 매도
+  - 장중 손절매: ATR×1.5 기반 동적 손절 (ATR 없으면 고정 -3%)
+  - 추적 손절: ATR×2.0 수익 도달 후 고점 대비 ATR×1.0 하락 시 매도
   - 동적 ROI: 보유 시간별 최소 수익률 도달 시 청산
   - 터뷸런스 필터: KOSPI200 변동성 급등 시 신규 매수 차단
 """
@@ -37,12 +37,13 @@ from src.tracker import log_trade, get_summary
 from src.risk_manager import (
     check_stop_loss, check_turbulence, record_buy, remove_position,
     load_positions, get_kelly_position_size, should_hold_overnight,
-    check_daily_loss_limit, check_max_positions,
+    check_daily_loss_limit, check_max_positions, compute_atr_for_position,
+    get_drawdown_scale,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
 from src.strategies.lgbm_predictor import get_prediction_filter
-from src.strategies.signal_fusion import fuse_signals
+from src.strategies.signal_fusion import fuse_signals, BUY_THRESHOLD, STRONG_BUY_THRESHOLD
 from src.experience import log_decision, get_regime_recommendation
 from src.adaptive_learning import record_hold_outcome, record_sector_trade
 from src.utils.logger import log
@@ -66,8 +67,10 @@ DEFAULT_ETF_RATIO = 1.0
 
 # 루프 간격 (초)
 RISK_CHECK_INTERVAL = 60       # 리스크 체크: 1분
-STRATEGY_CHECK_INTERVAL = 300  # 전략 체크: 5분
+STRATEGY_CHECK_INTERVAL = 300  # 전략 체크: 5분 (기본)
+STRATEGY_CHECK_EARLY = 120     # 장 초반(09:00~10:00) 전략 체크: 2분
 TURBULENCE_CHECK_INTERVAL = 180  # 터뷸런스 체크: 3분
+EARLY_SESSION_END = dtime(10, 0)  # 장 초반 종료 시각
 
 
 def load_config() -> dict:
@@ -268,10 +271,15 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 "total": ta.total,
             }
 
-            if signal.type.value != "BUY":
-                log_decision(symbol, name, "skip", f"신호 없음: {signal.reason}",
-                             cur_price, strategy="etf", ta_scores=_ta_scores)
-                continue
+            breakout_passed = signal.type.value == "BUY"
+
+            if not breakout_passed:
+                # 돌파 미통과: TA가 충분히 강하면 융합 평가로 넘김, 아니면 skip
+                if ta.total < 20:
+                    log_decision(symbol, name, "skip", f"신호 없음: {signal.reason}",
+                                 cur_price, strategy="etf", ta_scores=_ta_scores)
+                    continue
+                print(f"    돌파 미통과, TA={ta.total:+.0f} — 융합 평가 진행")
 
             # LGBM 예측 (차단하지 않고 확률만 수집, history 재사용)
             lgbm_filter = get_prediction_filter(client, symbol, history=history)
@@ -297,7 +305,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             fusion = fuse_signals(
                 ta_score=ta.total,
                 lgbm_prob=lgbm_prob,
-                breakout_signal=True,  # 변동성 돌파 통과했으므로 True
+                breakout_signal=breakout_passed,
                 overnight_gap=overnight_gap,
                 regime=regime_state,
                 regime_confidence=regime_conf,
@@ -313,21 +321,52 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                              lgbm_prob=lgbm_prob)
                 continue
 
-            qty = int(budget * 0.999 // cur_price)
+            # 돌파 미통과 시 STRONG_BUY만 허용 (약한 신호로 진입 방지)
+            if not breakout_passed and fusion.signal != "STRONG_BUY":
+                print(f"    돌파 미통과 + BUY급 → SKIP (STRONG_BUY 필요)")
+                log_decision(symbol, name, "skip",
+                             f"돌파 미통과, 융합 BUY {fusion.final_prob:.0%} (STRONG 필요)",
+                             cur_price, strategy="etf", ta_scores=_ta_scores,
+                             lgbm_prob=lgbm_prob)
+                continue
+
+            # 확신도 연동 포지션 사이징: 융합 확률에 비례하여 투입
+            # 55%→30%, 70%→65%, 85%+→100%
+            fp = fusion.final_prob
+            if fp >= STRONG_BUY_THRESHOLD:
+                sizing_ratio = 1.0
+            else:
+                sizing_ratio = 0.3 + (fp - BUY_THRESHOLD) / (STRONG_BUY_THRESHOLD - BUY_THRESHOLD) * 0.7
+            sizing_ratio = max(0.3, min(1.0, sizing_ratio))
+
+            # Drawdown 스케일링: 연속 손실/수익에 따라 조정
+            dd_scale, dd_reason = get_drawdown_scale()
+            sizing_ratio *= dd_scale
+            sizing_ratio = max(0.2, min(1.2, sizing_ratio))
+            if dd_scale != 1.0:
+                print(f"    Drawdown: {dd_reason} (최종 투입={sizing_ratio:.0%})")
+
+            qty = int(budget * 0.999 * sizing_ratio // cur_price)
             if qty <= 0:
-                print(f"    매수 불가 (예산 {budget:,}원, 주가 {cur_price:,}원)")
+                print(f"    매수 불가 (예산 {budget:,}원×{sizing_ratio:.0%}, 주가 {cur_price:,}원)")
                 continue
 
             total = qty * cur_price
             buy_label = "STRONG_BUY" if fusion.signal == "STRONG_BUY" else "BUY"
             print(f"    [{buy_label}] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 "
-                  f"(융합={fusion.final_prob:.0%}, TA={ta.total:+.0f})")
+                  f"(융합={fusion.final_prob:.0%}, 투입={sizing_ratio:.0%}, TA={ta.total:+.0f})")
+
+            # ATR 계산 (동적 손절용)
+            atr_value = compute_atr_for_position(history)
 
             _extra = {"strong_sector": is_strong, "fusion_prob": fusion.final_prob,
-                       "fusion_signal": fusion.signal, "breakout_signal": True}
+                       "fusion_signal": fusion.signal, "breakout_signal": breakout_passed,
+                       "atr_at_buy": round(atr_value, 2),
+                       "sizing_ratio": round(sizing_ratio, 2)}
 
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
+                record_buy(symbol, cur_price, qty, atr=atr_value)
                 log_decision(symbol, name, "buy",
                              f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})",
                              cur_price, qty=qty, strategy="etf", ta_scores=_ta_scores,
@@ -340,7 +379,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
                     log_trade(symbol, name, "buy", qty, cur_price)
-                    record_buy(symbol, cur_price, qty)
+                    record_buy(symbol, cur_price, qty, atr=atr_value)
                     log_decision(symbol, name, "buy",
                                  f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})",
                                  cur_price, qty=qty, strategy="etf",
@@ -613,8 +652,10 @@ def run_loop(dry_run: bool) -> None:
             if is_turbulent:
                 print(f"[{now:%H:%M:%S}] [터뷸런스] {turb_reason}")
 
-        # ── 전략 체크 (매 5분) — 신규 매수 탐색 ──
-        if (epoch_now - last_strategy_check >= STRATEGY_CHECK_INTERVAL
+        # ── 전략 체크 — 신규 매수 탐색 ──
+        # 장 초반(~10:00)에는 2분 간격, 이후 5분 간격
+        strategy_interval = STRATEGY_CHECK_EARLY if t < EARLY_SESSION_END else STRATEGY_CHECK_INTERVAL
+        if (epoch_now - last_strategy_check >= strategy_interval
                 and not bought_today
                 and not is_turbulent
                 and t > SELL_WINDOW_END):
