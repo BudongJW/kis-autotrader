@@ -24,6 +24,7 @@ from src.risk_manager import (
     get_drawdown_scale,
 )
 from src.strategies.signal_fusion import FUSION_WEIGHTS_PATH
+from src.experience import _load_experience
 
 
 JOURNAL_DIR = Path("journal")
@@ -161,6 +162,45 @@ def main() -> None:
     # 유니버스 정보
     universe_list = [{"symbol": s["symbol"], "name": s["name"]} for s in universe]
 
+    # 오늘의 전략 결정 로그 (최근 20건)
+    today_decisions = []
+    try:
+        all_exp = _load_experience()
+        for r in reversed(all_exp):
+            if r.get("date") != today_str:
+                continue
+            decision = {
+                "time": r.get("timestamp", "")[-8:],  # HH:MM:SS
+                "symbol": r.get("symbol", ""),
+                "name": r.get("name", ""),
+                "action": r.get("action", ""),
+                "reason": r.get("reason", ""),
+                "price": r.get("price", 0),
+            }
+            # 매수 결정에는 추가 정보
+            if r.get("fusion_prob") is not None:
+                decision["fusion_prob"] = r["fusion_prob"]
+            if r.get("fusion_signal"):
+                decision["fusion_signal"] = r["fusion_signal"]
+            if r.get("ta_scores", {}).get("total") is not None:
+                decision["ta_total"] = r["ta_scores"]["total"]
+            if r.get("lgbm_prob") is not None:
+                decision["lgbm_prob"] = r["lgbm_prob"]
+            if r.get("breakout_signal") is not None:
+                decision["breakout"] = r["breakout_signal"]
+            if r.get("sizing_ratio") is not None:
+                decision["sizing_ratio"] = r["sizing_ratio"]
+            if r.get("atr_at_buy") is not None:
+                decision["atr_at_buy"] = r["atr_at_buy"]
+            if r.get("qty", 0) > 0:
+                decision["qty"] = r["qty"]
+
+            today_decisions.append(decision)
+            if len(today_decisions) >= 20:
+                break
+    except Exception:
+        pass
+
     portfolio = {
         "updated_at": now.isoformat(),
         "initial_capital": 500000,
@@ -213,6 +253,9 @@ def main() -> None:
 
         # 신호 융합
         "fusion": fusion_info,
+
+        # 오늘의 전략 결정 로그
+        "decisions": today_decisions,
     }
 
     PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
