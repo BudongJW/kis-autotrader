@@ -93,8 +93,23 @@ def _fetch_us_close_from_etf(client) -> dict[str, float]:
     return {}
 
 
+def _load_adaptive_thresholds() -> dict:
+    """strategy.yaml에서 학습 기반 갭 임계값 로드."""
+    try:
+        import yaml
+        from pathlib import Path as _P
+        with _P("configs/strategy.yaml").open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        return cfg.get("gap_adaptive_thresholds", {})
+    except Exception:
+        return {}
+
+
 def get_overnight_signal(client=None) -> OvernightSignal:
     """미국장 종가 기반 오버나이트 신호 생성.
+
+    임계값은 적응적 학습으로 조정됨 (gap_adaptive_thresholds).
+    적중률 높으면 민감하게, 낮으면 둔감하게 반응.
 
     Args:
         client: KISClient (ETF 폴백용). None이면 yfinance만 시도.
@@ -121,10 +136,15 @@ def get_overnight_signal(client=None) -> OvernightSignal:
     nasdaq = us_data.get("nasdaq", 0)
     sp500 = us_data.get("sp500", 0)
 
+    # 적응적 임계값 (학습 데이터에 따라 조정됨)
+    adaptive = _load_adaptive_thresholds()
+    bull_th = adaptive.get("bullish", 1.5)
+    bear_th = adaptive.get("bearish", -1.5)
+
     # 방향 & 강도 판단
     avg_change = (nasdaq * 0.6 + sp500 * 0.4)  # 나스닥에 가중치
 
-    if avg_change > 1.5:
+    if avg_change > bull_th:
         direction = "bullish"
         strength = min(1.0, avg_change / 3.0)
         confidence_boost = min(0.2, avg_change * 0.06)
@@ -136,11 +156,11 @@ def get_overnight_signal(client=None) -> OvernightSignal:
         confidence_boost = avg_change * 0.04
         action = "normal"
         detail = f"미국 소폭 상승 (NASDAQ {nasdaq:+.1f}%, S&P500 {sp500:+.1f}%) → 정상 매매"
-    elif avg_change < -1.5:
+    elif avg_change < bear_th:
         direction = "bearish"
         strength = min(1.0, abs(avg_change) / 3.0)
         confidence_boost = max(-0.2, avg_change * 0.06)
-        action = "skip" if avg_change < -2.5 else "reduce_size"
+        action = "skip" if avg_change < bear_th - 1.0 else "reduce_size"
         detail = f"미국 급락 (NASDAQ {nasdaq:+.1f}%, S&P500 {sp500:+.1f}%) → 매수 자제"
     elif avg_change < -0.5:
         direction = "bearish"

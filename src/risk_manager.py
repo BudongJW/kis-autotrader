@@ -127,10 +127,26 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
     return False, ""
 
 
+def _load_hold_rules() -> dict:
+    """strategy.yaml에서 적응적 보유 규칙 로드."""
+    try:
+        import yaml
+        config_path = Path("configs/strategy.yaml")
+        with config_path.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        return cfg.get("hold_adaptive_rules", {})
+    except Exception:
+        return {}
+
+
 def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
     """시가 매도 대신 계속 보유할지 판단.
 
-    조건:
+    적응적 규칙 (학습 데이터 충분 시):
+      - min_profit_to_hold: 보유 유지 최소 수익률 (학습으로 조정)
+      - max_hold_days: 최대 보유 일수 (학습으로 조정)
+
+    기본 규칙:
       - 현재 수익 중 (+0.3% 이상)
       - 최대 보유 일수(5일) 미만
       - 고점 대비 -2% 이내
@@ -146,7 +162,11 @@ def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
     buy_price = pos["buy_price"]
     peak_price = pos.get("peak_price", buy_price)
     hold_days = pos.get("hold_days", 0)
-    max_hold = pos.get("max_hold_days", 5)
+
+    # 적응적 규칙 로드
+    rules = _load_hold_rules()
+    min_profit = rules.get("min_profit_to_hold", 0.003)
+    max_hold = rules.get("max_hold_days", pos.get("max_hold_days", 5))
 
     pnl_pct = (current_price - buy_price) / buy_price
     drop_from_peak = (current_price - peak_price) / peak_price if peak_price > 0 else 0
@@ -160,8 +180,7 @@ def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
         return False, f"손실 중 ({pnl_pct:+.1%}), 매도"
 
     # 수익 중이고 고점 대비 적정 범위 → 보유 계속
-    if pnl_pct >= 0.003 and drop_from_peak > -0.02:
-        # 보유 일수 갱신
+    if pnl_pct >= min_profit and drop_from_peak > -0.02:
         pos["hold_days"] = hold_days + 1
         positions[symbol] = pos
         save_positions(positions)

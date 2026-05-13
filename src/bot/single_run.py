@@ -40,6 +40,7 @@ from src.market_learner import get_market_confidence, get_intraday_regime_adjust
 from src.execution.twap import TWAPEngine
 from src.strategies.lgbm_predictor import get_prediction_filter
 from src.experience import log_decision, get_regime_recommendation
+from src.adaptive_learning import record_hold_outcome, record_sector_trade
 from src.utils.logger import log
 
 MARKET_OPEN = dtime(9, 0)
@@ -152,6 +153,15 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
             print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
                 log_trade(symbol, tag, "sell", qty, price)
+                # 보유 기간 결과 기록 (적응 학습용)
+                positions = load_positions()
+                pos = positions.get(symbol, {})
+                buy_p = pos.get("buy_price", 0)
+                hold_d = pos.get("hold_days", 0)
+                if buy_p > 0:
+                    pnl = (price - buy_p) / buy_p
+                    action_type = "held" if hold_d > 0 else "sold_at_open"
+                    record_hold_outcome(symbol, hold_d, action_type, buy_p, price, pnl)
                 remove_position(symbol)
                 log.info(f"{label}_sell", symbol=symbol, qty=qty, price=price)
             elif rt == "E":
@@ -223,9 +233,12 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
     print(f"  [ETF] K={k}, MA={ma} | 배정: {budget:,}원")
 
+    strong_sectors = set(cfg.get("strong_sectors", []))
+
     for stock in universe:
         symbol = stock["symbol"]
         name = stock["name"]
+        is_strong = any(sec in name for sec in strong_sectors)
         try:
             history = fetch_recent_history(client, symbol, days=70)
             signal = strategy.generate_signal(symbol, history)
@@ -274,11 +287,13 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             total = qty * cur_price
             print(f"    [매수] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 (TA={ta.total:+.0f})")
 
+            _extra = {"strong_sector": is_strong}
+
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
                 log_decision(symbol, name, "buy", f"변동성 돌파 매수 (TA={ta.total:+.0f})",
                              cur_price, qty=qty, strategy="etf", ta_scores=_ta_scores,
-                             lgbm_prob=lgbm_filter.get("up_prob"))
+                             lgbm_prob=lgbm_filter.get("up_prob"), extra=_extra)
                 return total
 
             if not dry_run:
@@ -292,7 +307,8 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                                  f"변동성 돌파 매수 (TA={ta.total:+.0f})",
                                  cur_price, qty=qty, strategy="etf",
                                  ta_scores=_ta_scores,
-                                 lgbm_prob=lgbm_filter.get("up_prob"))
+                                 lgbm_prob=lgbm_filter.get("up_prob"),
+                                 extra=_extra)
                     return total
                 elif rt == "E":
                     log.warning("etf_buy_error", symbol=symbol, msg=resp.get("msg1", ""))

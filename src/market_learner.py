@@ -38,6 +38,7 @@ from src.experience import (
     update_strategy_weights_from_experience, _load_experience,
 )
 from src.strategies.overnight_gap import get_overnight_signal
+from src.adaptive_learning import run_adaptive_learning
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -700,10 +701,18 @@ def post_market(client: KISClient) -> None:
     except Exception as e:
         print(f"  LGBM 재학습 실패: {e}")
 
-    # 7. 누적 학습 데이터 요약
+    # 7. 적응형 학습 (오버나이트갭·보유기간·섹터모멘텀 성과 평가)
+    cfg = load_config()
+    try:
+        cfg = run_adaptive_learning(client, cfg)
+        save_config(cfg)
+    except Exception as e:
+        print(f"  적응 학습 실패: {e}")
+
+    # 8. 누적 학습 데이터 요약
     ta_accuracy = load_ta_accuracy()
     total_evals = sum(v["total"] for v in ta_accuracy.values())
-    print(f"\n[7] 누적 학습 현황:")
+    print(f"\n[8] 누적 학습 현황:")
     print(f"  시장 데이터: {len(market_log)}일")
     print(f"  TA 평가: {total_evals}건")
     total_exp = len(_load_experience())

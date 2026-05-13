@@ -98,6 +98,9 @@ jobs:
             logs/experience.json
             logs/regime_memory.json
             logs/strategy_weights.json
+            logs/gap_accuracy.json
+            logs/hold_outcomes.json
+            logs/sector_accuracy.json
           overwrite: true
           retention-days: 180
         if: always()
