@@ -46,6 +46,7 @@ from src.strategies.lgbm_predictor import get_prediction_filter
 from src.strategies.signal_fusion import fuse_signals, BUY_THRESHOLD, STRONG_BUY_THRESHOLD
 from src.experience import log_decision, get_regime_recommendation
 from src.adaptive_learning import record_hold_outcome, record_sector_trade
+from src.pre_briefing import load_briefing, get_precomputed_target
 from src.strategies.bear_strategy import (
     detect_market_regime, compute_bear_allocation, inverse_breakout_signal,
     compute_annualized_vol, log_bear_trade, get_adaptive_params,
@@ -251,6 +252,21 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
     print(f"  [ETF] K={k}, MA={ma} | 배정: {budget:,}원")
 
+    # 사전 브리핑 데이터 활용
+    briefing = load_briefing()
+    if briefing:
+        plan = briefing.get("action_plan", {})
+        mtf = briefing.get("multi_timeframe", {})
+        if mtf.get("status") == "ready":
+            print(f"  [브리핑] 추세: {mtf.get('alignment', '?')} "
+                  f"(강도 {mtf.get('trend_strength', 0):+.2f}) "
+                  f"→ {mtf.get('recommendation', '?')}")
+        candidates = plan.get("total_candidates", 0)
+        if candidates > 0:
+            top = plan.get("top_candidates", [])
+            top_names = [c["name"] for c in top[:3]]
+            print(f"  [브리핑] 매수 후보 {candidates}종목: {', '.join(top_names)}")
+
     strong_sectors = set(cfg.get("strong_sectors", []))
 
     for stock in universe:
@@ -266,6 +282,13 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             ta = compute_ta_score(history, weights=ta_weights)
             print(f"  [ETF] {name} {signal.type.value} @ {cur_price:,}원 — {signal.reason}")
             print(f"    TA분석: {ta.detail}")
+
+            # 사전 분석 데이터 참조
+            pre_target = get_precomputed_target(symbol)
+            if pre_target:
+                print(f"    [사전] 목표: {pre_target['est_target']:,}원 "
+                      f"| 돌파확률: {pre_target['breakout_prob']:.0%} "
+                      f"| 점수: {pre_target['buy_score']}")
 
             # 경험 기록용 컨텍스트
             _ta_scores = {

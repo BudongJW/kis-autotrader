@@ -40,6 +40,7 @@ from src.experience import (
 from src.strategies.overnight_gap import get_overnight_signal
 from src.adaptive_learning import run_adaptive_learning, run_us_post_learning
 from src.strategies.signal_fusion import learn_fusion_weights
+from src.pre_briefing import run_pre_briefing
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -463,6 +464,17 @@ def pre_market(client: KISClient) -> None:
     history = [h for h in history if h.get("date") != market_entry["date"]]
     history.append(market_entry)
     save_market_log(history)
+
+    # 8. 장 전 종합 브리핑 (돌파 목표가 사전 계산 + 멀티 타임프레임 + 리스크)
+    print("\n[8] 장 전 종합 브리핑...")
+    try:
+        briefing = run_pre_briefing(client)
+        plan = briefing.get("action_plan", {})
+        print(f"  전략: {plan.get('strategy_mode', '?')} | "
+              f"후보: {plan.get('total_candidates', 0)}종목 | "
+              f"예산: {plan.get('budget', {}).get('final_budget_krw', 0):,}원")
+    except Exception as e:
+        print(f"  브리핑 생성 실패: {e}")
 
     print("\n장 전 학습 완료.")
 
