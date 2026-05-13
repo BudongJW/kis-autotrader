@@ -39,6 +39,7 @@ from src.risk_manager import (
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
 from src.strategies.lgbm_predictor import get_prediction_filter
+from src.strategies.signal_fusion import fuse_signals
 from src.experience import log_decision, get_regime_recommendation
 from src.adaptive_learning import record_hold_outcome, record_sector_trade
 from src.utils.logger import log
@@ -262,22 +263,45 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                              cur_price, strategy="etf", ta_scores=_ta_scores)
                 continue
 
-            if ta.total <= -20:
-                print(f"    TA 거부 (점수 {ta.total:+.0f} ≤ -20). 매수 스킵.")
-                log_decision(symbol, name, "skip", f"TA 거부 ({ta.total:+.0f})",
-                             cur_price, strategy="etf", ta_scores=_ta_scores)
-                continue
-
-            # LGBM 예측 필터
+            # LGBM 예측 (차단하지 않고 확률만 수집)
             lgbm_filter = get_prediction_filter(client, symbol)
-            if not lgbm_filter["allow"]:
-                print(f"    LGBM 차단: {lgbm_filter['reason']}")
-                log_decision(symbol, name, "skip", f"LGBM 차단: {lgbm_filter['reason']}",
+            lgbm_prob = lgbm_filter.get("up_prob", 0.5)
+            if lgbm_prob != 0.5:
+                print(f"    LGBM: 상승 {lgbm_prob:.0%} — {lgbm_filter['reason']}")
+
+            # 오버나이트 갭 + 레짐 정보 수집
+            gap_info = cfg.get("overnight_signal", {})
+            regime_info = cfg.get("market_regime", {})
+            regime_state = regime_info.get("hmm_state", "unknown")
+            regime_conf = regime_info.get("hmm_confidence", 0.5)
+            market_conf = cfg.get("market_confidence", 0.5)
+
+            overnight_gap = None
+            if gap_info:
+                overnight_gap = {
+                    "direction": gap_info.get("direction", "neutral"),
+                    "strength": gap_info.get("strength", 0),
+                }
+
+            # 신호 확률적 융합: 모든 신호를 가중 결합
+            fusion = fuse_signals(
+                ta_score=ta.total,
+                lgbm_prob=lgbm_prob,
+                breakout_signal=True,  # 변동성 돌파 통과했으므로 True
+                overnight_gap=overnight_gap,
+                regime=regime_state,
+                regime_confidence=regime_conf,
+                market_confidence=market_conf,
+            )
+            print(f"    융합: {fusion.detail}")
+
+            if fusion.signal == "SKIP":
+                print(f"    융합 판단: SKIP (확률 {fusion.final_prob:.0%} < 55%)")
+                log_decision(symbol, name, "skip",
+                             f"융합 SKIP ({fusion.final_prob:.0%})",
                              cur_price, strategy="etf", ta_scores=_ta_scores,
-                             lgbm_prob=lgbm_filter.get("up_prob"))
+                             lgbm_prob=lgbm_prob)
                 continue
-            if lgbm_filter["up_prob"] != 0.5:
-                print(f"    LGBM: 상승 {lgbm_filter['up_prob']:.0%} — {lgbm_filter['reason']}")
 
             qty = int(budget * 0.999 // cur_price)
             if qty <= 0:
@@ -285,15 +309,19 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 continue
 
             total = qty * cur_price
-            print(f"    [매수] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 (TA={ta.total:+.0f})")
+            buy_label = "STRONG_BUY" if fusion.signal == "STRONG_BUY" else "BUY"
+            print(f"    [{buy_label}] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 "
+                  f"(융합={fusion.final_prob:.0%}, TA={ta.total:+.0f})")
 
-            _extra = {"strong_sector": is_strong}
+            _extra = {"strong_sector": is_strong, "fusion_prob": fusion.final_prob,
+                       "fusion_signal": fusion.signal}
 
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
-                log_decision(symbol, name, "buy", f"변동성 돌파 매수 (TA={ta.total:+.0f})",
+                log_decision(symbol, name, "buy",
+                             f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})",
                              cur_price, qty=qty, strategy="etf", ta_scores=_ta_scores,
-                             lgbm_prob=lgbm_filter.get("up_prob"), extra=_extra)
+                             lgbm_prob=lgbm_prob, extra=_extra)
                 return total
 
             if not dry_run:
@@ -304,10 +332,10 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                     log_trade(symbol, name, "buy", qty, cur_price)
                     record_buy(symbol, cur_price, qty)
                     log_decision(symbol, name, "buy",
-                                 f"변동성 돌파 매수 (TA={ta.total:+.0f})",
+                                 f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})",
                                  cur_price, qty=qty, strategy="etf",
                                  ta_scores=_ta_scores,
-                                 lgbm_prob=lgbm_filter.get("up_prob"),
+                                 lgbm_prob=lgbm_prob,
                                  extra=_extra)
                     return total
                 elif rt == "E":

@@ -136,8 +136,91 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
     features["vol_ma20_ratio"] = volume / volume.rolling(20).mean().replace(0, np.nan)
 
     # 캔들 패턴 (간단)
-    features["body_ratio"] = (close - df["open"].astype(float)) / (high - low).replace(0, np.nan)
-    features["upper_shadow"] = (high - close.clip(lower=df["open"].astype(float))) / (high - low).replace(0, np.nan)
+    open_ = df["open"].astype(float)
+    features["body_ratio"] = (close - open_) / (high - low).replace(0, np.nan)
+    features["upper_shadow"] = (high - close.clip(lower=open_)) / (high - low).replace(0, np.nan)
+
+    # ── 신규 피처: 미국 시장 갭 ──
+    try:
+        import yaml
+        cfg_path = Path("configs/strategy.yaml")
+        if cfg_path.exists():
+            with cfg_path.open(encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            gap = cfg.get("overnight_signal", {})
+            features["us_nasdaq_change"] = gap.get("nasdaq_change", 0)
+            features["us_sp500_change"] = gap.get("sp500_change", 0)
+            features["us_gap_strength"] = gap.get("strength", 0)
+    except Exception:
+        features["us_nasdaq_change"] = 0
+        features["us_sp500_change"] = 0
+        features["us_gap_strength"] = 0
+
+    # ── 신규 피처: 요일 효과 ──
+    if hasattr(df.index, 'dayofweek'):
+        features["day_of_week"] = df.index.dayofweek
+    else:
+        try:
+            features["day_of_week"] = pd.to_datetime(df.index).dayofweek
+        except Exception:
+            features["day_of_week"] = 2  # 수요일(중립) 폴백
+
+    # ── 신규 피처: 모멘텀 가속도 (2차 미분) ──
+    ret_1d = close.pct_change(1)
+    features["momentum_accel"] = ret_1d.diff(1)  # 수익률의 변화율
+    features["momentum_accel_3d"] = ret_1d.diff(3)
+
+    # ── 신규 피처: 거래량 급증 감지 ──
+    vol_ma5 = volume.rolling(5).mean()
+    vol_ma20 = volume.rolling(20).mean()
+    features["vol_surge"] = (volume / vol_ma20.replace(0, np.nan)).clip(upper=5)
+    features["vol_trend_5d"] = (vol_ma5 / vol_ma20.replace(0, np.nan))
+
+    # ── 신규 피처: 가격-거래량 다이버전스 ──
+    price_slope_10 = close.rolling(10).apply(
+        lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) == 10 else 0,
+        raw=False,
+    )
+    vol_slope_10 = volume.rolling(10).apply(
+        lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) == 10 else 0,
+        raw=False,
+    )
+    # 가격 상승 + 거래량 감소 = 약세 다이버전스 (음수)
+    features["pv_divergence"] = np.sign(price_slope_10) * np.sign(vol_slope_10)
+
+    # ── 신규 피처: 레짐 컨텍스트 (HMM 상태 인코딩) ──
+    try:
+        if cfg_path.exists():
+            regime = cfg.get("market_regime", {})
+            hmm_state = regime.get("hmm_state", "sideways")
+            features["hmm_bull"] = 1 if hmm_state == "bull" else 0
+            features["hmm_bear"] = 1 if hmm_state == "bear" else 0
+            features["market_confidence"] = cfg.get("market_confidence", 0.5)
+        else:
+            features["hmm_bull"] = 0
+            features["hmm_bear"] = 0
+            features["market_confidence"] = 0.5
+    except Exception:
+        features["hmm_bull"] = 0
+        features["hmm_bear"] = 0
+        features["market_confidence"] = 0.5
+
+    # ── 신규 피처: RSI × 레짐 상호작용 ──
+    rsi_val = rsi_s if rsi_s is not None else pd.Series(50.0, index=df.index)
+    features["rsi_x_bull"] = rsi_val * features["hmm_bull"]
+    features["rsi_x_bear"] = rsi_val * features["hmm_bear"]
+
+    # ── 신규 피처: 변동성 사이클 위치 ──
+    if len(close) >= 60:
+        vol_20d = close.pct_change().rolling(20).std()
+        vol_60d = close.pct_change().rolling(60).std()
+        features["vol_cycle_pos"] = vol_20d / vol_60d.replace(0, np.nan)
+
+    # ── 신규 피처: 고저 범위 대비 종가 위치 (최근 20일) ──
+    high_20 = high.rolling(20).max()
+    low_20 = low.rolling(20).min()
+    range_20 = (high_20 - low_20).replace(0, np.nan)
+    features["price_position_20d"] = (close - low_20) / range_20
 
     return features
 
@@ -213,16 +296,9 @@ class LGBMPredictor:
 
         self.feature_names = list(features.columns)
 
-        # 시계열 분할 (마지막 test_ratio를 테스트로)
-        split_idx = int(len(features) * (1 - test_ratio))
-        X_train = features.iloc[:split_idx]
-        X_test = features.iloc[split_idx:]
-        y_train = target.iloc[:split_idx]
-        y_test = target.iloc[split_idx:]
-
-        # LightGBM 학습
-        train_data = lgb.Dataset(X_train, label=y_train)
-        valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
+        # Walk-Forward CV: 확장 윈도우로 시계열 안전 분할
+        tscv = TimeSeriesSplit(n_splits=3)
+        cv_aucs = []
 
         params = {
             "objective": "binary",
@@ -238,6 +314,36 @@ class LGBMPredictor:
             "seed": 42,
         }
 
+        # CV로 성능 측정
+        for train_idx, test_idx in tscv.split(features):
+            X_tr = features.iloc[train_idx]
+            X_te = features.iloc[test_idx]
+            y_tr = target.iloc[train_idx]
+            y_te = target.iloc[test_idx]
+
+            tr_data = lgb.Dataset(X_tr, label=y_tr)
+            va_data = lgb.Dataset(X_te, label=y_te, reference=tr_data)
+            fold_model = lgb.train(
+                params, tr_data, num_boost_round=200,
+                valid_sets=[va_data],
+                callbacks=[lgb.early_stopping(15), lgb.log_evaluation(0)],
+            )
+            fold_prob = fold_model.predict(X_te)
+            try:
+                cv_aucs.append(roc_auc_score(y_te, fold_prob))
+            except ValueError:
+                pass
+
+        # 최종 모델: 마지막 20%를 validation으로 전체 학습
+        split_idx = int(len(features) * (1 - test_ratio))
+        X_train = features.iloc[:split_idx]
+        X_test = features.iloc[split_idx:]
+        y_train = target.iloc[:split_idx]
+        y_test = target.iloc[split_idx:]
+
+        train_data = lgb.Dataset(X_train, label=y_train)
+        valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
+
         callbacks = [lgb.early_stopping(20), lgb.log_evaluation(0)]
         self.model = lgb.train(
             params,
@@ -252,6 +358,7 @@ class LGBMPredictor:
         y_pred = (y_pred_prob > 0.5).astype(int)
         accuracy = accuracy_score(y_test, y_pred)
         auc = roc_auc_score(y_test, y_pred_prob)
+        cv_auc_mean = float(np.mean(cv_aucs)) if cv_aucs else auc
 
         # 피처 중요도
         importance = dict(zip(
@@ -269,18 +376,21 @@ class LGBMPredictor:
                 "trained_at": pd.Timestamp.now().isoformat(),
                 "accuracy": round(accuracy, 4),
                 "auc": round(auc, 4),
+                "cv_auc": round(cv_auc_mean, 4),
                 "n_samples": len(features),
+                "n_features": len(self.feature_names),
                 "feature_importance": {k: round(v, 2) for k, v in sorted_imp[:20]},
             }, f, ensure_ascii=False, indent=2)
 
-        print(f"  [LGBM] 학습 완료: accuracy={accuracy:.1%}, AUC={auc:.3f}")
-        print(f"  [LGBM] 학습 데이터: {len(X_train)}건, 테스트: {len(X_test)}건")
+        print(f"  [LGBM] 학습 완료: accuracy={accuracy:.1%}, AUC={auc:.3f}, CV-AUC={cv_auc_mean:.3f}")
+        print(f"  [LGBM] 피처: {len(self.feature_names)}개, 학습: {len(X_train)}건, 테스트: {len(X_test)}건")
         print(f"  [LGBM] 상위 피처: " +
               ", ".join(f"{k}({v:.0f})" for k, v in sorted_imp[:5]))
 
         return {
             "accuracy": float(accuracy),
             "auc": float(auc),
+            "cv_auc": float(cv_auc_mean),
             "feature_importance": dict(sorted_imp[:10]),
         }
 

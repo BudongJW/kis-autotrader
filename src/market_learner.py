@@ -39,6 +39,7 @@ from src.experience import (
 )
 from src.strategies.overnight_gap import get_overnight_signal
 from src.adaptive_learning import run_adaptive_learning
+from src.strategies.signal_fusion import learn_fusion_weights
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -708,6 +709,17 @@ def post_market(client: KISClient) -> None:
         save_config(cfg)
     except Exception as e:
         print(f"  적응 학습 실패: {e}")
+
+    # 7.5. 신호 융합 가중치 학습 (Brier Score 최적화)
+    print("\n[7.5] 신호 융합 가중치 학습...")
+    try:
+        fusion_weights = learn_fusion_weights()
+        if fusion_weights:
+            print(f"  학습 완료: {fusion_weights}")
+        else:
+            print("  경험 데이터 부족 (20건 미만). 기본 가중치 사용.")
+    except Exception as e:
+        print(f"  융합 가중치 학습 실패: {e}")
 
     # 8. 누적 학습 데이터 요약
     ta_accuracy = load_ta_accuracy()

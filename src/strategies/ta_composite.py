@@ -45,9 +45,57 @@ class TAScore:
     signal: str = "HOLD"  # "BUY" / "SELL" / "HOLD"
     detail: str = ""      # 사람이 읽을 수 있는 요약
 
-    # 기준값
+    # 기본 기준값 (레짐별 동적 조정은 get_regime_thresholds에서)
     BUY_THRESHOLD = 40
     SELL_THRESHOLD = -40
+
+
+# 레짐별 TA 임계값: 상승장은 진입 완화, 하락장은 엄격
+REGIME_THRESHOLDS = {
+    "bull":     {"buy": 30, "sell": -30},   # 상승장: 관대한 진입
+    "bear":     {"buy": 55, "sell": -50},   # 하락장: 엄격한 진입
+    "sideways": {"buy": 40, "sell": -40},   # 횡보장: 기본값
+    "unknown":  {"buy": 40, "sell": -40},
+}
+
+# 레짐별 TA 지표 해석 모드
+# 상승장: 모멘텀 지표(MACD, MA) 비중 ↑, 역추세(RSI 과매수) 비중 ↓
+# 하락장: 역추세 지표(RSI 과매도, BB 하단) 비중 ↑, confluence 요구
+REGIME_WEIGHT_ADJUSTMENTS = {
+    "bull": {
+        "macd": 1.3,   # 모멘텀 강화
+        "ma": 1.3,
+        "adx": 1.2,
+        "rsi": 0.7,    # RSI 과매수 패널티 완화
+        "bb": 0.8,
+    },
+    "bear": {
+        "rsi": 1.3,    # 과매도 반등 신호 강화
+        "bb": 1.3,     # 하단 밴드 반등 강화
+        "macd": 0.8,   # 모멘텀 추종 약화
+        "ma": 0.7,
+        "obv": 1.3,    # 거래량 다이버전스 중시
+    },
+    "sideways": {},    # 기본 가중치
+}
+
+
+def get_regime_thresholds() -> tuple[float, float, str]:
+    """strategy.yaml에서 현재 레짐 기반 TA 임계값 반환.
+
+    Returns:
+        (buy_threshold, sell_threshold, regime_name)
+    """
+    try:
+        import yaml
+        from pathlib import Path as _P
+        with _P("configs/strategy.yaml").open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        hmm_state = cfg.get("market_regime", {}).get("hmm_state", "unknown")
+        thresholds = REGIME_THRESHOLDS.get(hmm_state, REGIME_THRESHOLDS["unknown"])
+        return thresholds["buy"], thresholds["sell"], hmm_state
+    except Exception:
+        return TAScore.BUY_THRESHOLD, TAScore.SELL_THRESHOLD, "unknown"
 
 
 
@@ -65,17 +113,31 @@ DEFAULT_WEIGHTS = {
 }
 
 
-def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
+def compute_ta_score(df: pd.DataFrame, weights: dict | None = None,
+                     regime: str | None = None) -> TAScore:
     """OHLCV DataFrame에서 기술적 지표를 계산하고 종합 점수를 반환.
 
     Args:
         df: 컬럼 ['open','high','low','close','volume'], 최소 60행 이상.
         weights: 지표별 가중치 dict. None이면 DEFAULT_WEIGHTS 사용.
+        regime: HMM 레짐 ("bull"/"bear"/"sideways"). None이면 자동 로드.
 
     Returns:
         TAScore — 종합 점수와 개별 지표 점수
     """
-    w = weights or DEFAULT_WEIGHTS
+    w = dict(weights or DEFAULT_WEIGHTS)
+
+    # 레짐 로드 및 가중치 조정
+    if regime is None:
+        _, _, regime = get_regime_thresholds()
+    regime_adj = REGIME_WEIGHT_ADJUSTMENTS.get(regime, {})
+    for k, mult in regime_adj.items():
+        if k in w:
+            w[k] = w[k] * mult
+    # 재정규화
+    w_total = sum(w.values())
+    if w_total > 0:
+        w = {k: v / w_total for k, v in w.items()}
     if len(df) < 60:
         return TAScore(
             total=0, rsi_score=0, macd_score=0, bb_score=0,
@@ -167,15 +229,16 @@ def compute_ta_score(df: pd.DataFrame, weights: dict | None = None) -> TAScore:
     total = weighted * 100  # -100 ~ +100
     total = max(-100, min(100, total))
 
-    if total >= TAScore.BUY_THRESHOLD:
+    buy_th, sell_th, _ = get_regime_thresholds()
+    if total >= buy_th:
         signal = "BUY"
-    elif total <= TAScore.SELL_THRESHOLD:
+    elif total <= sell_th:
         signal = "SELL"
     else:
         signal = "HOLD"
 
     detail = (
-        f"TA={total:+.0f} "
+        f"TA={total:+.0f}({regime}) "
         f"[RSI({rsi:.0f})={rsi_score:+.0f} "
         f"MACD={macd_score:+.0f} "
         f"BB={bb_score:+.0f} "
