@@ -46,6 +46,10 @@ from src.strategies.lgbm_predictor import get_prediction_filter
 from src.strategies.signal_fusion import fuse_signals, BUY_THRESHOLD, STRONG_BUY_THRESHOLD
 from src.experience import log_decision, get_regime_recommendation
 from src.adaptive_learning import record_hold_outcome, record_sector_trade
+from src.strategies.bear_strategy import (
+    detect_market_regime, compute_bear_allocation, inverse_breakout_signal,
+    compute_annualized_vol, log_bear_trade, get_adaptive_params,
+)
 from src.utils.logger import log
 
 KST = ZoneInfo("Asia/Seoul")
@@ -401,6 +405,251 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
 
 # ──────────────────────────────────────────────────────────
+# 하락장 전략 (인버스 + 방어자산)
+# ──────────────────────────────────────────────────────────
+
+def load_bear_config() -> dict:
+    """bear_strategy 설정 로드."""
+    cfg = load_config()
+    return cfg.get("bear_strategy", {})
+
+
+def load_inverse_universe() -> list[dict]:
+    cfg = load_config()
+    return cfg.get("universe", {}).get("inverse", [])
+
+
+def load_defensive_universe() -> list[dict]:
+    cfg = load_config()
+    return cfg.get("universe", {}).get("defensive", [])
+
+
+def load_canary_universe() -> list[dict]:
+    cfg = load_config()
+    return cfg.get("universe", {}).get("canary", [])
+
+
+def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
+                      regime_result, allocation, dry_run: bool,
+                      twap_engine: TWAPEngine | None = None) -> int:
+    """하락장 전략: 인버스 ETF 돌파 + 방어자산 매수.
+
+    레짐과 배분 결과에 따라:
+      - BEAR: 인버스 ETF 에 변동성 돌파 적용, 나머지 채권
+      - CAUTION: 채권 위주, 롱 축소
+      - CRISIS: 현금 + 단기채 (매수 없음)
+    """
+    r = regime_result.regime
+    today_str = _now().strftime("%Y-%m-%d")
+
+    print(f"  [하락장] 레짐: {r} ({regime_result.confidence:.0%}) | {regime_result.detail}")
+    print(f"  [배분] {allocation.detail}")
+
+    if r == "CRISIS":
+        print("  [하락장] CRISIS — 모든 위험자산 회피. 현금 보유.")
+        return 0
+
+    used = 0
+    params = load_strategy_params()
+    k = params.get("k", 0.5)
+    ma = params.get("trend_ma", 20)
+
+    # 성과 학습 기반 파라미터 조정
+    adaptive = get_adaptive_params(r)
+    if adaptive["reason"] != "기본 파라미터":
+        print(f"  [학습] {adaptive['reason']}")
+
+    # ── 인버스 ETF 매수 (BEAR 모드) ──
+    if r == "BEAR" and allocation.inverse_pct > 0:
+        inv_budget = int(budget * allocation.inverse_pct * adaptive.get("inverse_scale", 1.0))
+        inv_universe = load_inverse_universe()
+        inv_syms = {s["symbol"] for s in inv_universe}
+
+        # 이미 인버스 보유 중이면 스킵
+        inv_held = any(s in inv_syms for s in holdings)
+        if inv_held:
+            print(f"  [인버스] 이미 보유 중. 추가 매수 스킵.")
+        elif inv_budget >= 10000:
+            print(f"  [인버스] 배정: {inv_budget:,}원 (K={k}, MA={ma})")
+
+            for stock in inv_universe:
+                symbol = stock["symbol"]
+                name = stock["name"]
+                asset_type = stock.get("type", "inverse_1x")
+                try:
+                    history = fetch_recent_history(client, symbol, days=70)
+                    sig = inverse_breakout_signal(history, k=k, trend_ma=ma)
+                    print(f"    {name}: {sig['reason']}")
+
+                    if not sig["breakout"]:
+                        log_decision(symbol, name, "skip",
+                                     f"인버스 미돌파: {sig['reason']}",
+                                     sig["price"], strategy="bear_inverse")
+                        continue
+
+                    # TA 보조 확인 (인버스도 TA 적용)
+                    ta = compute_ta_score(history)
+                    if ta.total < 10:
+                        print(f"    TA={ta.total:+.0f} 부족, 스킵")
+                        log_decision(symbol, name, "skip",
+                                     f"인버스 TA 부족 ({ta.total:+.0f})",
+                                     sig["price"], strategy="bear_inverse")
+                        continue
+
+                    cur_price = int(sig["price"])
+                    qty = int(inv_budget * 0.999 // cur_price)
+                    if qty <= 0:
+                        continue
+
+                    total = qty * cur_price
+                    atr_value = compute_atr_for_position(history)
+                    print(f"    [인버스 BUY] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 "
+                          f"(TA={ta.total:+.0f})")
+
+                    if twap_engine:
+                        twap_engine.submit(symbol, qty, "buy", name, cur_price)
+                        record_buy(symbol, cur_price, qty, atr=atr_value,
+                                   asset_type=asset_type)
+                    elif not dry_run:
+                        resp = client.order_cash(symbol, qty=qty, price=cur_price, side="buy")
+                        rt = resp.get("rt_cd")
+                        print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
+                        if rt == "0":
+                            log_trade(symbol, name, "buy", qty, cur_price)
+                            record_buy(symbol, cur_price, qty, atr=atr_value,
+                                       asset_type=asset_type)
+                            log_bear_trade(r, "inverse", symbol, cur_price, today_str)
+                            used += total
+                            break
+                    else:
+                        print("      (dry-run)")
+                        used += total
+                        break
+
+                    log_decision(symbol, name, "buy",
+                                 f"인버스 돌파 (TA={ta.total:+.0f})",
+                                 cur_price, qty=qty, strategy="bear_inverse")
+                    break
+
+                except Exception as e:
+                    print(f"    ERROR: {e}")
+
+    # ── 방어자산 매수 (BEAR / CAUTION) ──
+    if allocation.defensive_pct > 0:
+        def_budget = int(budget * allocation.defensive_pct * adaptive.get("defensive_scale", 1.0))
+        def_universe = load_defensive_universe()
+        def_syms = {s["symbol"] for s in def_universe}
+
+        def_held = any(s in def_syms for s in holdings)
+        if def_held:
+            print(f"  [방어] 이미 보유 중.")
+        elif def_budget >= 10000:
+            print(f"  [방어] 배정: {def_budget:,}원")
+
+            # 방어자산 중 모멘텀이 가장 좋은 것 선택
+            best_sym, best_name, best_score = None, None, -999
+            for stock in def_universe:
+                symbol = stock["symbol"]
+                name = stock["name"]
+                try:
+                    history = fetch_recent_history(client, symbol, days=70)
+                    if history is not None and len(history) >= 22:
+                        from src.strategies.bear_strategy import weighted_momentum
+                        score = weighted_momentum(history["close"])
+                        if score > best_score:
+                            best_sym, best_name, best_score = symbol, name, score
+                except Exception:
+                    pass
+
+            if best_sym:
+                cur_price = get_price(client, best_sym)
+                if cur_price > 0:
+                    qty = int(def_budget * 0.999 // cur_price)
+                    if qty > 0:
+                        total = qty * cur_price
+                        print(f"    [방어 BUY] {best_name} {qty}주 @ {cur_price:,}원 "
+                              f"(모멘텀={best_score:.4f})")
+
+                        if twap_engine:
+                            twap_engine.submit(best_sym, qty, "buy", best_name, cur_price)
+                            record_buy(best_sym, cur_price, qty, asset_type="defensive")
+                        elif not dry_run:
+                            resp = client.order_cash(best_sym, qty=qty, price=cur_price, side="buy")
+                            rt = resp.get("rt_cd")
+                            if rt == "0":
+                                log_trade(best_sym, best_name, "buy", qty, cur_price)
+                                record_buy(best_sym, cur_price, qty, asset_type="defensive")
+                                log_bear_trade(r, "defensive", best_sym, cur_price, today_str)
+                                used += total
+                        else:
+                            print("      (dry-run)")
+                            used += total
+
+                        log_decision(best_sym, best_name, "buy",
+                                     f"방어자산 (모멘텀={best_score:.4f})",
+                                     cur_price, qty=qty, strategy="bear_defensive")
+
+    if used == 0:
+        print("  [하락장] 매수 조건 미충족. 현금 보유.")
+
+    return used
+
+
+# ──────────────────────────────────────────────────────────
+# 레짐 판단 + 전략 분기
+# ──────────────────────────────────────────────────────────
+
+def evaluate_regime(client: KISClient) -> tuple:
+    """현재 시장 레짐을 평가하고 배분 결정을 반환.
+
+    Returns:
+        (regime_result, allocation, bear_enabled)
+    """
+    bear_cfg = load_bear_config()
+    if not bear_cfg.get("enabled", False):
+        return None, None, False
+
+    cfg = load_config()
+
+    # KOSPI200 히스토리 (SMA200용)
+    kospi_history = None
+    try:
+        kospi_history = fetch_recent_history(client, "069500", days=250)
+    except Exception as e:
+        log.warning("regime_kospi_fetch_failed", error=str(e))
+
+    # 카나리아 유니버스 히스토리
+    canary_universe = load_canary_universe()
+    canary_histories = {}
+    for c in canary_universe:
+        try:
+            hist = fetch_recent_history(client, c["symbol"], days=270)
+            canary_histories[c["symbol"]] = hist
+        except Exception:
+            canary_histories[c["symbol"]] = None
+
+    # HMM 상태 (이미 계산된 것 활용)
+    regime_info = cfg.get("market_regime", {})
+    hmm_state = regime_info.get("hmm_state", "unknown")
+    hmm_conf = regime_info.get("hmm_confidence", 0.5)
+
+    # 레짐 판단
+    regime_result = detect_market_regime(
+        kospi_history, canary_histories,
+        hmm_state=hmm_state, hmm_confidence=hmm_conf,
+        cfg=bear_cfg,
+    )
+
+    # 변동성 계산
+    current_vol = compute_annualized_vol(kospi_history) if kospi_history is not None else 0.20
+
+    # 배분 결정
+    allocation = compute_bear_allocation(regime_result, current_vol, bear_cfg)
+
+    return regime_result, allocation, True
+
+
+# ──────────────────────────────────────────────────────────
 # 1회 실행 (기존 5분 cron 호환)
 # ──────────────────────────────────────────────────────────
 
@@ -505,17 +754,40 @@ def run_once(dry_run: bool) -> None:
         size_factor *= 0.7
         print(f"  [오버나이트] 미국 약세 → 규모 축소 (x0.7)")
 
-    # ETF 전략에 전체 자본 집중
-    etf_held = any(s in universe_syms for s in holdings)
-    etf_budget = int(cash * size_factor) if not etf_held else 0
+    # ── 레짐 판단 + 전략 분기 ──
+    regime_result, allocation, bear_enabled = evaluate_regime(client)
 
-    if size_factor < 1.0:
-        print(f"  [배분 조정] 신뢰도 반영: ETF {etf_budget:,}원 (x{size_factor:.0%})")
+    if bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
+        print(f"  [레짐] {regime_result.regime} — 하락장 전략 진입")
+        total_budget = int(cash * size_factor)
 
-    etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
+        if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
+            # CAUTION: 롱 비중만큼 기존 전략, 나머지 방어
+            long_budget = int(total_budget * allocation.long_pct)
+            etf_held = any(s in universe_syms for s in holdings)
+            if not etf_held and long_budget >= 10000:
+                print(f"  [CAUTION] 롱 배정: {long_budget:,}원 ({allocation.long_pct:.0%})")
+                run_etf_strategy(client, long_budget, holdings, universe, dry_run)
+            bear_budget = total_budget - long_budget
+            if bear_budget >= 10000:
+                run_bear_strategy(client, bear_budget, holdings, regime_result,
+                                  allocation, dry_run)
+        else:
+            # BEAR / CRISIS: 전체 하락장 전략
+            run_bear_strategy(client, total_budget, holdings, regime_result,
+                              allocation, dry_run)
+    else:
+        # BULL 또는 하락장 전략 비활성: 기존 ETF 전략
+        etf_held = any(s in universe_syms for s in holdings)
+        etf_budget = int(cash * size_factor) if not etf_held else 0
 
-    if etf_used == 0 and not etf_held:
-        print("  돌파 없음. 현금 보유.")
+        if size_factor < 1.0:
+            print(f"  [배분 조정] 신뢰도 반영: ETF {etf_budget:,}원 (x{size_factor:.0%})")
+
+        etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
+
+        if etf_used == 0 and not etf_held:
+            print("  돌파 없음. 현금 보유.")
 
 
 # ──────────────────────────────────────────────────────────
@@ -727,14 +999,43 @@ def run_loop(dry_run: bool) -> None:
             print(f"  예수금: {cash:,}원 | Kelly={kelly_f:.0%} "
                   f"| 신뢰도: {confidence:.0%} | {intraday['reason']}")
 
-            etf_held = any(s in universe_syms for s in holdings)
-            etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
+            # ── 레짐 판단 + 전략 분기 ──
+            regime_result, allocation, bear_enabled = evaluate_regime(client)
 
-            # ETF 변동성 돌파 (TWAP 분할 매수)
-            etf_used = run_etf_strategy(client, etf_budget, holdings, universe,
-                                        dry_run, twap_engine=twap)
-            if etf_used > 0:
-                bought_today = True
+            if bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
+                print(f"  [레짐] {regime_result.regime} — 하락장 전략")
+                total_budget = int(etf_budget_cap * size_factor)
+
+                if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
+                    long_budget = int(total_budget * allocation.long_pct)
+                    etf_held = any(s in universe_syms for s in holdings)
+                    if not etf_held and long_budget >= 10000:
+                        etf_used = run_etf_strategy(client, long_budget, holdings,
+                                                     universe, dry_run, twap_engine=twap)
+                        if etf_used > 0:
+                            bought_today = True
+                    bear_budget = total_budget - long_budget
+                    if bear_budget >= 10000:
+                        bear_used = run_bear_strategy(client, bear_budget, holdings,
+                                                       regime_result, allocation,
+                                                       dry_run, twap_engine=twap)
+                        if bear_used > 0:
+                            bought_today = True
+                else:
+                    bear_used = run_bear_strategy(client, total_budget, holdings,
+                                                   regime_result, allocation,
+                                                   dry_run, twap_engine=twap)
+                    if bear_used > 0:
+                        bought_today = True
+            else:
+                etf_held = any(s in universe_syms for s in holdings)
+                etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
+
+                # ETF 변동성 돌파 (TWAP 분할 매수)
+                etf_used = run_etf_strategy(client, etf_budget, holdings, universe,
+                                            dry_run, twap_engine=twap)
+                if etf_used > 0:
+                    bought_today = True
 
             if not bought_today and not etf_held:
                 print("  돌파 없음. 현금 보유.")

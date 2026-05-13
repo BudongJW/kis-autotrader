@@ -362,4 +362,19 @@ def run_adaptive_learning(client, cfg: dict) -> dict:
     else:
         print(f"  [섹터] 데이터 부족 ({sector_stats.get('total', 0)}건), 기본값 유지")
 
+    # ── 4. 하락장 전략 성과 학습 ──
+    try:
+        from src.strategies.bear_strategy import get_regime_performance, get_adaptive_params
+        for regime in ("BEAR", "CAUTION", "CRISIS"):
+            perf = get_regime_performance(regime)
+            if perf.get("sufficient_data"):
+                stats = perf.get("stats", {})
+                details = []
+                for action, s in stats.items():
+                    details.append(f"{action}={s['avg_pnl']:+.2%}({s['count']}건)")
+                adaptive = get_adaptive_params(regime)
+                print(f"  [레짐-{regime}] {', '.join(details)} → {adaptive['reason']}")
+    except Exception as e:
+        log.warning("bear_learning_eval_failed", error=str(e))
+
     return cfg

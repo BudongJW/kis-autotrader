@@ -45,6 +45,51 @@ universe:
     name: KODEX K-미래차
   - symbol: '371160'
     name: TIGER 미국필라델피아반도체나스닥
+  # ── 하락장 대응: 인버스 + 방어 유니버스 ──
+  inverse:
+  - symbol: '114800'
+    name: KODEX 인버스
+    type: inverse_1x
+    max_hold_days: 20
+  - symbol: '252670'
+    name: KODEX 200선물인버스2X
+    type: inverse_2x
+    max_hold_days: 10
+  defensive:
+  - symbol: '152380'
+    name: KODEX 국고채10년
+    type: bond
+  - symbol: '214980'
+    name: KODEX 단기채권PLUS
+    type: short_bond
+  # 카나리아 유니버스: 선행 지표 역할 (모멘텀 음전환 시 방어 전환)
+  canary:
+  - symbol: '195930'
+    name: TIGER 유로스탁50
+  - symbol: '132030'
+    name: KODEX 골드선물(H)
+
+# ── 하락장 전략 설정 ──
+bear_strategy:
+  enabled: true
+  # 레짐 전환 기준
+  regime_switch:
+    sma_period: 200            # 200일 이동평균
+    bear_entry_threshold: -0.03  # SMA200 대비 -3% 이하 → 하락장 진입
+    bear_exit_threshold: 0.02    # SMA200 대비 +2% 이상 → 하락장 해제
+    confirmation_days: 3         # 3일 연속 확인 후 전환
+  # 카나리아 경보
+  canary_alert:
+    momentum_months: [1, 3, 6, 12]
+    momentum_weights: [12, 4, 2, 1]   # VAA 가중 모멘텀
+  # 포지션 배분 (하락장 모드)
+  bear_allocation:
+    inverse_max_pct: 0.30        # 인버스 최대 30%
+    defensive_min_pct: 0.40      # 방어자산 최소 40%
+    cash_min_pct: 0.20           # 현금 최소 20%
+  # 변동성 타겟팅
+  volatility_target: 0.12       # 연간 12% 변동성 목표
+
 risk:
   max_position_weight: 0.2
   max_concurrent_positions: 5

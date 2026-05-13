@@ -20,6 +20,9 @@ from src.risk_manager import (
     load_positions, get_kelly_position_size, get_drawdown_scale,
 )
 from src.strategies.signal_fusion import FUSION_WEIGHTS_PATH
+from src.strategies.bear_strategy import (
+    BEAR_STATE_PATH, get_regime_performance,
+)
 from src.experience import _load_experience
 from src.utils.logger import log
 
@@ -207,6 +210,28 @@ def main() -> None:
     # 융합 가중치 정보
     fusion_info = _load_fusion_info()
 
+    # 하락장 전략 상태
+    bear_info = {"regime": "BULL", "enabled": False}
+    try:
+        if BEAR_STATE_PATH.exists():
+            with BEAR_STATE_PATH.open("r", encoding="utf-8") as f:
+                bs = json.load(f)
+            bear_info = {
+                "enabled": True,
+                "regime": bs.get("regime", "BULL"),
+                "confidence": bs.get("confidence", 0),
+                "sma_ratio": bs.get("sma_ratio", 0),
+                "canary_bad": bs.get("canary_bad", 0),
+                "canary_scores": bs.get("canary_scores", {}),
+            }
+            # 레짐별 성과 통계
+            for r_name in ("BEAR", "CAUTION"):
+                perf = get_regime_performance(r_name)
+                if perf.get("sufficient_data"):
+                    bear_info[f"{r_name.lower()}_stats"] = perf.get("stats", {})
+    except Exception:
+        pass
+
     # 유니버스 정보
     universe_list = [{"symbol": s["symbol"], "name": s["name"]} for s in universe]
 
@@ -301,6 +326,9 @@ def main() -> None:
 
         # 신호 융합
         "fusion": fusion_info,
+
+        # 하락장 전략
+        "bear_strategy": bear_info,
 
         # 오늘의 전략 결정 로그
         "decisions": today_decisions,

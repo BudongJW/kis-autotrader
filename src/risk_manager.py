@@ -64,12 +64,17 @@ def save_positions(positions: dict) -> None:
         json.dump(positions, f, ensure_ascii=False, indent=2)
 
 
-def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0) -> None:
+def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0,
+               asset_type: str = "long") -> None:
     """매수 체결 시 포지션 기록.
 
     Args:
         atr: 매수 시점의 ATR(14) 값. 0이면 고정 비율 손절로 폴백.
+        asset_type: "long" / "inverse_1x" / "inverse_2x" / "defensive"
     """
+    # 인버스 ETF 최대 보유일 (변동성 손실 방지)
+    max_hold = {"long": 5, "inverse_1x": 20, "inverse_2x": 10, "defensive": 60}
+
     positions = load_positions()
     positions[symbol] = {
         "buy_price": price,
@@ -78,8 +83,9 @@ def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0) -> None:
         "qty": qty,
         "peak_price": price,  # 추적 손절용 최고가
         "hold_days": 0,       # 보유 일수 (장 시작 시 증가)
-        "max_hold_days": 5,   # 최대 보유 일수
+        "max_hold_days": max_hold.get(asset_type, 5),
         "atr_at_buy": round(atr, 2),  # ATR 기반 동적 손절용
+        "asset_type": asset_type,     # 자산 유형 (하락장 전략 구분)
     }
     save_positions(positions)
 
@@ -178,6 +184,14 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
             if hold_minutes >= minutes and pnl_pct >= min_roi:
                 return True, (f"ROI 청산 ({hold_minutes:.0f}분 보유, "
                               f"수익 {pnl_pct:+.1%} ≥ {min_roi:.1%})")
+
+    # ── 4. 인버스 ETF 보유기간 강제 청산 ──
+    asset_type = pos.get("asset_type", "long")
+    hold_days = pos.get("hold_days", 0)
+    max_hold = pos.get("max_hold_days", 5)
+    if asset_type.startswith("inverse") and hold_days >= max_hold:
+        return True, (f"인버스 보유기간 만료 ({hold_days}/{max_hold}일, "
+                      f"{asset_type}, 수익 {pnl_pct:+.1%})")
 
     return False, ""
 
