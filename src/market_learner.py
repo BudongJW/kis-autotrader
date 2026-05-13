@@ -38,7 +38,7 @@ from src.experience import (
     update_strategy_weights_from_experience, _load_experience,
 )
 from src.strategies.overnight_gap import get_overnight_signal
-from src.adaptive_learning import run_adaptive_learning
+from src.adaptive_learning import run_adaptive_learning, run_us_post_learning
 from src.strategies.signal_fusion import learn_fusion_weights
 from src.utils.logger import log
 
@@ -737,6 +737,118 @@ def post_market(client: KISClient) -> None:
 
 
 # ──────────────────────────────────────────────────────────
+# 미국장 후 학습
+# ──────────────────────────────────────────────────────────
+
+def post_us_market(client: KISClient) -> None:
+    """미국장 종료 후 학습: US 거래 평가 + 교차 시장 + 한국장 사전 준비.
+
+    06:30 KST에 실행 — 미국장 폐장 직후.
+    """
+    print("=" * 60)
+    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 미국장 후 학습 시작")
+    print("=" * 60)
+
+    cfg = load_config()
+
+    # 1. US 거래 결과 평가 + 교차 시장 데이터
+    try:
+        cfg = run_us_post_learning(client, cfg)
+        save_config(cfg)
+    except Exception as e:
+        print(f"  US 학습 실패: {e}")
+
+    # 2. US 결과 기반 한국장 전략 사전 조정
+    print("\n[사전 조정] US 결과 → 한국장 전략 반영...")
+    try:
+        from src.bot.us_session import fetch_us_history
+
+        # QQQ/SPY 종가 확인 → 오버나이트 갭 방향 사전 추정
+        qqq_change = 0
+        spy_change = 0
+        try:
+            qqq_hist = fetch_us_history(client, "QQQ", "NASD", days=5)
+            if len(qqq_hist) >= 2:
+                qqq_change = float((qqq_hist["close"].iloc[-1] / qqq_hist["close"].iloc[-2] - 1) * 100)
+
+            spy_hist = fetch_us_history(client, "SPY", "NYSE", days=5)
+            if len(spy_hist) >= 2:
+                spy_change = float((spy_hist["close"].iloc[-1] / spy_hist["close"].iloc[-2] - 1) * 100)
+        except Exception:
+            pass
+
+        print(f"  QQQ: {qqq_change:+.2f}% | SPY: {spy_change:+.2f}%")
+
+        # 미국장 결과에 따라 한국장 시가 갭 방향 예측
+        avg_us = (qqq_change + spy_change) / 2
+        if avg_us <= -2:
+            predicted_gap = "bearish"
+            gap_action = "reduce_size"
+            confidence_adj = -0.15
+        elif avg_us <= -1:
+            predicted_gap = "bearish"
+            gap_action = "reduce_size"
+            confidence_adj = -0.08
+        elif avg_us >= 2:
+            predicted_gap = "bullish"
+            gap_action = "aggressive_buy"
+            confidence_adj = 0.10
+        elif avg_us >= 1:
+            predicted_gap = "bullish"
+            gap_action = "normal"
+            confidence_adj = 0.05
+        else:
+            predicted_gap = "neutral"
+            gap_action = "normal"
+            confidence_adj = 0
+
+        # 교차 시장 데이터 반영
+        cross_params = cfg.get("cross_market_params", {})
+        gap_weight = cross_params.get("gap_signal_weight", 1.0)
+        confidence_adj *= gap_weight
+
+        cfg["overnight_signal"] = {
+            "direction": predicted_gap,
+            "recommended_action": gap_action,
+            "nasdaq_change": round(qqq_change, 2),
+            "sp500_change": round(spy_change, 2),
+            "strength": round(abs(avg_us) / 3, 2),
+            "confidence_boost": round(confidence_adj, 3),
+            "source": "us_post_learning",
+        }
+
+        # 신뢰도 사전 조정
+        current_conf = cfg.get("market_confidence", 0.5)
+        new_conf = max(0.1, min(1.0, current_conf + confidence_adj))
+        cfg["market_confidence"] = round(new_conf, 3)
+
+        print(f"  예측: {predicted_gap} | 행동: {gap_action} | "
+              f"신뢰도: {current_conf:.0%} → {new_conf:.0%}")
+
+        save_config(cfg)
+    except Exception as e:
+        print(f"  사전 조정 실패: {e}")
+
+    # 3. LGBM warm-start (US 데이터 포함 재학습)
+    print("\n[LGBM] 모델 갱신...")
+    try:
+        from src.strategies.lgbm_predictor import daily_retrain
+        universe = cfg.get("universe", {}).get("default", [])
+        symbols = [s["symbol"] for s in universe[:3]]
+        if not symbols:
+            symbols = ["069500"]
+        result = daily_retrain(client, symbols, days=120)
+        if result:
+            print(f"  완료: accuracy={result['accuracy']:.1%}, AUC={result['auc']:.3f}")
+        else:
+            print("  데이터 부족 또는 스킵")
+    except Exception as e:
+        print(f"  LGBM 갱신 실패: {e}")
+
+    print("\n미국장 후 학습 완료.")
+
+
+# ──────────────────────────────────────────────────────────
 # 장 중 적응 (single_run.py에서 호출)
 # ──────────────────────────────────────────────────────────
 
@@ -788,7 +900,7 @@ def get_intraday_regime_adjustment(client: KISClient) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="시장 학습 모듈")
-    parser.add_argument("--phase", required=True, choices=["pre", "post"])
+    parser.add_argument("--phase", required=True, choices=["pre", "post", "post_us"])
     args = parser.parse_args()
 
     client = KISClient()
@@ -797,6 +909,8 @@ def main() -> None:
         pre_market(client)
     elif args.phase == "post":
         post_market(client)
+    elif args.phase == "post_us":
+        post_us_market(client)
 
 
 if __name__ == "__main__":

@@ -4,10 +4,14 @@ on:
   schedule:
     # 장 전 학습: 08:30 KST (= 23:30 전날 UTC)
     - cron: '30 23 * * 0-4'
+    # 장 후 학습 (한국): 16:00 KST (= 07:00 UTC) — 한국장 종료 후
+    - cron: '0 7 * * 1-5'
+    # 장 후 학습 (미국): 06:30 KST (= 21:30 전날 UTC) — 미국장 종료 후
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
     inputs:
       phase:
-        description: 'pre (장전) / post (장후)'
+        description: 'pre (장전) / post (장후) / post_us (미국장후)'
         required: false
         default: 'pre'
 
@@ -68,12 +72,39 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      - name: Download US positions
+        uses: actions/download-artifact@v4
+        with:
+          name: us-positions-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Download bear state
+        uses: actions/download-artifact@v4
+        with:
+          name: bear-state
+          path: logs/
+        continue-on-error: true
+
       - name: Run market learning
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
         run: |
-          PHASE="${{ github.event.inputs.phase || 'pre' }}"
+          if [ -n "${{ github.event.inputs.phase }}" ]; then
+            PHASE="${{ github.event.inputs.phase }}"
+          else
+            # 스케줄 시간에 따라 자동 판별 (KST 기준)
+            HOUR=$(TZ=Asia/Seoul date +%H)
+            if [ "$HOUR" -ge 6 ] && [ "$HOUR" -lt 9 ]; then
+              PHASE="post_us"
+            elif [ "$HOUR" -ge 15 ] && [ "$HOUR" -lt 20 ]; then
+              PHASE="post"
+            else
+              PHASE="pre"
+            fi
+          fi
+          echo "Phase: $PHASE"
           python -m src.market_learner --phase $PHASE
 
       - name: Commit config updates
@@ -102,8 +133,21 @@ jobs:
             logs/gap_accuracy.json
             logs/hold_outcomes.json
             logs/sector_accuracy.json
+            logs/us_trade_history.json
+            logs/cross_market.json
           overwrite: true
           retention-days: 180
+        if: always()
+
+      - name: Upload bear state
+        uses: actions/upload-artifact@v4
+        with:
+          name: bear-state
+          path: |
+            logs/bear_state.json
+            logs/bear_performance.json
+          overwrite: true
+          retention-days: 30
         if: always()
 
       - name: Upload ML models
