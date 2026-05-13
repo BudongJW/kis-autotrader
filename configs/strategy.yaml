@@ -90,6 +90,47 @@ bear_strategy:
   # 변동성 타겟팅
   volatility_target: 0.12       # 연간 12% 변동성 목표
 
+# ── 미국 ETF 야간 매매 ──
+us_session:
+  enabled: true
+  # 미국 ETF 유니버스
+  universe:
+  - symbol: QQQ
+    name: Invesco QQQ (Nasdaq 100)
+    exchange: NASD
+  - symbol: SPY
+    name: SPDR S&P 500
+    exchange: NYSE
+  - symbol: SQQQ
+    name: ProShares UltraPro Short QQQ (3x inverse)
+    exchange: NASD
+    type: inverse
+    max_hold_days: 5
+  - symbol: SOXL
+    name: Direxion Semiconductor Bull 3X
+    exchange: NYSE
+  - symbol: TLT
+    name: iShares 20+ Year Treasury Bond
+    exchange: NASD
+    type: defensive
+  # 전략 파라미터
+  strategy:
+    k: 0.5                    # 변동성 돌파 K값
+    trend_ma: 20              # 추세 필터 이동평균
+    ta_min_score: 15          # TA 최소 점수
+    stop_loss_pct: 0.025      # -2.5% 손절 (USD는 변동성 다름)
+    trailing_activate_pct: 0.02  # +2% 추적 활성화
+    trailing_stop_pct: 0.01     # 고점 -1% 추적 손절
+  # 시간 설정 (KST 기준, 미국 정규장)
+  market_open_kst: "23:30"    # 서머타임 22:30, 동절기 23:30
+  market_close_kst: "06:00"   # 서머타임 05:00, 동절기 06:00
+  summer_time: false          # true면 22:30~05:00
+  # 포지션 관리
+  max_positions: 2            # 미국장 최대 동시 보유
+  budget_pct: 0.40            # 미국장 배정 비율 (총 USD 잔고 대비)
+  # 레짐 연동: 한국장 bear면 미국도 인버스(SQQQ) 우선
+  regime_linked: true
+
 risk:
   max_position_weight: 0.2
   max_concurrent_positions: 5

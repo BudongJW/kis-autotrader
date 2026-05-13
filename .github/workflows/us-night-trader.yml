@@ -1,0 +1,195 @@
+name: US Night Trader
+
+on:
+  schedule:
+    # 미국장 개장 직전 (KST 기준)
+    # 동절기: 23:30 KST = 14:30 UTC (전날)
+    - cron: '25 14 * * 0-4'
+    # 서머타임: 22:30 KST = 13:30 UTC (전날)
+    # 서머타임 전환 시 strategy.yaml summer_time: true 변경 필요
+    # - cron: '25 13 * * 0-4'
+
+    # 백업: 미국장 중반 (KST 02:00 = UTC 17:00)
+    - cron: '0 17 * * 0-4'
+
+    # 안전망: 미국장 폐장 전 (KST 05:30 = UTC 20:30, 동절기)
+    - cron: '30 20 * * 1-5'
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'dry-run 모드 (true/false)'
+        required: false
+        default: 'false'
+      mode:
+        description: 'loop (연속감시) / once (1회)'
+        required: false
+        default: 'loop'
+
+concurrency:
+  group: us-night-trader
+  cancel-in-progress: true
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  us-trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 400  # 최대 ~7시간 커버 (23:30~06:00)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pykrx hmmlearn optuna lightgbm scikit-learn yfinance
+
+      - name: Create .env
+        run: |
+          cat > .env <<'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+          sed -i 's/^[[:space:]]*//' .env
+
+      - name: Download trade log
+        uses: actions/download-artifact@v4
+        with:
+          name: trade-log
+          path: logs/
+        continue-on-error: true
+
+      - name: Download token cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kis-token-cache
+          path: logs/
+        continue-on-error: true
+
+      - name: Download US positions
+        uses: actions/download-artifact@v4
+        with:
+          name: us-positions-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Download learning data
+        uses: actions/download-artifact@v4
+        with:
+          name: learning-data
+          path: logs/
+        continue-on-error: true
+
+      - name: Download bear state
+        uses: actions/download-artifact@v4
+        with:
+          name: bear-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Run US night bot
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          MODE="${{ github.event.inputs.mode || 'loop' }}"
+          if [ "$MODE" = "once" ]; then
+            python -m src.bot.night_run $DRY_RUN_FLAG
+          else
+            python -m src.bot.night_run --loop $DRY_RUN_FLAG
+          fi
+
+      - name: Checkout journal repo
+        uses: actions/checkout@v4
+        with:
+          repository: BudongJW/kis-trading-journal
+          token: ${{ secrets.JOURNAL_PAT }}
+          path: journal
+        continue-on-error: true
+
+      - name: Update portfolio status
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: python -m src.journal_quick
+        continue-on-error: true
+
+      - name: Push journal update
+        run: |
+          cd journal
+          git config user.name "kis-autotrader-bot"
+          git config user.email "bot@kis-autotrader"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No journal changes"
+          else
+            git commit -m "auto: US night update $(date +'%H:%M')"
+            git push
+          fi
+        continue-on-error: true
+
+      - name: Upload trade log
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade-log
+          path: logs/trades.csv
+          overwrite: true
+          retention-days: 90
+        if: always()
+
+      - name: Upload US positions
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-positions-state
+          path: logs/us_positions.json
+          overwrite: true
+          retention-days: 7
+        if: always()
+
+      - name: Upload token cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: kis-token-cache
+          path: logs/.kis_token_cache.json
+          overwrite: true
+          retention-days: 1
+        if: always()
+
+      - name: Upload learning data
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-data
+          path: |
+            logs/market_history.json
+            logs/ta_accuracy.json
+            logs/experience.json
+            logs/regime_memory.json
+            logs/strategy_weights.json
+            logs/fusion_weights.json
+          overwrite: true
+          retention-days: 180
+        if: always()
+
+      - name: Upload bear state
+        uses: actions/upload-artifact@v4
+        with:
+          name: bear-state
+          path: |
+            logs/bear_state.json
+            logs/bear_performance.json
+          overwrite: true
+          retention-days: 30
+        if: always()

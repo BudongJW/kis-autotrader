@@ -23,6 +23,28 @@ TR_ORDER_CASH_PAPER_SELL = "VTTC0801U" # 모의 현금 매도
 TR_INQUIRE_BALANCE_LIVE = "TTTC8434R"
 TR_INQUIRE_BALANCE_PAPER = "VTTC8434R"
 
+# ── 해외주식 TR_ID ──
+TR_OS_PRICE = "HHDFS00000300"             # 해외주식 현재가
+TR_OS_DAILY = "HHDFS76240000"             # 해외주식 일별 시세
+TR_OS_ORDER_BUY_LIVE = "JTTT1002U"        # 실전 해외주식 매수
+TR_OS_ORDER_SELL_LIVE = "JTTT1006U"       # 실전 해외주식 매도
+TR_OS_ORDER_BUY_PAPER = "VTTT1002U"       # 모의 해외주식 매수
+TR_OS_ORDER_SELL_PAPER = "VTTT1006U"      # 모의 해외주식 매도
+TR_OS_BALANCE_LIVE = "JTTT3012R"          # 실전 해외주식 잔고
+TR_OS_BALANCE_PAPER = "VTTS3012R"         # 모의 해외주식 잔고
+
+# 거래소 코드
+EXCHANGE_MAP = {
+    "NAS": "NASD",   # 나스닥
+    "NYS": "NYSE",   # 뉴욕거래소
+    "AMS": "AMEX",   # 아멕스
+}
+EXCHANGE_ORDER_MAP = {
+    "NASD": "NASD",
+    "NYSE": "NYSE",
+    "AMEX": "AMEX",
+}
+
 
 class KISClient:
     """KIS REST API 호출 래퍼. rate limit 자동 적용."""
@@ -152,7 +174,118 @@ class KISClient:
         )
 
     # ------------------------------------------------------------------
-    # 잔고
+    # 해외주식 시세
+    # ------------------------------------------------------------------
+    def get_overseas_price(self, symbol: str, exchange: str = "NASD") -> dict:
+        """해외주식 현재가 조회.
+
+        Args:
+            symbol: 해외 종목 티커 (예: "AAPL", "QQQ")
+            exchange: NASD / NYSE / AMEX
+        """
+        return self._get(
+            "/uapi/overseas-price/v1/quotations/price",
+            tr_id=TR_OS_PRICE,
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": symbol,
+            },
+        )
+
+    def get_overseas_daily_price(self, symbol: str, exchange: str = "NASD",
+                                  period: str = "D", adj: str = "0",
+                                  count: str = "120") -> dict:
+        """해외주식 일별 시세.
+
+        Args:
+            symbol: 해외 종목 티커
+            exchange: NASD / NYSE / AMEX
+            period: D=일, W=주, M=월
+            count: 요청 건수 (최대 120)
+        """
+        return self._get(
+            "/uapi/overseas-price/v1/quotations/dailyprice",
+            tr_id=TR_OS_DAILY,
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": symbol,
+                "GUBN": "0",     # 0=일, 1=주, 2=월
+                "BYMD": "",      # 빈 문자열이면 최근부터
+                "MODP": "1",     # 1=수정주가 반영
+                "KEYB": "",
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # 해외주식 주문
+    # ------------------------------------------------------------------
+    def order_overseas(
+        self,
+        symbol: str,
+        qty: int,
+        price: float = 0,
+        *,
+        side: str,
+        exchange: str = "NASD",
+        order_type: str = "00",  # 00=지정가, 32=시장가(MOC)
+    ) -> dict:
+        """해외주식 현금 주문 (매수/매도).
+
+        Args:
+            symbol: 해외 티커 (예: "QQQ")
+            qty: 주문 수량
+            price: 주문 가격 (USD). 시장가 시 0.
+            side: "buy" / "sell"
+            exchange: NASD / NYSE / AMEX
+            order_type: "00"=지정가, "32"=MOC(장마감시장가)
+        """
+        if side == "buy":
+            tr_id = TR_OS_ORDER_BUY_LIVE if settings.is_live else TR_OS_ORDER_BUY_PAPER
+        elif side == "sell":
+            tr_id = TR_OS_ORDER_SELL_LIVE if settings.is_live else TR_OS_ORDER_SELL_PAPER
+        else:
+            raise ValueError(f"side는 'buy' 또는 'sell'이어야 함: {side}")
+
+        body = {
+            "CANO": settings.kis_account_no,
+            "ACNT_PRDT_CD": settings.kis_account_prod_code,
+            "OVRS_EXCG_CD": exchange,
+            "PDNO": symbol,
+            "ORD_DVSN": order_type,
+            "ORD_QTY": str(qty),
+            "OVRS_ORD_UNPR": f"{price:.2f}" if price > 0 else "0",
+            "ORD_SVR_DVSN_CD": "0",
+            "CTAC_TLNO": "",
+        }
+        return self._safe_post(
+            "/uapi/overseas-stock/v1/trading/order",
+            tr_id=tr_id,
+            body=body,
+        )
+
+    # ------------------------------------------------------------------
+    # 해외주식 잔고
+    # ------------------------------------------------------------------
+    def get_overseas_balance(self, exchange: str = "NASD") -> dict:
+        """해외주식 잔고 조회."""
+        tr_id = TR_OS_BALANCE_LIVE if settings.is_live else TR_OS_BALANCE_PAPER
+        return self._get(
+            "/uapi/overseas-stock/v1/trading/inquire-balance",
+            tr_id=tr_id,
+            params={
+                "CANO": settings.kis_account_no,
+                "ACNT_PRDT_CD": settings.kis_account_prod_code,
+                "OVRS_EXCG_CD": exchange,
+                "TR_CRCY_CD": "USD",
+                "CTX_AREA_FK200": "",
+                "CTX_AREA_NK200": "",
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # 잔고 (국내)
     # ------------------------------------------------------------------
     def get_balance(self) -> dict:
         """주식 잔고 조회."""

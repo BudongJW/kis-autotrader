@@ -23,6 +23,9 @@ from src.strategies.signal_fusion import FUSION_WEIGHTS_PATH
 from src.strategies.bear_strategy import (
     BEAR_STATE_PATH, get_regime_performance,
 )
+from src.bot.us_session import (
+    load_us_config, load_us_positions, get_us_holdings, get_us_available_cash,
+)
 from src.experience import _load_experience
 from src.utils.logger import log
 
@@ -232,6 +235,45 @@ def main() -> None:
     except Exception:
         pass
 
+    # 미국장 정보
+    us_info = {"enabled": False}
+    try:
+        us_cfg = load_us_config()
+        if us_cfg.get("enabled", False):
+            us_positions = load_us_positions()
+            us_holdings_api = get_us_holdings(client)
+            us_cash = get_us_available_cash(client)
+
+            us_holdings_list = []
+            for sym, pos in us_positions.items():
+                api_data = us_holdings_api.get(sym, {})
+                cur_price = api_data.get("current_price", pos.get("buy_price", 0))
+                buy_price = pos.get("buy_price", 0)
+                qty = api_data.get("qty", pos.get("qty", 0))
+                pnl_pct = ((cur_price - buy_price) / buy_price * 100) if buy_price > 0 else 0
+
+                us_holdings_list.append({
+                    "symbol": sym,
+                    "qty": qty,
+                    "buy_price": buy_price,
+                    "current_price": cur_price,
+                    "pnl_pct": round(pnl_pct, 2),
+                    "exchange": pos.get("exchange", "NASD"),
+                    "asset_type": pos.get("asset_type", "us_long"),
+                })
+
+            us_info = {
+                "enabled": True,
+                "cash_usd": us_cash,
+                "positions": len(us_positions),
+                "holdings": us_holdings_list,
+                "max_positions": us_cfg.get("max_positions", 2),
+                "budget_pct": us_cfg.get("budget_pct", 0.40),
+                "regime_linked": us_cfg.get("regime_linked", True),
+            }
+    except Exception:
+        pass
+
     # 유니버스 정보
     universe_list = [{"symbol": s["symbol"], "name": s["name"]} for s in universe]
 
@@ -329,6 +371,9 @@ def main() -> None:
 
         # 하락장 전략
         "bear_strategy": bear_info,
+
+        # 미국장 야간 매매
+        "us_session": us_info,
 
         # 오늘의 전략 결정 로그
         "decisions": today_decisions,
