@@ -33,6 +33,10 @@ from src.bot.runner import fetch_recent_history
 from src.market_regime import analyze_regime
 from src.strategies.ta_composite import compute_ta_score, DEFAULT_WEIGHTS
 from src.strategies.hmm_regime import detect_regime_from_prices, get_regime_action
+from src.experience import (
+    evaluate_outcomes, update_regime_memory, get_regime_recommendation,
+    update_strategy_weights_from_experience, _load_experience,
+)
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -378,7 +382,31 @@ def pre_market(client: KISClient) -> None:
     print(f"  시장 신뢰도: {confidence:.1%}")
     print(f"  강세 섹터: {', '.join(strong_sectors) if strong_sectors else '없음'}")
 
-    # 7. 시장 로그 축적
+    # 7. 경험 기반 추천 (과거 유사 레짐에서의 결과)
+    print("\n[7] 경험 기반 레짐 추천...")
+    if regime:
+        regime_trend = regime.trend
+        hmm_st = hmm_regime.state if hmm_regime else "unknown"
+        rec = get_regime_recommendation(regime_trend, hmm_st)
+        print(f"  {rec['reason']}")
+        if rec.get("data_points", 0) >= 5:
+            # 경험이 충분하면 신뢰도에 반영
+            exp_adj = rec.get("confidence_adj", 1.0)
+            adjusted = max(0.1, min(1.0, confidence * exp_adj))
+            if abs(adjusted - confidence) > 0.03:
+                print(f"  신뢰도 조정: {confidence:.0%} → {adjusted:.0%} (경험 반영)")
+                confidence = adjusted
+                cfg["market_confidence"] = confidence
+
+    # 7.5. 전략 배분 업데이트 (Thompson Sampling)
+    adaptive = update_strategy_weights_from_experience()
+    cfg["adaptive_allocation"] = adaptive
+    print(f"  적응적 배분: ETF {adaptive.get('etf', 0.6):.0%} / "
+          f"급등주 {adaptive.get('surge', 0.4):.0%}")
+
+    save_config(cfg)
+
+    # 시장 로그 축적
     market_entry = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "regime_trend": regime.trend if regime else "unknown",
@@ -545,15 +573,107 @@ def post_market(client: KISClient) -> None:
     print(f"  5일 평균 신뢰도: {patterns.get('avg_confidence_5d', 0):.1%}")
     print(f"  신뢰도 방향: {patterns.get('confidence_direction')}")
 
-    # 3. 누적 학습 데이터 요약
+    # 3. 경험 버퍼 결과 평가
+    print("\n[3] 경험 평가...")
+    try:
+        # 오늘 거래 결과 수집
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_trades: dict[str, dict] = {}
+        buys_today: dict[str, int] = {}
+
+        if TRADE_LOG_PATH.exists():
+            with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if not row.get("timestamp", "").startswith(today_str):
+                        continue
+                    sym = row.get("symbol", "")
+                    side = row.get("side", "")
+                    price = int(row.get("price", 0))
+                    if side == "buy":
+                        buys_today[sym] = price
+                    elif side == "sell" and sym in buys_today:
+                        buy_p = buys_today[sym]
+                        today_trades[sym] = {
+                            "buy_price": buy_p,
+                            "sell_price": price,
+                            "pnl_pct": (price - buy_p) / buy_p if buy_p > 0 else 0,
+                        }
+
+        # 보유 종목 미실현 손익
+        holdings_pnl: dict[str, float] = {}
+        try:
+            from src.bot.single_run import get_all_holdings, get_price
+            holdings = get_all_holdings(client)
+            from src.risk_manager import load_positions
+            positions = load_positions()
+            for sym, qty in holdings.items():
+                pos = positions.get(sym, {})
+                buy_p = pos.get("buy_price", 0)
+                if buy_p > 0:
+                    cur_p = get_price(client, sym)
+                    if cur_p > 0:
+                        holdings_pnl[sym] = (cur_p - buy_p) / buy_p
+        except Exception:
+            pass
+
+        evaluate_outcomes(holdings_pnl, today_trades)
+        exp_records = _load_experience()
+        today_exp = [r for r in exp_records if r.get("date") == today_str]
+        evaluated = [r for r in today_exp if r.get("evaluated")]
+        wins = [r for r in evaluated if r.get("outcome") == "win"]
+        print(f"  오늘 결정: {len(today_exp)}건, 평가 완료: {len(evaluated)}건, "
+              f"성공: {len(wins)}건")
+    except Exception as e:
+        print(f"  경험 평가 실패: {e}")
+
+    # 4. 레짐-행동 메모리 갱신
+    print("\n[4] 레짐-행동 메모리 갱신...")
+    try:
+        regime_memory = update_regime_memory()
+        for key, data in regime_memory.items():
+            buy = data["buy"]
+            if buy["count"] >= 3:
+                wr = buy.get("win_rate", 0)
+                avg = buy.get("avg_pnl", 0)
+                print(f"  {key}: {buy['count']}건, 승률 {wr:.0%}, 평균 {avg:+.2%}")
+    except Exception as e:
+        print(f"  레짐 메모리 갱신 실패: {e}")
+
+    # 5. Thompson Sampling 전략 가중치 갱신
+    print("\n[5] 전략 가중치 갱신 (Thompson Sampling)...")
+    try:
+        adaptive = update_strategy_weights_from_experience()
+        print(f"  적응적 배분: ETF {adaptive.get('etf', 0.6):.0%} / "
+              f"급등주 {adaptive.get('surge', 0.4):.0%}")
+    except Exception as e:
+        print(f"  전략 가중치 갱신 실패: {e}")
+
+    # 6. LGBM 일일 재학습 (warm-start)
+    print("\n[6] LGBM 일일 재학습...")
+    try:
+        from src.strategies.lgbm_predictor import daily_retrain
+        cfg = load_config()
+        universe = cfg.get("universe", {}).get("default", [])
+        symbols = [s["symbol"] for s in universe[:3]]
+        if not symbols:
+            symbols = ["069500"]
+        result = daily_retrain(client, symbols, days=120)
+        if result:
+            print(f"  완료: accuracy={result['accuracy']:.1%}, AUC={result['auc']:.3f}")
+        else:
+            print("  데이터 부족 또는 lightgbm 미설치 — 스킵")
+    except Exception as e:
+        print(f"  LGBM 재학습 실패: {e}")
+
+    # 7. 누적 학습 데이터 요약
     ta_accuracy = load_ta_accuracy()
     total_evals = sum(v["total"] for v in ta_accuracy.values())
-    print(f"\n[3] 누적 학습 현황:")
+    print(f"\n[7] 누적 학습 현황:")
     print(f"  시장 데이터: {len(market_log)}일")
     print(f"  TA 평가: {total_evals}건")
-    for ind, stats in ta_accuracy.items():
-        rate = stats["correct"] / stats["total"] * 100 if stats["total"] > 0 else 0
-        print(f"    {ind:<6} 적중률 {rate:.0f}% ({stats['total']}건)")
+    total_exp = len(_load_experience())
+    print(f"  경험 버퍼: {total_exp}건")
 
     print("\n장 후 학습 완료.")
 

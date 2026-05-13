@@ -39,6 +39,7 @@ from src.risk_manager import (
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
 from src.strategies.lgbm_predictor import get_prediction_filter
+from src.experience import log_decision, get_regime_recommendation, get_adaptive_allocation
 from src.utils.logger import log
 
 MARKET_OPEN = dtime(9, 0)
@@ -213,19 +214,34 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             print(f"  [ETF] {name} {signal.type.value} @ {cur_price:,}원 — {signal.reason}")
             print(f"    TA분석: {ta.detail}")
 
+            # 경험 기록용 컨텍스트
+            _ta_scores = {
+                "rsi": ta.rsi_score, "macd": ta.macd_score,
+                "bb": ta.bb_score, "stoch": ta.stoch_score,
+                "adx": ta.adx_score, "ma": ta.ma_score,
+                "total": ta.total,
+            }
+
             if signal.type.value != "BUY":
+                log_decision(symbol, name, "skip", f"신호 없음: {signal.reason}",
+                             cur_price, strategy="etf", ta_scores=_ta_scores)
                 continue
 
             if ta.total <= -20:
                 print(f"    TA 거부 (점수 {ta.total:+.0f} ≤ -20). 매수 스킵.")
+                log_decision(symbol, name, "skip", f"TA 거부 ({ta.total:+.0f})",
+                             cur_price, strategy="etf", ta_scores=_ta_scores)
                 continue
 
             # LGBM 예측 필터
             lgbm_filter = get_prediction_filter(client, symbol)
             if not lgbm_filter["allow"]:
                 print(f"    LGBM 차단: {lgbm_filter['reason']}")
+                log_decision(symbol, name, "skip", f"LGBM 차단: {lgbm_filter['reason']}",
+                             cur_price, strategy="etf", ta_scores=_ta_scores,
+                             lgbm_prob=lgbm_filter.get("up_prob"))
                 continue
-            if lgbm_filter["up_prob"] != 0.5:  # 모델이 있을 때만 출력
+            if lgbm_filter["up_prob"] != 0.5:
                 print(f"    LGBM: 상승 {lgbm_filter['up_prob']:.0%} — {lgbm_filter['reason']}")
 
             qty = int(budget * 0.999 // cur_price)
@@ -238,6 +254,9 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
+                log_decision(symbol, name, "buy", f"변동성 돌파 매수 (TA={ta.total:+.0f})",
+                             cur_price, qty=qty, strategy="etf", ta_scores=_ta_scores,
+                             lgbm_prob=lgbm_filter.get("up_prob"))
                 return total
 
             if not dry_run:
@@ -247,6 +266,11 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 if rt == "0":
                     log_trade(symbol, name, "buy", qty, cur_price)
                     record_buy(symbol, cur_price, qty)
+                    log_decision(symbol, name, "buy",
+                                 f"변동성 돌파 매수 (TA={ta.total:+.0f})",
+                                 cur_price, qty=qty, strategy="etf",
+                                 ta_scores=_ta_scores,
+                                 lgbm_prob=lgbm_filter.get("up_prob"))
                     return total
                 elif rt == "E":
                     log.warning("etf_buy_error", symbol=symbol, msg=resp.get("msg1", ""))
@@ -577,13 +601,10 @@ def run_loop(dry_run: bool) -> None:
                 time_mod.sleep(RISK_CHECK_INTERVAL)
                 continue
 
-            # Kelly + 기대값 기반 동적 배분
-            try:
-                expectancy = get_strategy_expectancy()
-            except Exception:
-                expectancy = {"etf": DEFAULT_ETF_RATIO, "surge": DEFAULT_SURGE_RATIO}
-            etf_ratio = expectancy.get("etf", DEFAULT_ETF_RATIO)
-            surge_ratio = expectancy.get("surge", DEFAULT_SURGE_RATIO)
+            # 경험 기반 적응적 배분 (Thompson Sampling)
+            adaptive = get_adaptive_allocation()
+            etf_ratio = adaptive.get("etf", DEFAULT_ETF_RATIO)
+            surge_ratio = adaptive.get("surge", DEFAULT_SURGE_RATIO)
 
             # Kelly Criterion: 전체 자본 대비 최적 투입 비율
             kelly_f = get_kelly_position_size("combined")
@@ -599,9 +620,22 @@ def run_loop(dry_run: bool) -> None:
             if intraday.get("reduce_size"):
                 size_factor *= 0.7
 
+            # 경험 기반 레짐 추천 반영
+            try:
+                cfg = load_config()
+                cur_regime = cfg.get("market_regime", {}).get("trend", "unknown")
+                cur_hmm = cfg.get("market_regime", {}).get("hmm_state", "unknown")
+                regime_rec = get_regime_recommendation(cur_regime, cur_hmm)
+                if regime_rec.get("data_points", 0) >= 5:
+                    size_factor *= regime_rec["confidence_adj"]
+                    print(f"  [경험] {regime_rec['reason']}")
+            except Exception:
+                regime_rec = {}
+
             print(f"\n[{now:%H:%M:%S}] === 전략 체크 ===")
             print(f"  예수금: {cash:,}원 | Kelly={kelly_f:.0%} "
                   f"| 신뢰도: {confidence:.0%} | {intraday['reason']}")
+            print(f"  배분: ETF {etf_ratio:.0%} / 급등주 {surge_ratio:.0%} (Thompson Sampling)")
 
             etf_held = any(s in universe_syms for s in holdings)
             surge_held = any(s not in universe_syms for s in holdings)

@@ -348,6 +348,111 @@ class LGBMPredictor:
         )
 
 
+def daily_retrain(client, symbols: list[str], days: int = 120) -> dict | None:
+    """일일 LGBM 재학습 — 기존 모델 위에 새 데이터로 warm-start.
+
+    주간 전체 학습(optimizer.py)과 달리, 매일 최신 데이터로 갱신.
+    기존 모델의 트리를 유지하고 추가 50라운드만 학습.
+    """
+    try:
+        import lightgbm as lgb
+        from sklearn.metrics import accuracy_score, roc_auc_score
+    except ImportError:
+        return None
+
+    from src.bot.runner import fetch_recent_history
+
+    predictor = LGBMPredictor()
+
+    # 학습 데이터 수집
+    all_features = []
+    all_targets = []
+    for sym in symbols[:3]:
+        try:
+            hist = fetch_recent_history(client, sym, days=days)
+            if len(hist) < 60:
+                continue
+            features = _build_features(hist)
+            target = _build_target(hist, horizon=1)
+            valid = features.notna().all(axis=1) & target.notna()
+            all_features.append(features[valid])
+            all_targets.append(target[valid])
+        except Exception:
+            continue
+
+    if not all_features:
+        return None
+
+    X = pd.concat(all_features)
+    y = pd.concat(all_targets)
+
+    if len(X) < 60:
+        return None
+
+    predictor.feature_names = list(X.columns)
+    split_idx = int(len(X) * 0.8)
+    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+    train_data = lgb.Dataset(X_train, label=y_train)
+    valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
+
+    params = {
+        "objective": "binary",
+        "metric": "auc",
+        "boosting_type": "gbdt",
+        "num_leaves": 31,
+        "learning_rate": 0.03,  # 일일 학습은 더 낮은 LR
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "min_child_samples": 10,
+        "verbose": -1,
+        "seed": 42,
+    }
+
+    callbacks = [lgb.early_stopping(10), lgb.log_evaluation(0)]
+
+    # warm-start: 기존 모델이 있으면 init_model로 사용
+    init_model = predictor.model if predictor.model is not None else None
+    predictor.model = lgb.train(
+        params,
+        train_data,
+        num_boost_round=50,  # 추가 50라운드만 (빠른 갱신)
+        valid_sets=[valid_data],
+        callbacks=callbacks,
+        init_model=init_model,
+    )
+
+    y_pred_prob = predictor.model.predict(X_test)
+    y_pred = (y_pred_prob > 0.5).astype(int)
+    accuracy = accuracy_score(y_test, y_pred)
+    auc = roc_auc_score(y_test, y_pred_prob)
+
+    predictor._save_model()
+
+    # 피처 중요도 저장
+    importance = dict(zip(
+        predictor.feature_names,
+        predictor.model.feature_importance(importance_type="gain").tolist(),
+    ))
+    sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+    FEATURE_IMPORTANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with FEATURE_IMPORTANCE_PATH.open("w", encoding="utf-8") as f:
+        json.dump({
+            "trained_at": pd.Timestamp.now().isoformat(),
+            "mode": "daily_warm_start",
+            "accuracy": round(accuracy, 4),
+            "auc": round(auc, 4),
+            "n_samples": len(X),
+            "feature_importance": {k: round(v, 2) for k, v in sorted_imp[:20]},
+        }, f, ensure_ascii=False, indent=2)
+
+    result = {"accuracy": float(accuracy), "auc": float(auc), "n_samples": len(X)}
+    print(f"  [LGBM 일일학습] accuracy={accuracy:.1%}, AUC={auc:.3f}, 데이터={len(X)}건")
+    return result
+
+
 def get_prediction_filter(client, symbol: str) -> dict:
     """매수 판단 시 LGBM 필터를 적용.
 

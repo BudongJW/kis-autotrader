@@ -23,7 +23,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pykrx hmmlearn
+        run: pip install -r requirements.txt pykrx hmmlearn lightgbm scikit-learn
 
       - name: Create .env
         run: |
@@ -58,6 +58,13 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      - name: Download ML models
+        uses: actions/download-artifact@v4
+        with:
+          name: ml-models
+          path: logs/
+        continue-on-error: true
+
       - name: Run daily report
         env:
           PYTHONPATH: '.'
@@ -79,6 +86,20 @@ jobs:
           path: |
             logs/market_history.json
             logs/ta_accuracy.json
+            logs/experience.json
+            logs/regime_memory.json
+            logs/strategy_weights.json
           overwrite: true
           retention-days: 180
+        if: always()
+
+      - name: Upload ML models
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-models
+          path: |
+            logs/lgbm_model.pkl
+            logs/lgbm_features.json
+          overwrite: true
+          retention-days: 30
         if: always()

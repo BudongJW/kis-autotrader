@@ -169,3 +169,17 @@ jobs:
           overwrite: true
           retention-days: 90
         if: always()
+
+      - name: Upload learning data
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-data
+          path: |
+            logs/market_history.json
+            logs/ta_accuracy.json
+            logs/experience.json
+            logs/regime_memory.json
+            logs/strategy_weights.json
+          overwrite: true
+          retention-days: 180
+        if: always()
