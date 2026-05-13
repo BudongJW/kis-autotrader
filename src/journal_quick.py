@@ -14,17 +14,14 @@ from pathlib import Path
 import yaml
 
 from src.kis_client import KISClient
-from src.bot.single_run import (
-    load_universe, load_strategy_params,
-    get_all_holdings, get_available_cash, get_price,
-)
+from src.bot.single_run import load_universe, load_strategy_params
 from src.tracker import get_summary
 from src.risk_manager import (
-    load_positions, get_strategy_expectancy, get_kelly_position_size,
-    get_drawdown_scale,
+    load_positions, get_kelly_position_size, get_drawdown_scale,
 )
 from src.strategies.signal_fusion import FUSION_WEIGHTS_PATH
 from src.experience import _load_experience
+from src.utils.logger import log
 
 
 JOURNAL_DIR = Path("journal")
@@ -58,46 +55,97 @@ def main() -> None:
     client = KISClient()
     universe = load_universe()
     universe_syms = {s["symbol"] for s in universe}
-    holdings_raw = get_all_holdings(client)
-    cash = get_available_cash(client)
     params = load_strategy_params()
     summary = get_summary()
     positions = load_positions()
 
+    # KIS API 잔고 한 번 호출로 모든 정보 추출
+    balance_resp = {}
+    try:
+        balance_resp = client.get_balance()
+    except Exception as e:
+        log.error("journal_balance_failed", error=str(e))
+
+    # output1: 개별 종목 정보 (현재가, 평가금액, 매수평균가 등 KIS가 직접 계산)
+    # output2: 계좌 요약 (총평가금액, 예수금 등)
+    api_holdings = {}
+    if balance_resp.get("rt_cd") == "0":
+        for item in balance_resp.get("output1", []):
+            qty = int(item.get("hldg_qty", 0))
+            if qty > 0:
+                sym = item.get("pdno", "")
+                api_holdings[sym] = {
+                    "qty": qty,
+                    "name": item.get("prdt_name", sym),
+                    "current_price": int(item.get("prpr", 0)),
+                    "buy_avg_price": int(float(item.get("pchs_avg_pric", 0))),
+                    "evlu_amt": int(item.get("evlu_amt", 0)),        # 평가금액
+                    "evlu_pfls_amt": int(item.get("evlu_pfls_amt", 0)),  # 평가손익
+                    "evlu_pfls_rt": float(item.get("evlu_pfls_rt", 0)),  # 수익률%
+                }
+
+    # output2에서 계좌 총계 (KIS가 계산한 정확한 값)
+    cash = 0
+    total_value_api = 0
+    holdings_value_api = 0
+    output2 = balance_resp.get("output2", [{}])
+    if output2 and balance_resp.get("rt_cd") == "0":
+        o2 = output2[0] if isinstance(output2, list) else output2
+        cash = int(o2.get("dnca_tot_amt", 0))          # 예수금 총액
+        total_value_api = int(o2.get("tot_evlu_amt", 0))  # 총평가금액
+        holdings_value_api = int(o2.get("scts_evlu_amt", 0))  # 유가증권 평가금액
+
+        # tot_evlu_amt가 0이면 fallback
+        if total_value_api <= 0:
+            total_value_api = cash + holdings_value_api
+
+    # 보유 종목 상세 구성
     holdings = []
     holdings_value = 0
-    for sym, qty in holdings_raw.items():
-        cur_price = get_price(client, sym)
-        value = cur_price * qty
-        holdings_value += value
-        name = next((s["name"] for s in universe if s["symbol"] == sym), sym)
+    for sym, info in api_holdings.items():
+        qty = info["qty"]
+        cur_price = info["current_price"]
+        evlu_amt = info["evlu_amt"]
+        holdings_value += evlu_amt
+
+        # 이름: KIS API 응답 > 유니버스 매핑 > 심볼 그대로
+        api_name = info["name"]
+        universe_name = next((s["name"] for s in universe if s["symbol"] == sym), None)
+        name = universe_name or api_name or sym
 
         h = {
             "symbol": sym, "name": name,
-            "qty": qty, "current_price": cur_price, "value": value,
+            "qty": qty, "current_price": cur_price,
+            "value": evlu_amt,
+            "buy_price": info["buy_avg_price"],
+            "pnl": info["evlu_pfls_amt"],
+            "pnl_pct": round(info["evlu_pfls_rt"], 2),
         }
 
-        # 포지션 손익 + ATR 정보
+        # 봇이 관리하는 포지션 정보 (ATR, hold_days 등)
         pos = positions.get(sym, {})
         if pos:
-            buy_price = pos.get("buy_price", 0)
-            h["buy_price"] = buy_price
-            h["pnl"] = cur_price * qty - buy_price * qty if buy_price > 0 else 0
-            h["pnl_pct"] = round((cur_price - buy_price) / buy_price * 100, 2) if buy_price > 0 else 0
-            h["peak_price"] = pos.get("peak_price", buy_price)
             h["atr_at_buy"] = pos.get("atr_at_buy", 0)
             h["hold_days"] = pos.get("hold_days", 0)
-            # ATR 기반 손절가 계산
+            h["peak_price"] = pos.get("peak_price", info["buy_avg_price"])
             atr = pos.get("atr_at_buy", 0)
-            if atr > 0 and buy_price > 0:
-                h["stop_price"] = round(buy_price - atr * 1.5)
-                h["trailing_activate"] = round(buy_price + atr * 2.0)
-            else:
-                h["stop_price"] = round(buy_price * 0.97) if buy_price > 0 else 0
+            buy_p = pos.get("buy_price", info["buy_avg_price"])
+            if atr > 0 and buy_p > 0:
+                h["stop_price"] = round(buy_p - atr * 1.5)
+                h["trailing_activate"] = round(buy_p + atr * 2.0)
+            elif buy_p > 0:
+                h["stop_price"] = round(buy_p * 0.97)
+        else:
+            # 봇이 매수하지 않은 종목 (수동 보유분)
+            h["manual"] = True
+            buy_p = info["buy_avg_price"]
+            if buy_p > 0:
+                h["stop_price"] = round(buy_p * 0.97)
 
         holdings.append(h)
 
-    total_value = cash + holdings_value
+    # 총자산: KIS API 값 우선, 없으면 직접 계산
+    total_value = total_value_api if total_value_api > 0 else (cash + holdings_value)
 
     # 기존 데이터 로드
     existing = {}
