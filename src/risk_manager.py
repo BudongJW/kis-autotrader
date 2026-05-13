@@ -64,8 +64,11 @@ def record_buy(symbol: str, price: int, qty: int) -> None:
     positions[symbol] = {
         "buy_price": price,
         "buy_time": datetime.now().isoformat(),
+        "buy_date": datetime.now().strftime("%Y-%m-%d"),
         "qty": qty,
         "peak_price": price,  # 추적 손절용 최고가
+        "hold_days": 0,       # 보유 일수 (장 시작 시 증가)
+        "max_hold_days": 5,   # 최대 보유 일수
     }
     save_positions(positions)
 
@@ -122,6 +125,57 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
                               f"수익 {pnl_pct:+.1%} ≥ {min_roi:.1%})")
 
     return False, ""
+
+
+def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
+    """시가 매도 대신 계속 보유할지 판단.
+
+    조건:
+      - 현재 수익 중 (+0.3% 이상)
+      - 최대 보유 일수(5일) 미만
+      - 고점 대비 -2% 이내
+
+    Returns:
+        (should_hold, reason)
+    """
+    positions = load_positions()
+    pos = positions.get(symbol)
+    if not pos:
+        return False, "포지션 정보 없음"
+
+    buy_price = pos["buy_price"]
+    peak_price = pos.get("peak_price", buy_price)
+    hold_days = pos.get("hold_days", 0)
+    max_hold = pos.get("max_hold_days", 5)
+
+    pnl_pct = (current_price - buy_price) / buy_price
+    drop_from_peak = (current_price - peak_price) / peak_price if peak_price > 0 else 0
+
+    # 최대 보유 일수 초과 → 매도
+    if hold_days >= max_hold:
+        return False, f"최대 보유 일수 도달 ({hold_days}/{max_hold}일)"
+
+    # 손실 중이면 매도 (-0.5% 이하)
+    if pnl_pct < -0.005:
+        return False, f"손실 중 ({pnl_pct:+.1%}), 매도"
+
+    # 수익 중이고 고점 대비 적정 범위 → 보유 계속
+    if pnl_pct >= 0.003 and drop_from_peak > -0.02:
+        # 보유 일수 갱신
+        pos["hold_days"] = hold_days + 1
+        positions[symbol] = pos
+        save_positions(positions)
+        return True, (f"수익 {pnl_pct:+.1%}, 고점 대비 {drop_from_peak:+.1%} "
+                      f"→ 보유 계속 ({hold_days + 1}/{max_hold}일)")
+
+    # 보합이면 1일차까지는 보유, 이후 매도
+    if hold_days < 1 and pnl_pct >= -0.003:
+        pos["hold_days"] = hold_days + 1
+        positions[symbol] = pos
+        save_positions(positions)
+        return True, f"보합 ({pnl_pct:+.1%}), 1일 더 관찰 ({hold_days + 1}/{max_hold}일)"
+
+    return False, f"보유 조건 미충족 (수익 {pnl_pct:+.1%})"
 
 
 def check_turbulence(client: KISClient) -> tuple[bool, str]:

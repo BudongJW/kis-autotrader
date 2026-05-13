@@ -4,15 +4,16 @@
   --loop     : 1분 간격 연속 감시 (장 시작~마감). GitHub Actions 장시간 실행용.
   (기본)     : 1회 체크 후 종료. 5분 cron 백업용.
 
-전략 A: ETF 변동성 돌파 (기대값 기반 동적 배분)
-전략 B: 급등주 단타 (기대값 기반 동적 배분)
+전략: ETF 변동성 돌파 (전체 자본 집중)
+  - 오버나이트 갭 신호 (미국장 종가 → 한국장 방향)
+  - TA 복합 점수 + LGBM 예측 필터
+  - Kelly Criterion 포지션 사이징
 
 리스크 관리 (1분마다 체크):
   - 장중 손절매: -3% 도달 시 즉시 매도
   - 추적 손절: +1.5% 도달 후 고점 대비 -1% 시 매도
   - 동적 ROI: 보유 시간별 최소 수익률 도달 시 청산
   - 터뷸런스 필터: KOSPI200 변동성 급등 시 신규 매수 차단
-  - 기대값 기반 배분: 전략별 성과에 따라 자본 비율 자동 조정
 """
 
 from __future__ import annotations
@@ -28,18 +29,17 @@ import yaml
 from src.config import settings
 from src.kis_client import KISClient
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
-from src.strategies.surge_scanner import scan_surge_candidates
 from src.strategies.ta_composite import compute_ta_score, TAScore
 from src.bot.runner import fetch_recent_history, get_holding_qty
 from src.tracker import log_trade, get_summary
 from src.risk_manager import (
     check_stop_loss, check_turbulence, record_buy, remove_position,
-    load_positions, get_strategy_expectancy, get_kelly_position_size,
+    load_positions, get_kelly_position_size, should_hold_overnight,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
 from src.strategies.lgbm_predictor import get_prediction_filter
-from src.experience import log_decision, get_regime_recommendation, get_adaptive_allocation
+from src.experience import log_decision, get_regime_recommendation
 from src.utils.logger import log
 
 MARKET_OPEN = dtime(9, 0)
@@ -49,9 +49,8 @@ SELL_WINDOW_END = dtime(9, 10)
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 
-# 기본 자본 배분 비율 (기대값 데이터 없을 때)
-DEFAULT_ETF_RATIO = 0.60
-DEFAULT_SURGE_RATIO = 0.40
+# ETF 전략에 전체 자본 집중 (급등주 전략 폐지)
+DEFAULT_ETF_RATIO = 1.0
 
 # 루프 간격 (초)
 RISK_CHECK_INTERVAL = 60       # 리스크 체크: 1분
@@ -65,7 +64,16 @@ def load_config() -> dict:
 
 
 def load_universe() -> list[dict]:
-    return load_config().get("universe", {}).get("default", [])
+    """기본 유니버스 + 섹터 모멘텀 기반 동적 추가분."""
+    cfg = load_config()
+    universe = list(cfg.get("universe", {}).get("default", []))
+    dynamic = cfg.get("dynamic_universe", [])
+    if dynamic:
+        existing = {s["symbol"] for s in universe}
+        for d in dynamic:
+            if d["symbol"] not in existing:
+                universe.append(d)
+    return universe
 
 
 def load_strategy_params() -> dict:
@@ -186,7 +194,7 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
 def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                      universe: list[dict], dry_run: bool,
                      twap_engine: TWAPEngine | None = None) -> int:
-    """ETF 변동성 돌파 전략. 사용한 금액을 반환."""
+    """ETF 변동성 돌파 전략. 섹터 모멘텀 기반으로 우선순위 정렬. 사용한 금액을 반환."""
     universe_syms = {s["symbol"] for s in universe}
 
     etf_held = {s: q for s, q in holdings.items() if s in universe_syms}
@@ -199,6 +207,20 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
     k = params.get("k", 0.5)
     ma = params.get("trend_ma", 20)
     strategy = VolatilityBreakoutStrategy(k=k, trend_ma=ma)
+
+    # 섹터 모멘텀 기반 유니버스 우선순위 정렬
+    cfg = load_config()
+    strong = cfg.get("strong_sectors", [])
+    if strong:
+        def _sector_priority(stock: dict) -> int:
+            name = stock["name"]
+            for i, sec in enumerate(strong):
+                if sec in name:
+                    return i  # 강세 순위 그대로
+            return len(strong)  # 강세 아닌 것은 뒤로
+        universe = sorted(universe, key=_sector_priority)
+        print(f"  [ETF] 강세 섹터 우선: {', '.join(strong)}")
+
     print(f"  [ETF] K={k}, MA={ma} | 배정: {budget:,}원")
 
     for stock in universe:
@@ -285,83 +307,6 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
     return 0
 
 
-def run_surge_strategy(client: KISClient, budget: int, holdings: dict,
-                       universe_syms: set, dry_run: bool,
-                       twap_engine: TWAPEngine | None = None) -> int:
-    """급등주 단타 전략. 사용한 금액을 반환."""
-    surge_held = {s: q for s, q in holdings.items() if s not in universe_syms}
-    if surge_held:
-        syms = ", ".join(f"{s}({q}주)" for s, q in surge_held.items())
-        print(f"  [급등주] 보유 중: {syms}. 리스크 관리 대기.")
-        return 0
-
-    print(f"  [급등주] 배정: {budget:,}원 | 스캐닝 중...")
-
-    try:
-        candidates = scan_surge_candidates(client)
-    except Exception as e:
-        print(f"  [급등주] 스캔 실패: {e}")
-        return 0
-
-    if not candidates:
-        print("  [급등주] 조건 충족 종목 없음.")
-        return 0
-
-    print(f"  [급등주] 후보 {len(candidates)}개 발견. 상위 5:")
-    for c in candidates[:5]:
-        print(f"    {c.name:<12} {c.price:>7,}원 +{c.change_pct:.1f}% "
-              f"거래량:{c.volume:,} 점수={c.score:.1f}")
-
-    for c in candidates[:10]:
-        qty = int(budget * 0.999 // c.price)
-        if qty <= 0:
-            continue
-
-        try:
-            hist = fetch_recent_history(client, c.symbol, days=70)
-            ta_weights = load_ta_weights()
-            ta = compute_ta_score(hist, weights=ta_weights)
-            print(f"    {c.name} TA분석: {ta.detail}")
-            if ta.total < 0:
-                print(f"    TA 거부 ({ta.total:+.0f} < 0). 스킵.")
-                continue
-        except Exception as e:
-            print(f"    {c.name} TA 조회 실패: {e}. 스킵.")
-            continue
-
-        live_price = get_price(client, c.symbol) if not dry_run else c.price
-        if live_price <= 0:
-            print(f"    실시간 가격 조회 실패. 스킵.")
-            continue
-        qty = int(budget * 0.999 // live_price)
-        if qty <= 0:
-            continue
-        total = qty * live_price
-
-        print(f"    [매수] {c.name} {qty}주 @ {live_price:,}원 = {total:,}원 (TA={ta.total:+.0f})")
-
-        if twap_engine:
-            twap_engine.submit(c.symbol, qty, "buy", c.name, live_price)
-            return total
-
-        if not dry_run:
-            resp = client.order_cash(c.symbol, qty=qty, price=live_price, side="buy")
-            rt = resp.get("rt_cd")
-            print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
-            if rt == "0":
-                log_trade(c.symbol, c.name, "buy", qty, live_price)
-                record_buy(c.symbol, live_price, qty)
-                return total
-            elif rt == "E":
-                log.warning("surge_buy_error", symbol=c.symbol, msg=resp.get("msg1", ""))
-        else:
-            print("    (dry-run)")
-            return total
-
-    print("  [급등주] 예산 내 매수 가능 종목 없음 (또는 TA 거부).")
-    return 0
-
-
 # ──────────────────────────────────────────────────────────
 # 1회 실행 (기존 5분 cron 호환)
 # ──────────────────────────────────────────────────────────
@@ -385,30 +330,30 @@ def run_once(dry_run: bool) -> None:
     holdings = get_all_holdings(client)
     cash = get_available_cash(client)
 
-    # 기대값 기반 동적 자본 배분
-    expectancy = get_strategy_expectancy()
-    etf_ratio = expectancy.get("etf", DEFAULT_ETF_RATIO)
-    surge_ratio = expectancy.get("surge", DEFAULT_SURGE_RATIO)
-    etf_budget_cap = int(cash * etf_ratio)
-    surge_budget_cap = int(cash * surge_ratio)
-
     print(f"  예수금: {cash:,}원 | 보유: {holdings if holdings else '없음'}")
-    print(f"  배분: ETF {etf_budget_cap:,}원({etf_ratio:.0%}) / "
-          f"급등주 {surge_budget_cap:,}원({surge_ratio:.0%})")
 
-    # ── 09:00~09:10 전일 보유분 전량 매도 ──
+    # ── 09:00~09:10 전일 보유분 평가 → 조건부 매도/보유 ──
     if MARKET_OPEN <= t <= SELL_WINDOW_END and holdings:
-        sell_holdings(client, holdings, universe_syms, "시가매도", dry_run)
+        to_sell = {}
+        for symbol, qty in holdings.items():
+            price = get_price(client, symbol)
+            if price <= 0:
+                to_sell[symbol] = qty
+                continue
+            hold, reason = should_hold_overnight(symbol, price)
+            if hold:
+                print(f"  [보유 유지] {symbol} {qty}주 — {reason}")
+            else:
+                print(f"  [시가 매도] {symbol} {qty}주 — {reason}")
+                to_sell[symbol] = qty
+        if to_sell:
+            sell_holdings(client, to_sell, universe_syms, "시가매도", dry_run)
         return
 
     # ── 장중 리스크 체크: 손절/추적손절/ROI ──
     if holdings:
         print("  [리스크 체크]")
         holdings = check_risk_and_sell(client, holdings, universe_syms, dry_run)
-        if not holdings:
-            cash = get_available_cash(client)
-            etf_budget_cap = int(cash * etf_ratio)
-            surge_budget_cap = int(cash * surge_ratio)
 
     # ── 15:20 이후 미매도 청산 ──
     if t > MARKET_CLOSE and holdings:
@@ -432,37 +377,38 @@ def run_once(dry_run: bool) -> None:
     intraday = get_intraday_regime_adjustment(client)
     print(f"  [시장 신뢰도] {confidence:.0%} | {intraday['reason']}")
 
+    # ── 오버나이트 갭 신호 반영 ──
+    cfg = load_config()
+    gap = cfg.get("overnight_signal", {})
+    gap_action = gap.get("recommended_action", "normal")
+    if gap_action == "skip":
+        print(f"  [오버나이트] 미국 급락 → 매수 스킵 (NASDAQ {gap.get('nasdaq_change', 0):+.1f}%)")
+        return
+
     # 신뢰도가 낮으면 투자 비율 축소
     size_factor = max(0.3, confidence)  # 최소 30%, 최대 100%
     if intraday.get("reduce_size"):
         size_factor *= 0.7  # 장중 급변 시 추가 30% 축소
 
-    # ETF 보유 여부에 따라 예산 동적 배분
-    etf_held = any(s in universe_syms for s in holdings)
-    surge_held = any(s not in universe_syms for s in holdings)
+    # 오버나이트 갭 신호로 사이즈 조정
+    if gap_action == "aggressive_buy":
+        size_factor = min(1.0, size_factor * 1.2)
+        print(f"  [오버나이트] 미국 강세 → 적극 매수 (x1.2)")
+    elif gap_action == "reduce_size":
+        size_factor *= 0.7
+        print(f"  [오버나이트] 미국 약세 → 규모 축소 (x0.7)")
 
-    etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
-    remaining = cash - etf_budget if not etf_held else cash
-    surge_budget = int(min(surge_budget_cap, remaining) * size_factor) if not surge_held else 0
+    # ETF 전략에 전체 자본 집중
+    etf_held = any(s in universe_syms for s in holdings)
+    etf_budget = int(cash * size_factor) if not etf_held else 0
 
     if size_factor < 1.0:
-        print(f"  [배분 조정] 신뢰도 반영: ETF {etf_budget:,}원, 급등주 {surge_budget:,}원 "
-              f"(x{size_factor:.0%})")
+        print(f"  [배분 조정] 신뢰도 반영: ETF {etf_budget:,}원 (x{size_factor:.0%})")
 
-    # 전략 A: ETF
     etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
 
-    # 전략 B: 급등주
-    if surge_budget > 0:
-        actual_surge_budget = surge_budget if etf_used == 0 else max(0, cash - etf_used)
-        if actual_surge_budget >= 10000:
-            run_surge_strategy(client, actual_surge_budget, holdings,
-                             universe_syms, dry_run)
-    elif surge_held:
-        print("  [급등주] 이미 보유 중.")
-
     if etf_used == 0 and not etf_held:
-        print("  돌파/급등 없음. 현금 보유.")
+        print("  돌파 없음. 현금 보유.")
 
 
 # ──────────────────────────────────────────────────────────
@@ -473,11 +419,8 @@ def run_loop(dry_run: bool) -> None:
     """1분 간격 연속 감시. 장 시작~마감까지 실행.
 
     매 1분: 보유 종목 리스크 체크 (손절/추적손절/ROI)
-    매 5분: 전략 실행 (변동성 돌파 + 급등주 스캐닝)
+    매 5분: ETF 변동성 돌파 전략 실행
     매 3분: 터뷸런스 필터 갱신
-
-    리스크 체크는 가격만 조회하므로 API 부하 최소화.
-    전략 실행은 일봉 + TA 계산이 포함되어 5분 간격으로 실행.
     """
     summary = get_summary()
     print(f"{'=' * 60}")
@@ -520,11 +463,24 @@ def run_loop(dry_run: bool) -> None:
         # ── 보유 현황 조회 ──
         holdings = get_all_holdings(client)
 
-        # ── 09:00~09:10 시가 매도 ──
+        # ── 09:00~09:10 시가 평가 → 조건부 매도/보유 ──
         if MARKET_OPEN <= t <= SELL_WINDOW_END and not sold_at_open:
             if holdings:
-                print(f"\n[{now:%H:%M:%S}] === 시가 매도 ===")
-                sell_holdings(client, holdings, universe_syms, "시가매도", dry_run)
+                print(f"\n[{now:%H:%M:%S}] === 시가 평가 ===")
+                to_sell = {}
+                for symbol, qty in holdings.items():
+                    price = get_price(client, symbol)
+                    if price <= 0:
+                        to_sell[symbol] = qty
+                        continue
+                    hold, reason = should_hold_overnight(symbol, price)
+                    if hold:
+                        print(f"  [보유 유지] {symbol} {qty}주 — {reason}")
+                    else:
+                        print(f"  [시가 매도] {symbol} {qty}주 — {reason}")
+                        to_sell[symbol] = qty
+                if to_sell:
+                    sell_holdings(client, to_sell, universe_syms, "시가매도", dry_run)
                 holdings = get_all_holdings(client)
             sold_at_open = True
             time_mod.sleep(RISK_CHECK_INTERVAL)
@@ -601,17 +557,10 @@ def run_loop(dry_run: bool) -> None:
                 time_mod.sleep(RISK_CHECK_INTERVAL)
                 continue
 
-            # 경험 기반 적응적 배분 (Thompson Sampling)
-            adaptive = get_adaptive_allocation()
-            etf_ratio = adaptive.get("etf", DEFAULT_ETF_RATIO)
-            surge_ratio = adaptive.get("surge", DEFAULT_SURGE_RATIO)
-
             # Kelly Criterion: 전체 자본 대비 최적 투입 비율
             kelly_f = get_kelly_position_size("combined")
             kelly_cap = max(int(cash * kelly_f), int(cash * 0.10))  # 최소 10%
-
-            etf_budget_cap = min(int(cash * etf_ratio), kelly_cap)
-            surge_budget_cap = min(int(cash * surge_ratio), kelly_cap)
+            etf_budget_cap = min(cash, kelly_cap)
 
             # 시장 신뢰도 반영
             confidence = get_market_confidence()
@@ -620,9 +569,25 @@ def run_loop(dry_run: bool) -> None:
             if intraday.get("reduce_size"):
                 size_factor *= 0.7
 
-            # 경험 기반 레짐 추천 반영
+            # 오버나이트 갭 신호 반영
             try:
                 cfg = load_config()
+                gap = cfg.get("overnight_signal", {})
+                gap_action = gap.get("recommended_action", "normal")
+                if gap_action == "skip":
+                    print(f"\n[{now:%H:%M:%S}] [오버나이트] 미국 급락 → 매수 스킵")
+                    time_mod.sleep(RISK_CHECK_INTERVAL)
+                    continue
+                elif gap_action == "aggressive_buy":
+                    size_factor = min(1.0, size_factor * 1.2)
+                elif gap_action == "reduce_size":
+                    size_factor *= 0.7
+            except Exception:
+                cfg = load_config()
+                gap = {}
+
+            # 경험 기반 레짐 추천 반영
+            try:
                 cur_regime = cfg.get("market_regime", {}).get("trend", "unknown")
                 cur_hmm = cfg.get("market_regime", {}).get("hmm_state", "unknown")
                 regime_rec = get_regime_recommendation(cur_regime, cur_hmm)
@@ -635,33 +600,18 @@ def run_loop(dry_run: bool) -> None:
             print(f"\n[{now:%H:%M:%S}] === 전략 체크 ===")
             print(f"  예수금: {cash:,}원 | Kelly={kelly_f:.0%} "
                   f"| 신뢰도: {confidence:.0%} | {intraday['reason']}")
-            print(f"  배분: ETF {etf_ratio:.0%} / 급등주 {surge_ratio:.0%} (Thompson Sampling)")
 
             etf_held = any(s in universe_syms for s in holdings)
-            surge_held = any(s not in universe_syms for s in holdings)
-
             etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
-            remaining_cash = cash - etf_budget if not etf_held else cash
-            surge_budget = int(min(surge_budget_cap, remaining_cash) * size_factor) if not surge_held else 0
 
-            # 전략 A: ETF (TWAP 분할 매수)
+            # ETF 변동성 돌파 (TWAP 분할 매수)
             etf_used = run_etf_strategy(client, etf_budget, holdings, universe,
                                         dry_run, twap_engine=twap)
             if etf_used > 0:
                 bought_today = True
 
-            # 전략 B: 급등주 (TWAP 분할 매수)
-            if surge_budget > 0 and not bought_today:
-                actual_surge_budget = surge_budget if etf_used == 0 else max(0, cash - etf_used)
-                if actual_surge_budget >= 10000:
-                    surge_used = run_surge_strategy(client, actual_surge_budget,
-                                                   holdings, universe_syms, dry_run,
-                                                   twap_engine=twap)
-                    if surge_used > 0:
-                        bought_today = True
-
             if not bought_today and not etf_held:
-                print("  돌파/급등 없음. 현금 보유.")
+                print("  돌파 없음. 현금 보유.")
 
         # ── 1분 대기 ──
         elapsed = time_mod.time() - epoch_now

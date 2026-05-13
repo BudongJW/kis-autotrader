@@ -16,6 +16,9 @@ plotly>=5.20.0
 jupyter>=1.0.0
 ipykernel>=6.29.0
 
+# --- 미국 시장 데이터 ---
+yfinance>=0.2.0
+
 # --- 백테스트 ---
 pykrx>=0.3.0
 backtrader>=1.9.78

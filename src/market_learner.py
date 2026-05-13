@@ -37,6 +37,7 @@ from src.experience import (
     evaluate_outcomes, update_regime_memory, get_regime_recommendation,
     update_strategy_weights_from_experience, _load_experience,
 )
+from src.strategies.overnight_gap import get_overnight_signal
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -373,14 +374,47 @@ def pre_market(client: KISClient) -> None:
     # 시장 신뢰도
     cfg["market_confidence"] = confidence
 
-    # 강세 섹터 기록
+    # 강세 섹터 기록 + 동적 유니버스 보강
     strong_sectors = [name for name, data in sectors.items()
                       if data.get("momentum") in ("strong", "positive")]
     cfg["strong_sectors"] = strong_sectors
 
+    # 강세 섹터 ETF를 동적 유니버스에 추가
+    current_syms = {s["symbol"] for s in cfg.get("universe", {}).get("default", [])}
+    dynamic_adds = []
+    for name in strong_sectors:
+        if name in SECTOR_ETFS:
+            sym = SECTOR_ETFS[name]
+            if sym not in current_syms:
+                dynamic_adds.append({"symbol": sym, "name": f"KODEX {name}"})
+    cfg["dynamic_universe"] = dynamic_adds
+    if dynamic_adds:
+        names = [d["name"] for d in dynamic_adds]
+        print(f"  동적 유니버스 추가: {', '.join(names)}")
+
     save_config(cfg)
     print(f"  시장 신뢰도: {confidence:.1%}")
     print(f"  강세 섹터: {', '.join(strong_sectors) if strong_sectors else '없음'}")
+
+    # 6.5. 오버나이트 갭 신호 (미국장 종가 → 한국장 방향)
+    print("\n[6.5] 오버나이트 갭 신호...")
+    try:
+        gap_signal = get_overnight_signal(client)
+        print(f"  {gap_signal.detail}")
+        print(f"  방향: {gap_signal.direction} | 강도: {gap_signal.strength:.2f} | "
+              f"추천: {gap_signal.recommended_action}")
+
+        cfg["overnight_signal"] = gap_signal.as_dict
+
+        # 신뢰도에 갭 신호 반영
+        if gap_signal.confidence_boost != 0:
+            old_conf = confidence
+            confidence = max(0.0, min(1.0, confidence + gap_signal.confidence_boost))
+            cfg["market_confidence"] = round(confidence, 3)
+            print(f"  신뢰도 조정: {old_conf:.0%} → {confidence:.0%} "
+                  f"(갭 {gap_signal.confidence_boost:+.3f})")
+    except Exception as e:
+        print(f"  오버나이트 갭 신호 실패: {e}")
 
     # 7. 경험 기반 추천 (과거 유사 레짐에서의 결과)
     print("\n[7] 경험 기반 레짐 추천...")

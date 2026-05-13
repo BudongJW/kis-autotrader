@@ -33,7 +33,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt hmmlearn lightgbm scikit-learn
+        run: pip install -r requirements.txt hmmlearn lightgbm scikit-learn yfinance
 
       - name: Create .env
         run: |
