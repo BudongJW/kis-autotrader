@@ -352,7 +352,7 @@ def get_regime_recommendation(regime: str, hmm_state: str) -> dict:
 
 
 # ──────────────────────────────────────────────────────────
-# Thompson Sampling — 전략별 적응적 배분
+# Thompson Sampling — ETF 전략 성과 추적
 # ──────────────────────────────────────────────────────────
 
 def _load_strategy_weights() -> dict:
@@ -365,7 +365,6 @@ def _load_strategy_weights() -> dict:
     # Beta(2,2) prior — 약한 사전분포 (50%에서 시작)
     return {
         "etf": {"alpha": 2, "beta": 2, "trades": 0},
-        "surge": {"alpha": 2, "beta": 2, "trades": 0},
     }
 
 
@@ -376,76 +375,47 @@ def _save_strategy_weights(data: dict) -> None:
 
 
 def update_strategy_weights_from_experience() -> dict[str, float]:
-    """경험 버퍼에서 전략별 성과를 집계하여 Thompson Sampling 파라미터 갱신.
+    """경험 버퍼에서 ETF 전략 성과를 집계하여 Thompson Sampling 파라미터 갱신.
 
     Returns:
-        {"etf": ratio, "surge": ratio} — 합계 1.0 배분 비율
+        {"etf": ratio} — ETF 전략 배분 비율 (100%)
     """
     records = _load_experience()
     weights = _load_strategy_weights()
 
-    # 기존 카운트 리셋 후 전체 재집계 (데이터 일관성)
-    for key in weights:
-        weights[key] = {"alpha": 2, "beta": 2, "trades": 0}
+    # 기존 카운트 리셋 후 전체 재집계
+    weights["etf"] = {"alpha": 2, "beta": 2, "trades": 0}
+    # 기존 surge 키 제거
+    weights.pop("surge", None)
 
     for r in records:
         if not r.get("evaluated") or r["action"] != "buy":
             continue
         strategy = r.get("strategy", "unknown")
-        if strategy not in weights:
+        if strategy != "etf":
             continue
 
-        weights[strategy]["trades"] += 1
+        weights["etf"]["trades"] += 1
         if r.get("outcome") == "win":
-            weights[strategy]["alpha"] += 1
+            weights["etf"]["alpha"] += 1
         elif r.get("outcome") == "loss":
-            weights[strategy]["beta"] += 1
+            weights["etf"]["beta"] += 1
 
     _save_strategy_weights(weights)
 
-    # Thompson Sampling: Beta 분포의 기대값으로 배분
-    # E[Beta(a,b)] = a / (a+b)
-    expected = {}
-    for key, params in weights.items():
-        expected[key] = params["alpha"] / (params["alpha"] + params["beta"])
+    etf_params = weights["etf"]
+    win_rate = etf_params["alpha"] / (etf_params["alpha"] + etf_params["beta"])
 
-    total = sum(expected.values())
-    if total <= 0:
-        return {"etf": 0.6, "surge": 0.4}
-
-    ratios = {k: round(v / total, 2) for k, v in expected.items()}
-
-    # 극단 방지: 20%~80% 범위
-    for k in ratios:
-        ratios[k] = max(0.20, min(0.80, ratios[k]))
-
-    # 재정규화
-    total = sum(ratios.values())
-    ratios = {k: round(v / total, 2) for k, v in ratios.items()}
-
-    return ratios
+    return {"etf": 1.0, "win_rate": round(win_rate, 3), "trades": etf_params["trades"]}
 
 
 def get_adaptive_allocation() -> dict[str, float]:
-    """현재 Thompson Sampling 기반 전략 배분 비율 반환.
+    """현재 ETF 전략 성과 반환.
 
-    학습 데이터 부족 시 기본값(60/40) 사용.
+    Returns:
+        {"etf": 1.0, "win_rate": float, "trades": int}
     """
     weights = _load_strategy_weights()
-    total_trades = sum(w["trades"] for w in weights.values())
-
-    if total_trades < 10:
-        return {"etf": 0.60, "surge": 0.40}
-
-    expected = {}
-    for key, params in weights.items():
-        expected[key] = params["alpha"] / (params["alpha"] + params["beta"])
-
-    total = sum(expected.values())
-    ratios = {k: round(v / total, 2) for k, v in expected.items()}
-
-    for k in ratios:
-        ratios[k] = max(0.20, min(0.80, ratios[k]))
-
-    total = sum(ratios.values())
-    return {k: round(v / total, 2) for k, v in ratios.items()}
+    etf = weights.get("etf", {"alpha": 2, "beta": 2, "trades": 0})
+    win_rate = etf["alpha"] / (etf["alpha"] + etf["beta"])
+    return {"etf": 1.0, "win_rate": round(win_rate, 3), "trades": etf["trades"]}

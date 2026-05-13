@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: autotrader
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   TZ: Asia/Seoul

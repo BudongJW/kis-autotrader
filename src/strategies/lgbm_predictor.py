@@ -563,20 +563,25 @@ def daily_retrain(client, symbols: list[str], days: int = 120) -> dict | None:
     return result
 
 
-def get_prediction_filter(client, symbol: str) -> dict:
+def get_prediction_filter(client, symbol: str, history=None) -> dict:
     """매수 판단 시 LGBM 필터를 적용.
+
+    Args:
+        client: KISClient
+        symbol: 종목코드
+        history: 이미 조회한 OHLCV DataFrame. None이면 내부에서 조회.
 
     Returns:
         {"allow": bool, "up_prob": float, "reason": str}
     """
-    from src.bot.runner import fetch_recent_history
-
     predictor = LGBMPredictor()
     if predictor.model is None:
         return {"allow": True, "up_prob": 0.5, "reason": "LGBM 모델 없음 — 필터 미적용"}
 
     try:
-        history = fetch_recent_history(client, symbol, days=70)
+        if history is None:
+            from src.bot.runner import fetch_recent_history
+            history = fetch_recent_history(client, symbol, days=70)
         result = predictor.predict(history)
         return {
             "allow": result.signal != "BLOCK",

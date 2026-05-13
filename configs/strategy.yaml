@@ -10,12 +10,15 @@ strategies:
     backtest_return: 25.99
     backtest_mdd: -6.21
   ta_weights:
-    rsi: 0.2
-    macd: 0.2
-    bb: 0.15
-    stoch: 0.15
-    adx: 0.15
-    ma: 0.15
+    rsi: 0.17
+    macd: 0.17
+    bb: 0.12
+    stoch: 0.12
+    adx: 0.12
+    ma: 0.12
+    obv: 0.06
+    mfi: 0.06
+    atr: 0.06
 universe:
   default:
   - symbol: 091160

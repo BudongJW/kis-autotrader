@@ -92,6 +92,8 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
         return False, ""
 
     buy_price = pos["buy_price"]
+    if buy_price <= 0:
+        return False, "매수가 정보 없음"
     peak_price = pos.get("peak_price", buy_price)
     buy_time = datetime.fromisoformat(pos["buy_time"])
     now = datetime.now()
@@ -160,6 +162,8 @@ def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
         return False, "포지션 정보 없음"
 
     buy_price = pos["buy_price"]
+    if buy_price <= 0:
+        return False, "매수가 정보 없음"
     peak_price = pos.get("peak_price", buy_price)
     hold_days = pos.get("hold_days", 0)
 
@@ -195,6 +199,102 @@ def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
         return True, f"보합 ({pnl_pct:+.1%}), 1일 더 관찰 ({hold_days + 1}/{max_hold}일)"
 
     return False, f"보유 조건 미충족 (수익 {pnl_pct:+.1%})"
+
+
+def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
+    """일일 손실 한도 초과 여부 확인. True면 매수 차단.
+
+    strategy.yaml의 risk.daily_loss_limit_pct 값 사용 (기본 5%).
+    당일 실현 손실이 한도 초과 시 신규 매수 차단.
+    """
+    import csv
+    import yaml
+    from src.tracker import TRADE_LOG_PATH
+
+    try:
+        config_path = Path("configs/strategy.yaml")
+        with config_path.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        limit_pct = cfg.get("risk", {}).get("daily_loss_limit_pct", 0.05)
+    except Exception:
+        limit_pct = 0.05
+
+    if not TRADE_LOG_PATH.exists():
+        return False, "거래 기록 없음"
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    buys: dict[str, list[int]] = {}
+    daily_pnl = 0
+
+    with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if not row.get("timestamp", "").startswith(today_str):
+                continue
+            symbol = row.get("symbol", "")
+            price = int(row.get("price", 0))
+            qty = int(row.get("qty", 0))
+            side = row.get("side", "")
+            if side == "buy":
+                buys.setdefault(symbol, []).append(price * qty)
+            elif side == "sell" and symbol in buys and buys[symbol]:
+                buy_cost = buys[symbol].pop(0)
+                sell_amount = price * qty
+                daily_pnl += sell_amount - buy_cost
+
+    if daily_pnl >= 0:
+        return False, f"당일 손익 {daily_pnl:+,}원 (이익 중)"
+
+    # 보유 포지션의 미실현 손실도 반영
+    positions = load_positions()
+    unrealized_loss = 0
+    for symbol, pos in positions.items():
+        buy_price = pos.get("buy_price", 0)
+        qty = pos.get("qty", 0)
+        if buy_price > 0 and qty > 0:
+            try:
+                resp = client.get_price(symbol)
+                if resp.get("rt_cd") == "0":
+                    cur_price = int(resp["output"]["stck_prpr"])
+                    unrealized_loss += (cur_price - buy_price) * qty
+            except Exception:
+                pass
+
+    total_loss = daily_pnl + min(0, unrealized_loss)
+
+    # 총 자산 대비 비율 계산
+    try:
+        resp = client.get_balance()
+        if resp.get("rt_cd") == "0":
+            cash_list = resp.get("output2", [{}])
+            total_asset = int(cash_list[0].get("tot_evlu_amt", 0)) if cash_list else 0
+            if total_asset <= 0:
+                total_asset = int(cash_list[0].get("dnca_tot_amt", 1_000_000)) if cash_list else 1_000_000
+        else:
+            total_asset = 1_000_000
+    except Exception:
+        total_asset = 1_000_000
+
+    loss_pct = abs(total_loss) / total_asset if total_asset > 0 else 0
+
+    if loss_pct >= limit_pct:
+        return True, (f"일일 손실 한도 초과 ({loss_pct:.1%} >= {limit_pct:.0%}, "
+                       f"실현 {daily_pnl:+,}원, 미실현 {unrealized_loss:+,}원)")
+
+    return False, f"당일 손익 {total_loss:+,}원 ({loss_pct:.1%} / 한도 {limit_pct:.0%})"
+
+
+def check_max_positions(max_positions: int = 5) -> tuple[bool, str]:
+    """최대 동시 포지션 수 초과 여부 확인. True면 매수 가능.
+
+    Returns:
+        (can_buy, reason)
+    """
+    positions = load_positions()
+    count = len(positions)
+    if count >= max_positions:
+        return False, f"최대 포지션 도달 ({count}/{max_positions})"
+    return True, f"포지션 여유 ({count}/{max_positions})"
 
 
 def check_turbulence(client: KISClient) -> tuple[bool, str]:

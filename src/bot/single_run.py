@@ -19,10 +19,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time as time_mod
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -35,6 +37,7 @@ from src.tracker import log_trade, get_summary
 from src.risk_manager import (
     check_stop_loss, check_turbulence, record_buy, remove_position,
     load_positions, get_kelly_position_size, should_hold_overnight,
+    check_daily_loss_limit, check_max_positions,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -44,12 +47,19 @@ from src.experience import log_decision, get_regime_recommendation
 from src.adaptive_learning import record_hold_outcome, record_sector_trade
 from src.utils.logger import log
 
+KST = ZoneInfo("Asia/Seoul")
+
 MARKET_OPEN = dtime(9, 0)
 MARKET_CLOSE = dtime(15, 20)
 MARKET_END = dtime(15, 30)
 SELL_WINDOW_END = dtime(9, 10)
 
 CONFIG_PATH = Path("configs/strategy.yaml")
+
+def _now() -> datetime:
+    """KST 기준 현재 시각. GitHub Actions(UTC) 환경에서도 안전."""
+    return datetime.now(KST)
+
 
 # ETF 전략에 전체 자본 집중 (급등주 전략 폐지)
 DEFAULT_ETF_RATIO = 1.0
@@ -159,7 +169,7 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
                 pos = positions.get(symbol, {})
                 buy_p = pos.get("buy_price", 0)
                 hold_d = pos.get("hold_days", 0)
-                if buy_p > 0:
+                if buy_p > 0 and price > 0:
                     pnl = (price - buy_p) / buy_p
                     action_type = "held" if hold_d > 0 else "sold_at_open"
                     record_hold_outcome(symbol, hold_d, action_type, buy_p, price, pnl)
@@ -263,8 +273,8 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                              cur_price, strategy="etf", ta_scores=_ta_scores)
                 continue
 
-            # LGBM 예측 (차단하지 않고 확률만 수집)
-            lgbm_filter = get_prediction_filter(client, symbol)
+            # LGBM 예측 (차단하지 않고 확률만 수집, history 재사용)
+            lgbm_filter = get_prediction_filter(client, symbol, history=history)
             lgbm_prob = lgbm_filter.get("up_prob", 0.5)
             if lgbm_prob != 0.5:
                 print(f"    LGBM: 상승 {lgbm_prob:.0%} — {lgbm_filter['reason']}")
@@ -314,7 +324,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                   f"(융합={fusion.final_prob:.0%}, TA={ta.total:+.0f})")
 
             _extra = {"strong_sector": is_strong, "fusion_prob": fusion.final_prob,
-                       "fusion_signal": fusion.signal}
+                       "fusion_signal": fusion.signal, "breakout_signal": True}
 
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
@@ -357,7 +367,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
 def run_once(dry_run: bool) -> None:
     """1회 체크: 리스크 관리 + 전략 실행."""
-    now = datetime.now()
+    now = _now()
     t = now.time()
 
     summary = get_summary()
@@ -414,6 +424,20 @@ def run_once(dry_run: bool) -> None:
     print(f"  [터뷸런스] {turb_reason}")
     if is_turbulent:
         print("  시장 변동성 급등. 신규 매수 차단. 현금 보유.")
+        return
+
+    # ── 일일 손실 한도 체크 ──
+    loss_exceeded, loss_reason = check_daily_loss_limit(client)
+    print(f"  [일일손실] {loss_reason}")
+    if loss_exceeded:
+        print("  일일 손실 한도 초과. 신규 매수 차단.")
+        return
+
+    # ── 최대 동시 포지션 체크 ──
+    risk_cfg = load_risk_params()
+    can_buy, pos_reason = check_max_positions(risk_cfg.get("max_concurrent_positions", 5))
+    if not can_buy:
+        print(f"  [포지션] {pos_reason}. 신규 매수 차단.")
         return
 
     # ── 시장 신뢰도 + 장중 적응 ──
@@ -486,7 +510,7 @@ def run_loop(dry_run: bool) -> None:
     bought_today = False          # 오늘 매수 완료 여부
 
     while True:
-        now = datetime.now()
+        now = _now()
         t = now.time()
         epoch_now = time_mod.time()
 
@@ -596,6 +620,23 @@ def run_loop(dry_run: bool) -> None:
                 and t > SELL_WINDOW_END):
 
             last_strategy_check = epoch_now
+
+            # 일일 손실 한도 체크
+            loss_exceeded, loss_reason = check_daily_loss_limit(client)
+            if loss_exceeded:
+                print(f"[{now:%H:%M:%S}] [일일손실] {loss_reason}")
+                time_mod.sleep(RISK_CHECK_INTERVAL)
+                continue
+
+            # 최대 동시 포지션 체크
+            risk_cfg = load_risk_params()
+            can_buy, pos_reason = check_max_positions(
+                risk_cfg.get("max_concurrent_positions", 5))
+            if not can_buy:
+                print(f"[{now:%H:%M:%S}] [포지션] {pos_reason}")
+                time_mod.sleep(RISK_CHECK_INTERVAL)
+                continue
+
             cash = get_available_cash(client)
             if cash < 10000:
                 time_mod.sleep(RISK_CHECK_INTERVAL)

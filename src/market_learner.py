@@ -434,11 +434,11 @@ def pre_market(client: KISClient) -> None:
                 confidence = adjusted
                 cfg["market_confidence"] = confidence
 
-    # 7.5. 전략 배분 업데이트 (Thompson Sampling)
+    # 7.5. ETF 전략 성과 업데이트 (Thompson Sampling)
     adaptive = update_strategy_weights_from_experience()
     cfg["adaptive_allocation"] = adaptive
-    print(f"  적응적 배분: ETF {adaptive.get('etf', 0.6):.0%} / "
-          f"급등주 {adaptive.get('surge', 0.4):.0%}")
+    print(f"  ETF 전략: 승률 {adaptive.get('win_rate', 0.5):.0%} "
+          f"({adaptive.get('trades', 0)}건)")
 
     save_config(cfg)
 
@@ -533,6 +533,9 @@ def evaluate_ta_signals(client: KISClient) -> None:
                 "stoch": ta.stoch_score,
                 "adx": ta.adx_score,
                 "ma": ta.ma_score,
+                "obv": ta.obv_score,
+                "mfi": ta.mfi_score,
+                "atr": ta.atr_score,
             }
 
             for ind, score in indicators.items():
@@ -676,14 +679,14 @@ def post_market(client: KISClient) -> None:
     except Exception as e:
         print(f"  레짐 메모리 갱신 실패: {e}")
 
-    # 5. Thompson Sampling 전략 가중치 갱신
-    print("\n[5] 전략 가중치 갱신 (Thompson Sampling)...")
+    # 5. Thompson Sampling ETF 성과 갱신
+    print("\n[5] ETF 전략 성과 갱신 (Thompson Sampling)...")
     try:
         adaptive = update_strategy_weights_from_experience()
-        print(f"  적응적 배분: ETF {adaptive.get('etf', 0.6):.0%} / "
-              f"급등주 {adaptive.get('surge', 0.4):.0%}")
+        print(f"  ETF 승률: {adaptive.get('win_rate', 0.5):.0%} "
+              f"({adaptive.get('trades', 0)}건)")
     except Exception as e:
-        print(f"  전략 가중치 갱신 실패: {e}")
+        print(f"  전략 성과 갱신 실패: {e}")
 
     # 6. LGBM 일일 재학습 (warm-start)
     print("\n[6] LGBM 일일 재학습...")

@@ -207,7 +207,8 @@ def learn_fusion_weights() -> dict | None:
             lgbm_clamped = max(0.05, min(0.95, lgbm))
             lgbm_norm = math.log(lgbm_clamped / (1 - lgbm_clamped)) / 2.0
 
-        breakout_norm = 0.6 if action == "buy" else -0.3
+        had_breakout = r.get("breakout_signal", action == "buy")
+        breakout_norm = 0.6 if had_breakout else -0.3
 
         X.append([ta_norm, lgbm_norm, breakout_norm, 0, 0])  # gap/regime 없으면 0
         y.append(1 if pnl > 0 else 0)
