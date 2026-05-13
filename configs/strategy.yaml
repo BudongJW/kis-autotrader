@@ -45,7 +45,6 @@ universe:
     name: KODEX K-미래차
   - symbol: '371160'
     name: TIGER 미국필라델피아반도체나스닥
-  # ── 하락장 대응: 인버스 + 방어 유니버스 ──
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -62,38 +61,36 @@ universe:
   - symbol: '214980'
     name: KODEX 단기채권PLUS
     type: short_bond
-  # 카나리아 유니버스: 선행 지표 역할 (모멘텀 음전환 시 방어 전환)
   canary:
   - symbol: '195930'
     name: TIGER 유로스탁50
   - symbol: '132030'
     name: KODEX 골드선물(H)
-
-# ── 하락장 전략 설정 ──
 bear_strategy:
   enabled: true
-  # 레짐 전환 기준
   regime_switch:
-    sma_period: 200            # 200일 이동평균
-    bear_entry_threshold: -0.03  # SMA200 대비 -3% 이하 → 하락장 진입
-    bear_exit_threshold: 0.02    # SMA200 대비 +2% 이상 → 하락장 해제
-    confirmation_days: 3         # 3일 연속 확인 후 전환
-  # 카나리아 경보
+    sma_period: 200
+    bear_entry_threshold: -0.03
+    bear_exit_threshold: 0.02
+    confirmation_days: 3
   canary_alert:
-    momentum_months: [1, 3, 6, 12]
-    momentum_weights: [12, 4, 2, 1]   # VAA 가중 모멘텀
-  # 포지션 배분 (하락장 모드)
+    momentum_months:
+    - 1
+    - 3
+    - 6
+    - 12
+    momentum_weights:
+    - 12
+    - 4
+    - 2
+    - 1
   bear_allocation:
-    inverse_max_pct: 0.30        # 인버스 최대 30%
-    defensive_min_pct: 0.40      # 방어자산 최소 40%
-    cash_min_pct: 0.20           # 현금 최소 20%
-  # 변동성 타겟팅
-  volatility_target: 0.12       # 연간 12% 변동성 목표
-
-# ── 미국 ETF 야간 매매 ──
+    inverse_max_pct: 0.3
+    defensive_min_pct: 0.4
+    cash_min_pct: 0.2
+  volatility_target: 0.12
 us_session:
   enabled: true
-  # 미국 ETF 유니버스
   universe:
   - symbol: QQQ
     name: Invesco QQQ (Nasdaq 100)
@@ -113,24 +110,19 @@ us_session:
     name: iShares 20+ Year Treasury Bond
     exchange: NASD
     type: defensive
-  # 전략 파라미터
   strategy:
-    k: 0.5                    # 변동성 돌파 K값
-    trend_ma: 20              # 추세 필터 이동평균
-    ta_min_score: 15          # TA 최소 점수
-    stop_loss_pct: 0.025      # -2.5% 손절 (USD는 변동성 다름)
-    trailing_activate_pct: 0.02  # +2% 추적 활성화
-    trailing_stop_pct: 0.01     # 고점 -1% 추적 손절
-  # 시간 설정 (KST 기준, 미국 정규장)
-  market_open_kst: "23:30"    # 서머타임 22:30, 동절기 23:30
-  market_close_kst: "06:00"   # 서머타임 05:00, 동절기 06:00
-  summer_time: false          # true면 22:30~05:00
-  # 포지션 관리
-  max_positions: 2            # 미국장 최대 동시 보유
-  budget_pct: 0.40            # 미국장 배정 비율 (총 USD 잔고 대비)
-  # 레짐 연동: 한국장 bear면 미국도 인버스(SQQQ) 우선
+    k: 0.5
+    trend_ma: 20
+    ta_min_score: 15
+    stop_loss_pct: 0.025
+    trailing_activate_pct: 0.02
+    trailing_stop_pct: 0.01
+  market_open_kst: '23:30'
+  market_close_kst: 06:00
+  summer_time: false
+  max_positions: 2
+  budget_pct: 0.4
   regime_linked: true
-
 risk:
   max_position_weight: 0.2
   max_concurrent_positions: 5
@@ -150,3 +142,11 @@ strong_sectors:
 - IT
 - KOSPI200
 - 미국나스닥
+overnight_signal:
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: 0
+  sp500_change: 0
+  strength: 0.0
+  confidence_boost: 0.0
+  source: us_post_learning
