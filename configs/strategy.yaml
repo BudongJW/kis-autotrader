@@ -3,12 +3,19 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.6
+    k: 0.55
     trend_ma: 25
     optimized_at: '2026-05-11'
     backtest_sharpe: 3.22
     backtest_return: 25.99
     backtest_mdd: -6.21
+  ta_weights:
+    rsi: 0.2
+    macd: 0.2
+    bb: 0.15
+    stoch: 0.15
+    adx: 0.15
+    ma: 0.15
 universe:
   default:
   - symbol: 091160
@@ -25,7 +32,14 @@ risk:
   daily_loss_limit_pct: 0.05
 market_regime:
   trend: up
-  volatility: low
-  trend_score: 0.398
-  vol_percentile: 22.4
-  analyzed_at: '2026-05-11'
+  volatility: high
+  trend_score: 0.446
+  vol_percentile: 85.0
+  analyzed_at: 2026-05-13 10:23
+market_confidence: 0.461
+strong_sectors:
+- 반도체
+- 금융
+- IT
+- KOSPI200
+- 미국나스닥
