@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.55
+    k: 0.5
     trend_ma: 25
     optimized_at: '2026-05-11'
     backtest_sharpe: 3.22
@@ -132,21 +132,30 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.446
+  trend_score: 0.455
   vol_percentile: 85.0
-  analyzed_at: 2026-05-13 10:23
-market_confidence: 0.461
+  analyzed_at: 2026-05-14 10:25
+market_confidence: 0.508
 strong_sectors:
 - 반도체
+- 자동차
 - 금융
 - IT
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  direction: neutral
+  nasdaq_change: 1.2
+  sp500_change: 0.58
+  direction: bullish
+  strength: 0.32
+  confidence_boost: 0.038
   recommended_action: normal
-  nasdaq_change: 0
-  sp500_change: 0
-  strength: 0.0
-  confidence_boost: 0.0
-  source: us_post_learning
+dynamic_universe:
+- symbol: '102110'
+  name: KODEX 금융
+- symbol: 098560
+  name: KODEX IT
+adaptive_allocation:
+  etf: 1.0
+  win_rate: 0.5
+  trades: 0
