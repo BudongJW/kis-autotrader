@@ -132,27 +132,20 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.455
-  vol_percentile: 85.0
-  analyzed_at: 2026-05-14 10:25
-market_confidence: 0.508
+  trend_score: 0.417
+  vol_percentile: 90.0
+  analyzed_at: 2026-05-19 22:22
+market_confidence: 0.27
 strong_sectors:
-- 반도체
-- 자동차
-- 금융
 - IT
-- KOSPI200
-- 미국나스닥
 overnight_signal:
-  nasdaq_change: 1.2
-  sp500_change: 0.58
-  direction: bullish
-  strength: 0.32
-  confidence_boost: 0.038
+  nasdaq_change: -0.51
+  sp500_change: -0.07
+  direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
 dynamic_universe:
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:
