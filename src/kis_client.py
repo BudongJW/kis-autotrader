@@ -15,7 +15,8 @@ from src.utils.rate_limit import rate_limiter
 
 # 모의/실전 공통 TR_ID. 모의는 V로 시작하는 경우가 많아 분기 필요.
 TR_INQUIRE_PRICE = "FHKST01010100"  # 현재가 시세 (공통)
-TR_INQUIRE_DAILY = "FHKST01010400"  # 일별 시세 (공통)
+TR_INQUIRE_DAILY = "FHKST01010400"  # 일별 시세 (최근 30거래일, 공통)
+TR_INQUIRE_DAILY_CHART = "FHKST03010100"  # 기간별 일/주/월 차트 (최대 100건, 공통)
 TR_ORDER_CASH_LIVE_BUY = "TTTC0802U"   # 실전 현금 매수
 TR_ORDER_CASH_LIVE_SELL = "TTTC0801U"  # 실전 현금 매도
 TR_ORDER_CASH_PAPER_BUY = "VTTC0802U"  # 모의 현금 매수
@@ -94,7 +95,7 @@ class KISClient:
         )
 
     def get_daily_price(self, symbol: str, period: str = "D", adj: str = "0") -> dict:
-        """국내 주식 일/주/월별 시세.
+        """국내 주식 일/주/월별 시세 — 최근 30거래일만 반환.
 
         Args:
             symbol: 종목코드
@@ -107,6 +108,36 @@ class KISClient:
             params={
                 "FID_COND_MRKT_DIV_CODE": "J",
                 "FID_INPUT_ISCD": symbol,
+                "FID_PERIOD_DIV_CODE": period,
+                "FID_ORG_ADJ_PRC": adj,
+            },
+        )
+
+    def get_daily_itemchartprice(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        period: str = "D",
+        adj: str = "0",
+    ) -> dict:
+        """기간 지정 일/주/월/년 차트 — 한 번에 최대 100건 반환.
+
+        Args:
+            symbol: 6자리 종목코드
+            start_date: 시작일 YYYYMMDD
+            end_date: 종료일 YYYYMMDD
+            period: D=일, W=주, M=월, Y=년
+            adj: 0=수정주가 미반영, 1=반영
+        """
+        return self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            tr_id=TR_INQUIRE_DAILY_CHART,
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_DATE_1": start_date,
+                "FID_INPUT_DATE_2": end_date,
                 "FID_PERIOD_DIV_CODE": period,
                 "FID_ORG_ADJ_PRC": adj,
             },

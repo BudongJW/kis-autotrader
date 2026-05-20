@@ -62,12 +62,52 @@ def confirm_live_mode() -> bool:
 
 
 def fetch_recent_history(client: KISClient, symbol: str, days: int = 30) -> pd.DataFrame:
-    resp = client.get_daily_price(symbol)
-    if resp.get("rt_cd") != "0":
-        log.error("daily_price_failed", resp=resp)
-        raise RuntimeError(f"일봉 조회 실패: {resp.get('msg1')}")
+    """KIS 일봉 조회. days≤30이면 단일 호출, 그 외엔 기간 지정 차트로 페이지네이션.
 
-    rows = resp.get("output", [])
+    inquire-daily-price 엔드포인트는 최근 30거래일만 반환하므로 60일 이상의
+    TA·HMM·LGBM·SMA200·카나리아 분석은 inquire-daily-itemchartprice가 필수.
+    """
+    if days <= 30:
+        resp = client.get_daily_price(symbol)
+        if resp.get("rt_cd") != "0":
+            log.error("daily_price_failed", resp=resp)
+            raise RuntimeError(f"일봉 조회 실패: {resp.get('msg1')}")
+        rows = resp.get("output", [])
+    else:
+        from datetime import date, timedelta
+        rows = []
+        seen_dates: set[str] = set()
+        end_d = date.today()
+        # 영업일 비율 ~0.7. 안전 마진을 두고 1.6배 + 20일.
+        remaining = int(days * 1.6) + 20
+        # 무한 루프 방지 가드
+        for _ in range(10):
+            if remaining <= 0:
+                break
+            # 한 청크 최대 100거래일 ≈ 145 캘린더일
+            chunk_start = end_d - timedelta(days=145)
+            resp = client.get_daily_itemchartprice(
+                symbol,
+                start_date=chunk_start.strftime("%Y%m%d"),
+                end_date=end_d.strftime("%Y%m%d"),
+            )
+            if resp.get("rt_cd") != "0":
+                log.error("daily_chart_failed", resp=resp, symbol=symbol)
+                raise RuntimeError(f"확장 일봉 조회 실패: {resp.get('msg1')}")
+            chunk = [r for r in resp.get("output2", []) if r.get("stck_bsop_date")]
+            chunk = [r for r in chunk if r["stck_bsop_date"] not in seen_dates]
+            if not chunk:
+                break
+            for r in chunk:
+                seen_dates.add(r["stck_bsop_date"])
+            rows.extend(chunk)
+            remaining -= len(chunk)
+            oldest = min(r["stck_bsop_date"] for r in chunk)
+            new_end = pd.to_datetime(oldest, format="%Y%m%d").date() - timedelta(days=1)
+            if new_end >= end_d:
+                break
+            end_d = new_end
+
     if not rows:
         raise RuntimeError("일봉 데이터 비어있음")
 
@@ -80,6 +120,7 @@ def fetch_recent_history(client: KISClient, symbol: str, days: int = 30) -> pd.D
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
+    df = df.drop_duplicates(subset="date")
     df = df.sort_values("date").set_index("date")
     return df[["open", "high", "low", "close", "volume"]].tail(days)
 
