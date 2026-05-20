@@ -529,7 +529,8 @@ def generate_daily_note(portfolio: dict) -> str:
     lines.append("## 8. 포트폴리오 요약")
     lines.append("")
     lines.append(f"- 총 자산: **{total_value:,}원**")
-    lines.append(f"- 현금: {portfolio['cash']:,}원 ({portfolio['cash']/total_value*100:.0f}%)")
+    cash_pct = portfolio['cash'] / total_value * 100 if total_value else 0
+    lines.append(f"- 현금: {portfolio['cash']:,}원 ({cash_pct:.0f}%)")
     lines.append(f"- 보유 평가: {portfolio['holdings_value']:,}원")
     lines.append(f"- 당일 손익: **{day_pnl:+,}원** ({pnl_pct:+.2f}%)")
     lines.append(f"- 누적 손익: {portfolio['total_pnl']:+,}원 ({portfolio['total_pnl_pct']:+.2f}%)")
