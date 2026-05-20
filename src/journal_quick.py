@@ -7,6 +7,7 @@ autotrader 워크플로우에서 매 실행마다 호출.
 
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,7 @@ import yaml
 
 from src.kis_client import KISClient
 from src.bot.single_run import load_universe, load_strategy_params
-from src.tracker import get_summary
+from src.tracker import get_summary, TRADE_LOG_PATH
 from src.risk_manager import (
     load_positions, get_kelly_position_size, get_drawdown_scale,
 )
@@ -33,6 +34,83 @@ from src.utils.logger import log
 JOURNAL_DIR = Path("journal")
 PORTFOLIO_PATH = JOURNAL_DIR / "_data" / "portfolio.json"
 CONFIG_PATH = Path("configs/strategy.yaml")
+
+
+def _load_trades() -> list[dict]:
+    """trades.csv를 시간순 list of dict로 로드."""
+    if not TRADE_LOG_PATH.exists():
+        return []
+    out = []
+    with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ts = row.get("timestamp", "")
+            try:
+                qty = int(row.get("qty", 0) or 0)
+                price = int(row.get("price", 0) or 0)
+                amount = int(row.get("amount", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            out.append({
+                "timestamp": ts,
+                "date": ts[:10],
+                "time": ts[11:19],
+                "symbol": row.get("symbol", ""),
+                "name": row.get("name", ""),
+                "side": row.get("side", ""),
+                "qty": qty,
+                "price": price,
+                "amount": amount,
+            })
+    return out
+
+
+def _compute_realized_trades(trades: list[dict]) -> list[dict]:
+    """FIFO로 buy/sell을 매칭해서 실현 거래 list 반환."""
+    queues: dict[str, list[dict]] = {}
+    realized: list[dict] = []
+
+    for t in trades:
+        sym = t["symbol"]
+        if t["side"] == "buy":
+            queues.setdefault(sym, []).append(dict(t))
+        elif t["side"] == "sell":
+            remaining = t["qty"]
+            q = queues.get(sym, [])
+            while remaining > 0 and q:
+                buy = q[0]
+                take = min(buy["qty"], remaining)
+                if buy["price"] > 0:
+                    pnl = (t["price"] - buy["price"]) * take
+                    pnl_pct = round((t["price"] - buy["price"]) / buy["price"] * 100, 2)
+                else:
+                    pnl, pnl_pct = 0, 0
+                hold_days = 0
+                try:
+                    if buy["timestamp"] and t["timestamp"]:
+                        hold_days = (datetime.fromisoformat(t["timestamp"]) -
+                                     datetime.fromisoformat(buy["timestamp"])).days
+                except ValueError:
+                    pass
+                realized.append({
+                    "symbol": sym,
+                    "name": t["name"] or buy["name"] or sym,
+                    "buy_date": buy["date"],
+                    "buy_time": buy["time"],
+                    "buy_price": buy["price"],
+                    "sell_date": t["date"],
+                    "sell_time": t["time"],
+                    "sell_price": t["price"],
+                    "qty": take,
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct,
+                    "hold_days": hold_days,
+                })
+                buy["qty"] -= take
+                remaining -= take
+                if buy["qty"] == 0:
+                    q.pop(0)
+    return realized
 
 
 def _load_fusion_info() -> dict:
@@ -316,6 +394,15 @@ def main() -> None:
     except Exception:
         pass
 
+    # 실제 거래 기록 로드 + 실현 거래 페어링
+    all_trades = _load_trades()
+    realized = _compute_realized_trades(all_trades)
+    wins = sum(1 for r in realized if r["pnl"] > 0)
+    losses = sum(1 for r in realized if r["pnl"] < 0)
+    win_rate = round(wins / len(realized) * 100, 1) if realized else 0.0
+    realized_pnl = sum(r["pnl"] for r in realized)
+    unrealized_pnl = sum(h.get("pnl", 0) for h in holdings)
+
     portfolio = {
         "updated_at": now.isoformat(),
         "initial_capital": 500000,
@@ -325,10 +412,15 @@ def main() -> None:
         "total_value": total_value,
         "total_pnl": summary["pnl"],
         "total_pnl_pct": round(summary["pnl_pct"], 2),
-        "total_trades": summary["total_trades"],
-        "winning_trades": existing.get("winning_trades", 0),
-        "losing_trades": existing.get("losing_trades", 0),
-        "win_rate": existing.get("win_rate", 0),
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "total_trades": len(all_trades),
+        "completed_trades": len(realized),
+        "winning_trades": wins,
+        "losing_trades": losses,
+        "win_rate": win_rate,
+        "trades": all_trades[-50:],
+        "realized": realized[-30:],
         "daily_history": daily_history,
 
         # 시장 상태
