@@ -2,17 +2,14 @@ name: KIS AutoTrader
 
 on:
   schedule:
-    # GitHub Actions의 morning UTC cron은 1~3시간 지연이 흔하므로
-    # 장 시작 전 redundant cron을 4개 깔아서 그중 하나라도 정시에 발화하면 충분.
-    # cancel-in-progress: true 이므로 늦게 발화한 cron이 대기 중인 봇을 이어받음.
-    # 봇은 장 시작 전엔 sleep만 하다가 09:00 KST에 매매 시작 — 중복 진입은 etf_held 가드로 방지.
+    # cancel-in-progress: true가 새 cron이 진행 중인 봇을 죽이기 때문에
+    # 장중(09:00~15:30 KST) 발화 cron은 거래 세션을 중단시킨다.
+    # 따라서 pre-market(장 시작 전) 3중화만 두고 장중 cron은 모두 제거.
+    # 봇은 장 시작 전 sleep → 09:00 KST에 자동으로 매매 시작.
     - cron: '0 23 * * 0-4'    # 08:00 KST — 가장 이른 pre-market
     - cron: '30 23 * * 0-4'   # 08:30 KST — pre-market 추가 redundancy
     - cron: '55 23 * * 0-4'   # 08:55 KST — 장 시작 직전 메인
-    - cron: '30 0 * * 1-5'    # 09:30 KST — pre-market cron 전부 놓친 경우 구조
-    # 미드 데이 백업: pre-market 시리즈 전부 발화 안 한 경우
-    - cron: '0 3 * * 1-5'     # 12:00 KST
-    # 안전망: 장 마감 전 청산 보장
+    # 안전망: 장 마감 직전. 진행 중인 봇을 cancel해도 손실 작음(15분만 남음).
     - cron: '15 6 * * 1-5'    # 15:15 KST
   workflow_dispatch:
     inputs:

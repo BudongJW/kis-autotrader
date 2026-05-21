@@ -699,11 +699,17 @@ def run_once(dry_run: bool) -> None:
 
     # ── 09:00~09:10 전일 보유분 평가 → 조건부 매도/보유 ──
     if MARKET_OPEN <= t <= SELL_WINDOW_END and holdings:
+        bot_positions = load_positions()
         to_sell = {}
         for symbol, qty in holdings.items():
+            # 봇이 매수하지 않은 수동 보유분은 시가 매도 대상에서 제외
+            if symbol not in bot_positions:
+                print(f"  [수동 보유] {symbol} {qty}주 — 사용자 보유분, 봇 매도 대상 아님")
+                continue
             price = get_price(client, symbol)
             if price <= 0:
-                to_sell[symbol] = qty
+                # 가격 조회 실패 시 자동 매도하지 않음 (price=0 시장가 주문 방지)
+                print(f"  [가격 조회 실패] {symbol} {qty}주 — 매도 보류")
                 continue
             hold, reason = should_hold_overnight(symbol, price)
             if hold:
@@ -720,9 +726,12 @@ def run_once(dry_run: bool) -> None:
         print("  [리스크 체크]")
         holdings = check_risk_and_sell(client, holdings, universe_syms, dry_run)
 
-    # ── 15:20 이후 미매도 청산 ──
+    # ── 15:20 이후 미매도 청산 (봇 포지션만, 수동 보유분은 유지) ──
     if t > MARKET_CLOSE and holdings:
-        sell_holdings(client, holdings, universe_syms, "장마감청산", dry_run)
+        bot_positions = load_positions()
+        bot_holdings = {s: q for s, q in holdings.items() if s in bot_positions}
+        if bot_holdings:
+            sell_holdings(client, bot_holdings, universe_syms, "장마감청산", dry_run)
         return
 
     # ── 장중: 두 전략 실행 ──
@@ -869,11 +878,17 @@ def run_loop(dry_run: bool) -> None:
         if MARKET_OPEN <= t <= SELL_WINDOW_END and not sold_at_open:
             if holdings:
                 print(f"\n[{now:%H:%M:%S}] === 시가 평가 ===")
+                bot_positions = load_positions()
                 to_sell = {}
                 for symbol, qty in holdings.items():
+                    # 봇이 매수하지 않은 수동 보유분은 시가 매도 대상에서 제외
+                    if symbol not in bot_positions:
+                        print(f"  [수동 보유] {symbol} {qty}주 — 사용자 보유분, 봇 매도 대상 아님")
+                        continue
                     price = get_price(client, symbol)
                     if price <= 0:
-                        to_sell[symbol] = qty
+                        # 가격 조회 실패 시 자동 매도하지 않음 (price=0 시장가 주문 방지)
+                        print(f"  [가격 조회 실패] {symbol} {qty}주 — 매도 보류")
                         continue
                     hold, reason = should_hold_overnight(symbol, price)
                     if hold:
@@ -928,10 +943,13 @@ def run_loop(dry_run: bool) -> None:
             if risk_sold:
                 holdings = get_all_holdings(client)
 
-        # ── 15:20 이후 미매도 청산 ──
+        # ── 15:20 이후 미매도 청산 (봇 포지션만, 수동 보유분은 유지) ──
         if t > MARKET_CLOSE and holdings:
-            print(f"\n[{now:%H:%M:%S}] === 장마감 청산 ===")
-            sell_holdings(client, holdings, universe_syms, "장마감청산", dry_run)
+            bot_positions = load_positions()
+            bot_holdings = {s: q for s, q in holdings.items() if s in bot_positions}
+            if bot_holdings:
+                print(f"\n[{now:%H:%M:%S}] === 장마감 청산 ===")
+                sell_holdings(client, bot_holdings, universe_syms, "장마감청산", dry_run)
             time_mod.sleep(RISK_CHECK_INTERVAL)
             continue
 
@@ -1024,6 +1042,8 @@ def run_loop(dry_run: bool) -> None:
 
             # ── 레짐 판단 + 전략 분기 ──
             regime_result, allocation, bear_enabled = evaluate_regime(client)
+            # 모든 분기에서 참조되므로 분기 전에 한 번만 계산 (BEAR/CRISIS 분기에서 미정의되는 버그 방지)
+            etf_held = any(s in universe_syms for s in holdings)
 
             if bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
                 print(f"  [레짐] {regime_result.regime} — 하락장 전략")
@@ -1031,7 +1051,6 @@ def run_loop(dry_run: bool) -> None:
 
                 if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
                     long_budget = int(total_budget * allocation.long_pct)
-                    etf_held = any(s in universe_syms for s in holdings)
                     if not etf_held and long_budget >= 10000:
                         etf_used = run_etf_strategy(client, long_budget, holdings,
                                                      universe, dry_run, twap_engine=twap)
@@ -1051,7 +1070,6 @@ def run_loop(dry_run: bool) -> None:
                     if bear_used > 0:
                         bought_today = True
             else:
-                etf_held = any(s in universe_syms for s in holdings)
                 etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
 
                 # ETF 변동성 돌파 (TWAP 분할 매수)
