@@ -149,12 +149,13 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 1.54
-  sp500_change: 1.08
-  direction: bullish
-  strength: 0.45
-  confidence_boost: 0.054
+  direction: neutral
   recommended_action: normal
+  nasdaq_change: 0
+  sp500_change: 0
+  strength: 0.0
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: '102110'
   name: KODEX 금융
