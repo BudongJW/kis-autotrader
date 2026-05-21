@@ -33,6 +33,8 @@ TR_OS_ORDER_BUY_PAPER = "VTTT1002U"       # 모의 해외주식 매수
 TR_OS_ORDER_SELL_PAPER = "VTTT1006U"      # 모의 해외주식 매도
 TR_OS_BALANCE_LIVE = "JTTT3012R"          # 실전 해외주식 잔고
 TR_OS_BALANCE_PAPER = "VTTS3012R"         # 모의 해외주식 잔고
+TR_OS_PSAMOUNT_LIVE = "TTTS3007R"         # 실전 해외주식 매수가능금액 조회 (통합증거금 반영)
+TR_OS_PSAMOUNT_PAPER = "VTTS3007R"        # 모의 해외주식 매수가능금액 조회
 
 # 거래소 코드
 EXCHANGE_MAP = {
@@ -312,6 +314,34 @@ class KISClient:
                 "TR_CRCY_CD": "USD",
                 "CTX_AREA_FK200": "",
                 "CTX_AREA_NK200": "",
+            },
+        )
+
+    def get_overseas_psamount(
+        self,
+        symbol: str,
+        price: float,
+        exchange: str = "NASD",
+    ) -> dict:
+        """해외주식 매수가능금액 조회 — 통합증거금 적용 후 USD 가용 금액 포함.
+
+        Response (output)에 포함되는 핵심 필드:
+          - frcr_ord_psbl_amt1: 외화 주문가능금액 (USD 잔고만)
+          - echm_af_ord_psbl_amt: 환전이후 주문가능금액 (KRW 통합증거금 환산 포함)
+          - echm_af_ord_psbl_qty: 환전이후 주문가능수량
+
+        통합증거금이 활성화된 계좌면 echm_af_ord_psbl_amt가 frcr_ord_psbl_amt1보다 큼.
+        """
+        tr_id = TR_OS_PSAMOUNT_LIVE if settings.is_live else TR_OS_PSAMOUNT_PAPER
+        return self._get(
+            "/uapi/overseas-stock/v1/trading/inquire-psamount",
+            tr_id=tr_id,
+            params={
+                "CANO": settings.kis_account_no,
+                "ACNT_PRDT_CD": settings.kis_account_prod_code,
+                "OVRS_EXCG_CD": exchange,
+                "OVRS_ORD_UNPR": f"{price:.4f}",
+                "ITEM_CD": symbol,
             },
         )
 

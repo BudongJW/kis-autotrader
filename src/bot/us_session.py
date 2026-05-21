@@ -161,7 +161,32 @@ def get_us_holdings(client: KISClient) -> dict[str, dict]:
 
 
 def get_us_available_cash(client: KISClient) -> float:
-    """미국장 주문 가능 USD 잔고."""
+    """미국장 주문 가능 USD 잔고.
+
+    통합증거금 신청 계좌는 KRW 잔고도 USD로 환산해서 매수 가능하므로
+    inquire-psamount의 echm_af_ord_psbl_amt(환전이후 주문가능금액)를 우선 사용.
+    조회 실패 시 외화 단독 잔고(frcr_ord_psbl_amt1)로 fallback.
+    """
+    # 1차: 통합증거금 적용된 매수가능금액 (QQQ 현재가 기준으로 조회)
+    try:
+        qqq_price = get_us_price(client, "QQQ", "NASD")
+        if qqq_price > 0:
+            resp = client.get_overseas_psamount("QQQ", qqq_price, exchange="NASD")
+            if resp.get("rt_cd") == "0":
+                output = resp.get("output", {})
+                if isinstance(output, list) and output:
+                    output = output[0]
+                # 환전이후 주문가능금액 > 외화 단독 잔고 → 통합증거금 적용된 값
+                echm = float(output.get("echm_af_ord_psbl_amt", 0) or 0)
+                frcr = float(output.get("frcr_ord_psbl_amt1", 0) or 0)
+                if echm > 0:
+                    return echm
+                if frcr > 0:
+                    return frcr
+    except Exception as e:
+        log.warning("us_psamount_failed", error=str(e))
+
+    # 2차 fallback: 잔고 조회의 외화 단독 잔고
     try:
         resp = client.get_overseas_balance(exchange="NASD")
         if resp.get("rt_cd") == "0":
