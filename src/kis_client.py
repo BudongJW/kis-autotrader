@@ -17,6 +17,7 @@ from src.utils.rate_limit import rate_limiter
 TR_INQUIRE_PRICE = "FHKST01010100"  # 현재가 시세 (공통)
 TR_INQUIRE_DAILY = "FHKST01010400"  # 일별 시세 (최근 30거래일, 공통)
 TR_INQUIRE_DAILY_CHART = "FHKST03010100"  # 기간별 일/주/월 차트 (최대 100건, 공통)
+TR_INQUIRE_ASKING = "FHKST01010200"  # 호가/예상체결 (10단계 매수·매도 잔량, 공통)
 TR_ORDER_CASH_LIVE_BUY = "TTTC0802U"   # 실전 현금 매수
 TR_ORDER_CASH_LIVE_SELL = "TTTC0801U"  # 실전 현금 매도
 TR_ORDER_CASH_PAPER_BUY = "VTTC0802U"  # 모의 현금 매수
@@ -112,6 +113,26 @@ class KISClient:
                 "FID_INPUT_ISCD": symbol,
                 "FID_PERIOD_DIV_CODE": period,
                 "FID_ORG_ADJ_PRC": adj,
+            },
+        )
+
+    def get_orderbook(self, symbol: str) -> dict:
+        """호가/예상체결 — 10단계 매수·매도 잔량 + 예상 체결가.
+
+        주요 응답 필드 (output1):
+          - total_askp_rsqn: 매도호가 총 잔량
+          - total_bidp_rsqn: 매수호가 총 잔량
+          - askp_rsqn1~10: 매도 1~10단계 잔량
+          - bidp_rsqn1~10: 매수 1~10단계 잔량
+          - askp1~10: 매도 1~10단계 호가
+          - bidp1~10: 매수 1~10단계 호가
+        """
+        return self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+            tr_id=TR_INQUIRE_ASKING,
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
             },
         )
 

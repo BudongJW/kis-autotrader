@@ -409,6 +409,29 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 print(f"    매수 불가 (예산 {budget:,}원×{sizing_ratio:.0%}, 주가 {cur_price:,}원)")
                 continue
 
+            # 호가 임밸런스 timing filter — 매수 직전 호가 약세면 SKIP
+            try:
+                from src.strategies.orderbook_imbalance import (
+                    get_imbalance, should_skip_buy, is_strong_buy,
+                )
+                imb = get_imbalance(client, symbol)
+                if imb.ok:
+                    print(f"    [호가] {imb.reason}")
+                    if should_skip_buy(imb):
+                        print(f"    [호가 임밸런스] 약세 {imb.weighted:+.2f} → 매수 SKIP")
+                        log_decision(symbol, name, "skip",
+                                     f"호가 약세 {imb.weighted:+.2f}",
+                                     cur_price, strategy="etf", ta_scores=_ta_scores,
+                                     lgbm_prob=lgbm_prob)
+                        continue
+                    if is_strong_buy(imb):
+                        # 호가 강세 시 사이즈 소폭 상향 (최대 +20%)
+                        sizing_ratio = min(1.2, sizing_ratio * 1.1)
+                        qty = int(budget * 0.999 * sizing_ratio // cur_price)
+                        print(f"    [호가 강세] 사이즈 ↑ ({sizing_ratio:.0%})")
+            except Exception as _imb_e:
+                pass  # imbalance 실패는 무시 (기본 동작 유지)
+
             total = qty * cur_price
             buy_label = "STRONG_BUY" if fusion.signal == "STRONG_BUY" else "BUY"
             print(f"    [{buy_label}] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 "
