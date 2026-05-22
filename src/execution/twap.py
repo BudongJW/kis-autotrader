@@ -230,6 +230,16 @@ class TWAPEngine:
                   f"{tranche.qty}주 @ ~{current_price:,}원")
 
             if not dry_run:
+                # 사전 안전장치 (killswitch, 가격, 블랙리스트 등)
+                from src.safety.order_gates import check_order
+                gate_ok, gate_reason = check_order(
+                    order.symbol, tranche.qty, current_price, order.side
+                )
+                if not gate_ok:
+                    print(f"    ⚠️ TWAP 주문 차단: {gate_reason}")
+                    log.warning("twap_gate_blocked",
+                                symbol=order.symbol, reason=gate_reason)
+                    continue
                 resp = client.order_cash(
                     order.symbol, qty=tranche.qty, side=order.side,
                     price=current_price,

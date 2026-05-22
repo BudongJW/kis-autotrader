@@ -96,10 +96,26 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      - name: Download killswitch state
+        uses: actions/download-artifact@v4
+        with:
+          name: killswitch-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Download SQLite ledger
+        uses: actions/download-artifact@v4
+        with:
+          name: ledger-db
+          path: logs/
+        continue-on-error: true
+
       - name: Run US night bot
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           DRY_RUN_FLAG=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
@@ -146,6 +162,24 @@ jobs:
         with:
           name: trade-log
           path: logs/trades.csv
+          overwrite: true
+          retention-days: 90
+        if: always()
+
+      - name: Upload SQLite ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledger-db
+          path: logs/ledger.db
+          overwrite: true
+          retention-days: 180
+        if: always()
+
+      - name: Upload killswitch state
+        uses: actions/upload-artifact@v4
+        with:
+          name: killswitch-state
+          path: logs/killswitch.json
           overwrite: true
           retention-days: 90
         if: always()

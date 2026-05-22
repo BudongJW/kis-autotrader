@@ -403,11 +403,31 @@ def main() -> None:
     realized_pnl = sum(r["pnl"] for r in realized)
     unrealized_pnl = sum(h.get("pnl", 0) for h in holdings)
 
+    # SQLite 원장: 포지션 스냅샷 + 정합성 점검 (KIS 잔고 vs 원장)
+    try:
+        from src.safety.ledger import snapshot_positions, reconcile
+        # 보유 종목을 ledger에 스냅샷
+        if holdings:
+            snapshot_positions(holdings, market="KR")
+        # 정합성 체크
+        broker_qty = {h["symbol"]: int(h.get("qty", 0)) for h in holdings}
+        recon = reconcile(broker_qty, market="KR")
+        recon_summary = {
+            "matched": len(recon.get("matched", [])),
+            "broker_only": len(recon.get("broker_only", [])),
+            "ledger_only": len(recon.get("ledger_only", [])),
+            "qty_mismatch": len(recon.get("qty_mismatch", [])),
+        }
+    except Exception as e:
+        log.warning("ledger_reconcile_failed", error=str(e))
+        recon_summary = {}
+
     portfolio = {
         "updated_at": now.isoformat(),
         "initial_capital": 500000,
         "cash": cash,
         "holdings": holdings,
+        "reconcile": recon_summary,
         "holdings_value": holdings_value,
         "total_value": total_value,
         "total_pnl": summary["pnl"],

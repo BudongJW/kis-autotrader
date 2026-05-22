@@ -1,0 +1,90 @@
+name: Killswitch Toggle
+
+# 봇 매매를 즉시 정지하거나 매수만 차단하는 toggle 워크플로우.
+# workflow_dispatch로 수동 실행. 결과는 artifact로 보존되어 다음 봇 실행 시 적용됨.
+#
+# 사용:
+#   on full_stop  - 모든 매매 즉시 중단 (다음 봇 루프에서 break)
+#   on block_buy  - 신규 매수만 차단. 리스크 관리·매도는 계속
+#   off           - 정상 운영 재개
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '동작 (on / off / status)'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - on
+          - off
+          - status
+      mode:
+        description: 'on일 때 모드 (full_stop / block_buy_only)'
+        required: false
+        default: 'full_stop'
+        type: choice
+        options:
+          - full_stop
+          - block_buy_only
+      reason:
+        description: '사유 (감사 로그용)'
+        required: false
+        default: 'manual via workflow_dispatch'
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  toggle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install minimal deps
+        run: pip install structlog
+
+      - name: Download existing killswitch state
+        uses: actions/download-artifact@v4
+        with:
+          name: killswitch-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Toggle killswitch
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.action }}" = "on" ]; then
+            ARGS="on --mode ${{ github.event.inputs.mode }} --reason '${{ github.event.inputs.reason }}' --by ${{ github.actor }}"
+          elif [ "${{ github.event.inputs.action }}" = "off" ]; then
+            ARGS="off"
+          else
+            ARGS="status"
+          fi
+          eval "python -m src.safety.killswitch $ARGS"
+
+      - name: Show current status
+        run: |
+          if [ -f logs/killswitch.json ]; then
+            echo "=== killswitch.json ==="
+            cat logs/killswitch.json
+          fi
+
+      - name: Upload killswitch state
+        uses: actions/upload-artifact@v4
+        with:
+          name: killswitch-state
+          path: logs/killswitch.json
+          overwrite: true
+          retention-days: 90
+        if: always()

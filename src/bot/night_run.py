@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from src.config import settings
 from src.kis_client import KISClient
+from src.safety import killswitch
 from src.bot.us_session import (
     load_us_config,
     is_us_market_hours,
@@ -120,10 +121,23 @@ def run_loop(dry_run: bool) -> None:
     bought_today = False
     closing_done = False
 
+    # ── Killswitch 초기 체크 ──
+    ks_status = killswitch.get_status()
+    if ks_status["active"]:
+        print(f"\n⚠️  [Killswitch] mode={ks_status['mode']} | reason={ks_status['reason']}")
+        if ks_status["mode"] == "full_stop":
+            print("  full_stop → 미국장 봇 진입 안 함. 종료.")
+            return
+
     while True:
         now = _now()
         t = now.time()
         epoch_now = time_mod.time()
+
+        # ── Killswitch 매 루프 체크 ──
+        if killswitch.is_full_stop():
+            print(f"\n⚠️  [{now:%H:%M:%S}] Killswitch full_stop. 루프 종료.")
+            break
 
         # ── 개장 전: 대기 ──
         if not _time_in_range(t, open_t, close_t):

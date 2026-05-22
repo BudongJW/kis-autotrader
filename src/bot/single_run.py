@@ -51,7 +51,38 @@ from src.strategies.bear_strategy import (
     detect_market_regime, compute_bear_allocation, inverse_breakout_signal,
     compute_annualized_vol, log_bear_trade, get_adaptive_params,
 )
+from src.safety import killswitch
+from src.safety.order_gates import check_order
 from src.utils.logger import log
+
+
+def _safe_order_cash(client, symbol: str, qty: int, price: float, side: str) -> dict:
+    """check_order 안전장치 통과 시에만 client.order_cash 호출.
+    차단되면 rt_cd='G'(Gate)인 가짜 거부 응답 반환. 모든 매수/매도 통과 지점.
+
+    모든 주문 시도(체결·차단)를 SQLite 원장에 기록.
+    """
+    from src.safety.ledger import record_order_attempt
+
+    ok, reason = check_order(symbol, qty, price, side)
+    if not ok:
+        print(f"    ⚠️ 주문 차단: {reason}")
+        record_order_attempt(side, symbol, qty, price, "blocked",
+                             gate_reason=reason)
+        # 차단도 텔레그램 알람 (선택, 너무 많으면 끌 수 있음)
+        try:
+            from src.safety.notifier import notify_error
+            notify_error(f"주문 차단: {reason}", context=f"{side} {symbol} {qty}@{price}")
+        except Exception:
+            pass
+        return {"rt_cd": "G", "msg1": f"안전장치: {reason}", "msg_cd": "GATE_BLOCKED"}
+
+    resp = client.order_cash(symbol, qty=qty, price=price, side=side)
+    rt = resp.get("rt_cd", "")
+    status = "executed" if rt == "0" else ("rejected" if rt == "E" else "error")
+    record_order_attempt(side, symbol, qty, price, status,
+                         reason=resp.get("msg1", "")[:200])
+    return resp
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -167,7 +198,7 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
             continue
 
         if not dry_run:
-            resp = client.order_cash(symbol, qty=qty, price=price, side="sell")
+            resp = _safe_order_cash(client, symbol, qty, price, "sell")
             rt = resp.get("rt_cd")
             print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
@@ -204,7 +235,7 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
             tag = "ETF" if symbol in universe_syms else "급등주"
             print(f"  [리스크] {tag} {symbol} {qty}주 @ {price:,}원 — {reason}")
             if not dry_run:
-                resp = client.order_cash(symbol, qty=qty, price=price, side="sell")
+                resp = _safe_order_cash(client, symbol, qty, price, "sell")
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
@@ -401,7 +432,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 return total
 
             if not dry_run:
-                resp = client.order_cash(symbol, qty=qty, price=cur_price, side="buy")
+                resp = _safe_order_cash(client, symbol, qty, cur_price, "buy")
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
@@ -534,7 +565,7 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                         record_buy(symbol, cur_price, qty, atr=atr_value,
                                    asset_type=asset_type)
                     elif not dry_run:
-                        resp = client.order_cash(symbol, qty=qty, price=cur_price, side="buy")
+                        resp = _safe_order_cash(client, symbol, qty, cur_price, "buy")
                         rt = resp.get("rt_cd")
                         print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                         if rt == "0":
@@ -597,7 +628,7 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                             twap_engine.submit(best_sym, qty, "buy", best_name, cur_price)
                             record_buy(best_sym, cur_price, qty, asset_type="defensive")
                         elif not dry_run:
-                            resp = client.order_cash(best_sym, qty=qty, price=cur_price, side="buy")
+                            resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")
                             rt = resp.get("rt_cd")
                             if rt == "0":
                                 log_trade(best_sym, best_name, "buy", qty, cur_price)
@@ -852,10 +883,24 @@ def run_loop(dry_run: bool) -> None:
     is_turbulent = False          # 현재 터뷸런스 상태
     bought_today = False          # 오늘 매수 완료 여부
 
+    # ── Killswitch 초기 체크 (루프 진입 전) ──
+    ks_status = killswitch.get_status()
+    if ks_status["active"]:
+        print(f"\n⚠️  [Killswitch] mode={ks_status['mode']} | reason={ks_status['reason']} "
+              f"| set_by={ks_status['set_by']}")
+        if ks_status["mode"] == "full_stop":
+            print("  full_stop 모드 → 루프 진입 안 함. 종료.")
+            return
+
     while True:
         now = _now()
         t = now.time()
         epoch_now = time_mod.time()
+
+        # ── Killswitch 매 루프 체크 ──
+        if killswitch.is_full_stop():
+            print(f"\n⚠️  [{now:%H:%M:%S}] Killswitch full_stop 감지. 루프 종료.")
+            break
 
         # ── 장 마감 → 종료 ──
         if t > MARKET_END:
@@ -928,7 +973,7 @@ def run_loop(dry_run: bool) -> None:
                     print(f"\n[{now:%H:%M:%S}] [리스크] {tag} {symbol} {qty}주 "
                           f"@ {price:,}원 — {reason}")
                     if not dry_run:
-                        resp = client.order_cash(symbol, qty=qty, price=price, side="sell")
+                        resp = _safe_order_cash(client, symbol, qty, price, "sell")
                         rt = resp.get("rt_cd")
                         print(f"  응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                         if rt == "0":
@@ -969,7 +1014,11 @@ def run_loop(dry_run: bool) -> None:
 
         # ── 전략 체크 — 신규 매수 탐색 ──
         # 장 초반(~10:00)에는 2분 간격, 이후 5분 간격
+        # Killswitch block_buy_only 모드면 전략 체크 자체를 스킵 (리스크 체크는 계속)
         strategy_interval = STRATEGY_CHECK_EARLY if t < EARLY_SESSION_END else STRATEGY_CHECK_INTERVAL
+        if killswitch.is_buy_blocked():
+            time_mod.sleep(RISK_CHECK_INTERVAL)
+            continue
         if (epoch_now - last_strategy_check >= strategy_interval
                 and not bought_today
                 and not is_turbulent

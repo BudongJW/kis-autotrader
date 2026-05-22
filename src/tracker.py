@@ -28,8 +28,10 @@ def log_trade(
     qty: int,
     price: float,
     balance_after: float = 0,
+    market: str = "KR",
+    reason: str = "",
 ) -> None:
-    """거래 1건을 CSV에 기록."""
+    """거래 1건을 CSV에 기록 + 텔레그램 알람 (설정된 경우)."""
     _ensure_file()
     with TRADE_LOG_PATH.open("a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
@@ -37,6 +39,18 @@ def log_trade(
             symbol, name, side, qty, int(price),
             int(qty * price), int(balance_after),
         ])
+    # SQLite 원장에도 체결 기록 (CSV와 병행)
+    try:
+        from src.safety.ledger import record_execution
+        record_execution(side, symbol, int(qty), float(price), name=name, market=market)
+    except Exception:
+        pass
+    # 텔레그램 알람 (실패해도 거래 기록은 보존)
+    try:
+        from src.safety.notifier import notify_trade
+        notify_trade(side, symbol, name, qty, price, reason=reason, market=market)
+    except Exception:
+        pass
 
 
 def get_summary() -> dict:
