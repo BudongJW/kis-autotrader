@@ -48,8 +48,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install minimal deps
-        run: pip install structlog
+      - name: Install deps
+        run: pip install -r requirements.txt
 
       - name: Download existing killswitch state
         uses: actions/download-artifact@v4
