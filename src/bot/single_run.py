@@ -372,12 +372,29 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             print(f"    융합: {fusion.detail}")
 
             if fusion.signal == "SKIP":
-                print(f"    융합 판단: SKIP (확률 {fusion.final_prob:.0%} < 55%)")
-                log_decision(symbol, name, "skip",
-                             f"융합 SKIP ({fusion.final_prob:.0%})",
-                             cur_price, strategy="etf", ta_scores=_ta_scores,
-                             lgbm_prob=lgbm_prob)
-                continue
+                # C1: 평균회귀 fallback — 변동성 돌파 시그널 없을 때 추가 후보 발굴
+                # 자본 작은 운영자라 sizing은 보수적 (30%)
+                mr_buy = False
+                try:
+                    from src.strategies.mean_reversion import compute_mean_reversion_signal
+                    mr_sig = compute_mean_reversion_signal(history)
+                    if mr_sig.is_buy and mr_sig.score >= 70:
+                        mr_buy = True
+                        print(f"    [평균회귀] {mr_sig.reason} | score={mr_sig.score} "
+                              f"| RSI={mr_sig.rsi} BB={mr_sig.bb_position_pct}% "
+                              f"VWAP={mr_sig.vwap_deviation_pct:+.1f}%")
+                        # 평균회귀는 작게 진입 (변동성 돌파 대비 신뢰도 낮음)
+                        sizing_ratio = 0.3
+                except Exception as _mr_e:
+                    pass
+
+                if not mr_buy:
+                    print(f"    융합 판단: SKIP (확률 {fusion.final_prob:.0%} < 55%)")
+                    log_decision(symbol, name, "skip",
+                                 f"융합 SKIP ({fusion.final_prob:.0%})",
+                                 cur_price, strategy="etf", ta_scores=_ta_scores,
+                                 lgbm_prob=lgbm_prob)
+                    continue
 
             # 돌파 미통과 시 STRONG_BUY만 허용 (약한 신호로 진입 방지)
             if not breakout_passed and fusion.signal != "STRONG_BUY":
@@ -1096,6 +1113,21 @@ def run_loop(dry_run: bool) -> None:
             size_factor = max(0.3, confidence)
             if intraday.get("reduce_size"):
                 size_factor *= 0.7
+
+            # C4: VIX 필터 반영 — 시카고 변동성지수 기반 시장 환경
+            try:
+                from src.strategies.vix_filter import get_vix_filter
+                vix = get_vix_filter()
+                if vix:
+                    print(f"[{now:%H:%M:%S}] [VIX] {vix.detail}")
+                    if vix.skip_buy:
+                        print(f"  VIX panic → 신규 매수 차단")
+                        time_mod.sleep(RISK_CHECK_INTERVAL)
+                        continue
+                    size_factor *= vix.size_multiplier
+                    confidence *= vix.confidence_multiplier
+            except Exception as _vix_e:
+                pass
 
             # 오버나이트 갭 신호 반영
             try:

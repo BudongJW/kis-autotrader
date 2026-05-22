@@ -1,0 +1,65 @@
+name: Drift Detection
+
+# 주간 자동 — 백테스트 vs 실전 drift 감지.
+# 매주 일요일 10:30 KST (= 01:30 UTC) 실행.
+# Sharpe 괴리 > 30%면 ledger 이벤트 + 텔레그램 알람.
+
+on:
+  schedule:
+    - cron: '30 1 * * 0'   # Sun 01:30 UTC = Sun 10:30 KST
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Create .env
+        run: |
+          cat > .env <<'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+          sed -i 's/^[[:space:]]*//' .env
+
+      - name: Download SQLite ledger
+        uses: actions/download-artifact@v4
+        with:
+          name: ledger-db
+          path: logs/
+        continue-on-error: true
+
+      - name: Run drift detection
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m src.safety.drift_detector
+
+      - name: Upload updated ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledger-db
+          path: logs/ledger.db
+          overwrite: true
+          retention-days: 180
+        if: always()
