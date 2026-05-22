@@ -202,9 +202,28 @@ def get_us_available_cash(client: KISClient) -> float:
             output2 = resp.get("output2", {})
             if isinstance(output2, list) and output2:
                 output2 = output2[0]
-            return float(output2.get("frcr_ord_psbl_amt1", 0))
+            usd = float(output2.get("frcr_ord_psbl_amt1", 0))
+            if usd > 0:
+                return usd
     except Exception as e:
         log.error("us_cash_failed", error=str(e))
+
+    # 3차 fallback: 국내 예수금(KRW)을 보수적 환율로 환산
+    # 통합증거금 미신청 + USD $0일 때도 예산 추정 가능하게 함
+    try:
+        resp = client.get_balance()
+        if resp.get("rt_cd") == "0":
+            output2 = resp.get("output2", [])
+            if isinstance(output2, list) and output2:
+                output2 = output2[0]
+            krw = int(output2.get("dnca_tot_amt", 0))
+            if krw > 10000:
+                est_usd = krw / 1450
+                log.info("us_cash_krw_fallback", krw=krw, est_usd=round(est_usd, 2))
+                return est_usd
+    except Exception as e:
+        log.error("us_cash_krw_fallback_failed", error=str(e))
+
     return 0.0
 
 
