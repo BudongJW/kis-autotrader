@@ -12,16 +12,16 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: '동작 (on / off / status)'
+        description: '동작 (activate / deactivate / status)'
         required: true
         default: 'status'
         type: choice
         options:
-          - on
-          - off
+          - activate
+          - deactivate
           - status
       mode:
-        description: 'on일 때 모드 (full_stop / block_buy_only)'
+        description: 'activate일 때 모드 (full_stop / block_buy_only)'
         required: false
         default: 'full_stop'
         type: choice
@@ -64,9 +64,9 @@ jobs:
           PYTHONIOENCODING: 'utf-8'
         run: |
           ARGS=""
-          if [ "${{ github.event.inputs.action }}" = "on" ]; then
+          if [ "${{ github.event.inputs.action }}" = "activate" ]; then
             ARGS="on --mode ${{ github.event.inputs.mode }} --reason '${{ github.event.inputs.reason }}' --by ${{ github.actor }}"
-          elif [ "${{ github.event.inputs.action }}" = "off" ]; then
+          elif [ "${{ github.event.inputs.action }}" = "deactivate" ]; then
             ARGS="off"
           else
             ARGS="status"
