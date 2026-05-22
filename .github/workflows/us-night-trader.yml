@@ -2,17 +2,19 @@ name: US Night Trader
 
 on:
   schedule:
-    # 미국장 개장 직전 (KST 기준)
-    # 동절기: 23:30 KST = 14:30 UTC (전날)
-    - cron: '25 14 * * 0-4'
-    # 서머타임: 22:30 KST = 13:30 UTC (전날)
-    # 서머타임 전환 시 strategy.yaml summer_time: true 변경 필요
-    # - cron: '25 13 * * 0-4'
+    # 미국장 개장 직전 (KST 기준) — 월~금 미국장 = UTC 월~금 저녁
+    # 서머타임 (3월 둘째 일요일 ~ 11월 첫째 일요일): 22:30 KST = 13:30 UTC
+    - cron: '25 13 * * 1-5'
+    # 동절기: 23:30 KST = 14:30 UTC
+    - cron: '25 14 * * 1-5'
+    # 봇 내부에서 is_us_market_hours()로 실제 개장 여부 확인 → 비개장 시 즉시 종료
 
-    # 백업: 미국장 중반 (KST 02:00 = UTC 17:00)
-    - cron: '0 17 * * 0-4'
+    # 백업: 미국장 중반 (서머타임 KST 01:00 = UTC 16:00, 동절기 KST 02:00 = UTC 17:00)
+    - cron: '0 16 * * 1-5'
+    - cron: '0 17 * * 1-5'
 
-    # 안전망: 미국장 폐장 전 (KST 05:30 = UTC 20:30, 동절기)
+    # 안전망: 미국장 폐장 전 (서머타임 KST 04:30 = UTC 19:30, 동절기 KST 05:30 = UTC 20:30)
+    - cron: '30 19 * * 1-5'
     - cron: '30 20 * * 1-5'
 
   workflow_dispatch:
@@ -28,7 +30,9 @@ on:
 
 concurrency:
   group: us-night-trader
-  cancel-in-progress: true
+  # 모든 cron이 시장 중에 발화하므로 진행 중 봇을 cancel하면 거래 세션 중단됨.
+  # false로 두면 중복 cron은 큐잉/드롭되어 진행 중 봇이 안전하게 완주.
+  cancel-in-progress: false
 
 env:
   TZ: Asia/Seoul
