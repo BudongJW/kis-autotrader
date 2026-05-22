@@ -864,7 +864,9 @@ def run_loop(dry_run: bool) -> None:
 
         # ── 장 시작 전 → 대기 ──
         if t < MARKET_OPEN:
-            wait = (datetime.combine(now.date(), MARKET_OPEN) - now).total_seconds()
+            # KST tzinfo 부착해서 aware-aware 뺄셈 (now는 datetime.now(KST))
+            open_dt = datetime.combine(now.date(), MARKET_OPEN, tzinfo=KST)
+            wait = (open_dt - now).total_seconds()
             wait = min(wait, 60)  # 최대 60초씩 대기 (중간에 체크)
             if wait > 10:
                 print(f"[{now:%H:%M:%S}] 장 시작 대기 ({wait:.0f}초)")
