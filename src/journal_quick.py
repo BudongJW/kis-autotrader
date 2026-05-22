@@ -36,6 +36,59 @@ PORTFOLIO_PATH = JOURNAL_DIR / "_data" / "portfolio.json"
 CONFIG_PATH = Path("configs/strategy.yaml")
 
 
+def _compute_today_summary(trades: list[dict], realized: list[dict]) -> dict:
+    """오늘 매매 요약. 일일 PnL·수수료·세금·최고/최악 거래 등."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    today_trades = [t for t in trades if t.get("date") == today]
+    today_realized = [r for r in realized if r.get("sell_date") == today]
+
+    buys = [t for t in today_trades if t.get("side") == "buy"]
+    sells = [t for t in today_trades if t.get("side") == "sell"]
+
+    # 수수료·세금 (한국 주식 기준)
+    # 매수: 0.015% 수수료
+    # 매도: 0.015% 수수료 + 0.20% 거래세
+    fee_rate = 0.00015
+    tax_rate = 0.0023  # 매도 시 (증권거래세 0.20% + 농어촌특별세 0.15% 일부 등)
+
+    buy_notional = sum(t.get("amount", 0) for t in buys)
+    sell_notional = sum(t.get("amount", 0) for t in sells)
+    buy_fees = round(buy_notional * fee_rate)
+    sell_fees = round(sell_notional * fee_rate)
+    sell_taxes = round(sell_notional * tax_rate)
+
+    today_realized_pnl = sum(r.get("pnl", 0) for r in today_realized)
+    today_realized_pnl_net = today_realized_pnl - buy_fees - sell_fees - sell_taxes
+
+    best = max(today_realized, key=lambda r: r.get("pnl", 0)) if today_realized else None
+    worst = min(today_realized, key=lambda r: r.get("pnl", 0)) if today_realized else None
+
+    return {
+        "date": today,
+        "buys": len(buys),
+        "sells": len(sells),
+        "completed_round_trips": len(today_realized),
+        "buy_notional": buy_notional,
+        "sell_notional": sell_notional,
+        "fees": buy_fees + sell_fees,
+        "taxes": sell_taxes,
+        "total_cost": buy_fees + sell_fees + sell_taxes,
+        "realized_pnl_gross": today_realized_pnl,
+        "realized_pnl_net": today_realized_pnl_net,
+        "best_trade": (
+            {"symbol": best["symbol"], "name": best.get("name", ""),
+             "pnl": best["pnl"], "pnl_pct": best.get("pnl_pct", 0)}
+            if best else None
+        ),
+        "worst_trade": (
+            {"symbol": worst["symbol"], "name": worst.get("name", ""),
+             "pnl": worst["pnl"], "pnl_pct": worst.get("pnl_pct", 0)}
+            if worst else None
+        ),
+    }
+
+
 def _load_trades() -> list[dict]:
     """trades.csv를 시간순 list of dict로 로드."""
     if not TRADE_LOG_PATH.exists():
@@ -403,6 +456,26 @@ def main() -> None:
     realized_pnl = sum(r["pnl"] for r in realized)
     unrealized_pnl = sum(h.get("pnl", 0) for h in holdings)
 
+    # 오늘 요약 (A2: 일일 자동 요약)
+    today_summary = _compute_today_summary(all_trades, realized)
+
+    # 누적 비용·세금 (B1+B2)
+    fee_rate, tax_rate = 0.00015, 0.0023
+    total_buy_notional = sum(t["amount"] for t in all_trades if t["side"] == "buy")
+    total_sell_notional = sum(t["amount"] for t in all_trades if t["side"] == "sell")
+    total_fees = round((total_buy_notional + total_sell_notional) * fee_rate)
+    total_taxes = round(total_sell_notional * tax_rate)
+    costs_summary = {
+        "total_fees": total_fees,
+        "total_taxes": total_taxes,
+        "total_cost": total_fees + total_taxes,
+        "realized_pnl_gross": realized_pnl,
+        "realized_pnl_net": realized_pnl - total_fees - total_taxes,
+        # 미국 ETF 양도소득세 250만원 공제 추적 (실제 한 해 누적 양도차익 필요)
+        # 여기선 단순 추적용 placeholder. 정확한 추적은 매도 시 USD/KRW 환율 필요.
+        "tax_exemption_remaining_krw": 2_500_000,  # 매년 1.1 리셋
+    }
+
     # SQLite 원장: 포지션 스냅샷 + 정합성 점검 (KIS 잔고 vs 원장)
     try:
         from src.safety.ledger import snapshot_positions, reconcile
@@ -449,6 +522,8 @@ def main() -> None:
         "win_rate": win_rate,
         "trades": all_trades[-50:],
         "realized": realized[-30:],
+        "today_summary": today_summary,
+        "costs": costs_summary,
         "daily_history": daily_history,
 
         # 시장 상태

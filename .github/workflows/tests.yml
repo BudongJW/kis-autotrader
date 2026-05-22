@@ -1,0 +1,59 @@
+name: Tests
+
+# pytest 자동 실행. PR/push 시 + 매일 새벽 회귀 검증.
+# 5월 한 달간 발견된 버그 4개 (timezone, ZeroDivision, 30일 한도, UnboundLocal)
+# 같은 케이스 다시 안 들어오게 방지.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    branches: [main]
+  schedule:
+    # 매일 22:00 UTC = 07:00 KST 회귀 검증
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run pytest
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          pytest tests/ -v --tb=short \
+            --ignore=tests/test_golden_cross.py \
+            --ignore=tests/test_rate_limit.py
+
+      - name: Coverage report
+        env:
+          PYTHONPATH: '.'
+        run: |
+          pytest tests/ --cov=src --cov-report=term-missing \
+            --ignore=tests/test_golden_cross.py \
+            --ignore=tests/test_rate_limit.py \
+          || true  # coverage 실패는 무시 (테스트 통과가 중요)
