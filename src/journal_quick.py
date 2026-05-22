@@ -422,12 +422,20 @@ def main() -> None:
         log.warning("ledger_reconcile_failed", error=str(e))
         recon_summary = {}
 
+    # Killswitch 상태 (사이트가 표시할 수 있도록)
+    try:
+        from src.safety.killswitch import get_status as get_killswitch_status
+        ks_status = get_killswitch_status()
+    except Exception:
+        ks_status = {"active": False, "mode": "off"}
+
     portfolio = {
         "updated_at": now.isoformat(),
         "initial_capital": 500000,
         "cash": cash,
         "holdings": holdings,
         "reconcile": recon_summary,
+        "killswitch": ks_status,
         "holdings_value": holdings_value,
         "total_value": total_value,
         "total_pnl": summary["pnl"],
