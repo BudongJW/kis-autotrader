@@ -53,15 +53,60 @@ class OptResult:
     name: str
     k: float
     ma: int
-    sharpe: float
+    sharpe: float                          # 학습 구간 Sharpe
     total_return: float
     mdd: float
     win_rate: float
     num_trades: int
+    # 학습/검증 분리 — quant-platform 방식 (과적합 1차 필터)
+    val_sharpe: float = 0.0                # 검증 구간 Sharpe
+    val_return: float = 0.0
+    val_mdd: float = 0.0
+    val_num_trades: int = 0
+    val_passed: bool = False               # 검증 통과 여부 (val_sharpe >= train_sharpe * 0.5)
+
+
+# 학습/검증 split 비율 (전체 180일 → 학습 126일, 검증 54일)
+TRAIN_RATIO = 0.7
+# 검증 합격 기준: 검증 Sharpe가 학습 Sharpe의 최소 50% 이상
+VALIDATION_THRESHOLD = 0.5
+# 검증 구간 최소 거래 횟수
+MIN_VAL_TRADES = 3
+
+
+def _split_history(history, train_ratio: float = TRAIN_RATIO):
+    """history를 학습/검증으로 시간순 분할."""
+    split_idx = int(len(history) * train_ratio)
+    train = history.iloc[:split_idx]
+    val = history.iloc[split_idx:]
+    return train, val
+
+
+def _evaluate_on_validation(k: float, ma: int, val_history) -> dict:
+    """검증 구간에서 동일 파라미터로 backtest. 결과 dict 반환."""
+    if len(val_history) < ma + 5:
+        return {"sharpe": 0.0, "total_return": 0.0, "mdd": 0.0,
+                "num_trades": 0, "passed": False}
+    try:
+        strategy = VolatilityBreakoutStrategy(k=k, trend_ma=ma)
+        r = run_backtest(strategy, val_history, initial_capital=10_000_000)
+        return {
+            "sharpe": float(r.sharpe),
+            "total_return": float(r.total_return),
+            "mdd": float(r.mdd),
+            "num_trades": int(r.num_trades),
+            "passed": False,  # 호출자가 train_sharpe와 비교 후 결정
+        }
+    except Exception:
+        return {"sharpe": 0.0, "total_return": 0.0, "mdd": 0.0,
+                "num_trades": 0, "passed": False}
 
 
 def _optuna_objective(trial, history, sym, name):
-    """Optuna objective: Sharpe ratio 최대화."""
+    """Optuna objective: 학습 구간 Sharpe 최대화 (MDD 페널티 포함).
+
+    history는 학습 구간만 (검증은 study 완료 후 별도 평가).
+    """
     k = trial.suggest_float("k", 0.3, 0.7, step=0.05)
     ma = trial.suggest_int("trend_ma", 10, 30, step=5)
 
@@ -85,7 +130,14 @@ def _optuna_objective(trial, history, sym, name):
 
 
 def optimize() -> list[OptResult]:
-    """전체 ETF × Bayesian 최적화 (Optuna TPE)."""
+    """전체 ETF × 학습/검증 분리 + Bayesian 최적화 (Optuna TPE).
+
+    1. 180일 데이터를 학습 70%(126일) / 검증 30%(54일)로 시간순 분할
+    2. 학습 구간에서 best params 탐색
+    3. 검증 구간에서 동일 params로 backtest → val_sharpe 측정
+    4. val_sharpe >= train_sharpe * 0.5 인 종목만 val_passed=True 표시
+    5. update_config는 val_passed=True인 결과만 strategy.yaml에 반영
+    """
     try:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -101,31 +153,61 @@ def optimize() -> list[OptResult]:
 
     method = "Bayesian (Optuna TPE)" if use_optuna else "Grid Search"
     print(f"최적화 기간: {start_str} ~ {end_str}")
+    print(f"학습/검증 분리: {int(TRAIN_RATIO*100)}% / {int((1-TRAIN_RATIO)*100)}%"
+          f" (검증 합격 기준: val_sharpe ≥ train × {VALIDATION_THRESHOLD:.0%})")
     print(f"ETF 후보: {len(ETF_CANDIDATES)}개 | 방식: {method}")
     print()
 
     all_results: list[OptResult] = []
+    passed_count = 0
+    rejected_count = 0
 
     for sym, name in ETF_CANDIDATES:
         try:
             history = load_history(sym, start_str, end_str)
-            if len(history) < 60:
+            if len(history) < 90:
                 continue
         except Exception:
             continue
 
+        train_hist, val_hist = _split_history(history)
+
+        # 학습 구간에서 best params 탐색
         if use_optuna:
-            best = _optimize_optuna(history, sym, name, optuna)
+            best = _optimize_optuna(train_hist, sym, name, optuna)
         else:
-            best = _optimize_grid(history, sym, name)
+            best = _optimize_grid(train_hist, sym, name)
+        if not best or best.sharpe <= 0:
+            continue
 
-        if best and best.sharpe > 0:
-            all_results.append(best)
-            print(f"  {name:<30} K={best.k} MA={best.ma} "
-                  f"Sharpe={best.sharpe:.2f} 수익={best.total_return:+.2%} "
-                  f"MDD={best.mdd:.2%} 승률={best.win_rate:.1%}")
+        # 검증 구간에서 cross-check
+        val = _evaluate_on_validation(best.k, best.ma, val_hist)
+        best.val_sharpe = val["sharpe"]
+        best.val_return = val["total_return"]
+        best.val_mdd = val["mdd"]
+        best.val_num_trades = val["num_trades"]
+        # 합격 기준: 검증 Sharpe가 학습의 50% 이상 + 최소 거래 횟수
+        best.val_passed = (
+            val["sharpe"] >= best.sharpe * VALIDATION_THRESHOLD
+            and val["num_trades"] >= MIN_VAL_TRADES
+        )
 
-    all_results.sort(key=lambda x: x.sharpe, reverse=True)
+        all_results.append(best)
+        if best.val_passed:
+            passed_count += 1
+            tag = "✓"
+        else:
+            rejected_count += 1
+            tag = "✗"
+
+        print(f"  [{tag}] {name:<30} K={best.k} MA={best.ma} | "
+              f"학습 Sharpe={best.sharpe:.2f}({best.num_trades}건) "
+              f"수익={best.total_return:+.1%} | "
+              f"검증 Sharpe={best.val_sharpe:.2f}({best.val_num_trades}건) "
+              f"수익={best.val_return:+.1%}")
+
+    print(f"\n검증 통과: {passed_count}개 | 거부: {rejected_count}개")
+    all_results.sort(key=lambda x: (x.val_passed, x.sharpe), reverse=True)
     return all_results
 
 
@@ -182,12 +264,21 @@ def _optimize_grid(history, sym, name) -> OptResult | None:
 
 
 def update_config(results: list[OptResult]) -> None:
-    """최적화 결과를 strategy.yaml에 반영."""
+    """최적화 결과를 strategy.yaml에 반영. 검증 통과(val_passed=True) 결과만 채택."""
     if not results:
         print("\n수익성 있는 ETF 없음. 설정 변경 안 함.")
         return
 
-    best = results[0]
+    # 검증 통과한 결과만 필터링 (과적합 1차 차단)
+    validated = [r for r in results if r.val_passed]
+    if not validated:
+        print("\n⚠️  검증 통과한 ETF 없음 (전부 과적합 의심). 설정 변경 안 함.")
+        print("    학습 구간에서만 잘 작동하고 검증 구간에선 무너지는 파라미터들.")
+        return
+
+    best = validated[0]
+    print(f"\n=== 검증 통과 최우수: {best.name} ===")
+    print(f"    학습 Sharpe={best.sharpe:.2f} → 검증 Sharpe={best.val_sharpe:.2f}")
 
     # 시장 환경 분석 (최적 종목 기준)
     end = datetime.now()
@@ -206,11 +297,18 @@ def update_config(results: list[OptResult]) -> None:
     with CONFIG_PATH.open(encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    # 전략 파라미터 업데이트
+    # 전략 파라미터 업데이트 (검증 메트릭도 함께 저장)
     cfg["strategies"]["volatility_breakout"] = {
         "k": final_k,
         "trend_ma": best.ma,
         "optimized_at": datetime.now().strftime("%Y-%m-%d"),
+        "train_sharpe": round(best.sharpe, 2),
+        "train_return": round(best.total_return * 100, 2),
+        "train_mdd": round(best.mdd * 100, 2),
+        "val_sharpe": round(best.val_sharpe, 2),
+        "val_return": round(best.val_return * 100, 2),
+        "val_mdd": round(best.val_mdd * 100, 2),
+        # 기존 키도 backwards 호환으로 유지
         "backtest_sharpe": round(best.sharpe, 2),
         "backtest_return": round(best.total_return * 100, 2),
         "backtest_mdd": round(best.mdd * 100, 2),
@@ -219,12 +317,15 @@ def update_config(results: list[OptResult]) -> None:
     # TA 가중치 (향후 최적화 대상, 현재는 기본값 저장)
     cfg["strategies"]["ta_weights"] = {k: round(v, 3) for k, v in DEFAULT_WEIGHTS.items()}
 
-    # universe 업데이트 (Sharpe > 0 상위 3개)
-    top = results[:3]
+    # universe 업데이트 — 검증 통과 상위 3개만
+    top = validated[:3]
     cfg["universe"]["default"] = [
         {"symbol": r.symbol, "name": r.name}
         for r in top
     ]
+    print(f"\n검증 통과 상위 3개로 universe 업데이트:")
+    for r in top:
+        print(f"  {r.name} (학습 Sharpe={r.sharpe:.2f}, 검증 Sharpe={r.val_sharpe:.2f})")
 
     # 시장 환경 기록
     if regime:

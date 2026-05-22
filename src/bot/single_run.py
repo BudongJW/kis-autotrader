@@ -892,6 +892,21 @@ def run_loop(dry_run: bool) -> None:
             print("  full_stop 모드 → 루프 진입 안 함. 종료.")
             return
 
+    # ── 포지션 동기화: KIS 잔고 → internal positions.json ──
+    # 액면분할·배당락·유상증자 시 KIS가 보낸 수량·평단가로 자동 보정
+    try:
+        from src.safety.position_sync import sync_from_broker
+        changes = sync_from_broker(client, market="KR")
+        important = changes["qty_changed"] + changes["price_changed"]
+        if important:
+            print(f"[포지션 동기화] 액분·배당 조정 감지:")
+            for sym, old, new in changes["qty_changed"]:
+                print(f"  {sym}: 수량 {old} → {new}")
+            for sym, old, new in changes["price_changed"]:
+                print(f"  {sym}: 평단 {old:,.0f} → {new:,.0f}")
+    except Exception as e:
+        log.warning("position_sync_skipped", error=str(e))
+
     while True:
         now = _now()
         t = now.time()
