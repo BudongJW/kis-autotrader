@@ -164,29 +164,38 @@ def get_us_available_cash(client: KISClient) -> float:
     """미국장 주문 가능 USD 잔고.
 
     통합증거금 신청 계좌는 KRW 잔고도 USD로 환산해서 매수 가능하므로
-    inquire-psamount의 echm_af_ord_psbl_amt(환전이후 주문가능금액)를 우선 사용.
-    조회 실패 시 외화 단독 잔고(frcr_ord_psbl_amt1)로 fallback.
+    inquire-psamount endpoint의 frcr_ord_psbl_amt1 (외화 주문가능금액)을
+    우선 사용. 이 필드가 통합증거금 환산값까지 포함해서 반환됨.
+
+    echm_af_ord_psbl_amt는 (예약된 환전 이후 추가 가용 금액)인데 보통 0,
+    실제 매수 가능한 금액은 frcr_ord_psbl_amt1에 잡힌다.
+
+    중요: KIS overseas price endpoint는 미국장 마감 후 0 반환할 수 있어
+    QQQ 가격 fetch 실패해도 reference price ($500)로 psamount 호출.
+    psamount의 OVRS_ORD_UNPR는 매수가능수량 계산용일 뿐 가용 잔고 계산엔 무관.
     """
-    # 1차: 통합증거금 적용된 매수가능금액 (QQQ 현재가 기준으로 조회)
+    # 1차: inquire-psamount (통합증거금 반영된 외화 가용 금액)
     try:
-        qqq_price = get_us_price(client, "QQQ", "NASD")
-        if qqq_price > 0:
-            resp = client.get_overseas_psamount("QQQ", qqq_price, exchange="NASD")
-            if resp.get("rt_cd") == "0":
-                output = resp.get("output", {})
-                if isinstance(output, list) and output:
-                    output = output[0]
-                # 환전이후 주문가능금액 > 외화 단독 잔고 → 통합증거금 적용된 값
-                echm = float(output.get("echm_af_ord_psbl_amt", 0) or 0)
-                frcr = float(output.get("frcr_ord_psbl_amt1", 0) or 0)
-                if echm > 0:
-                    return echm
-                if frcr > 0:
-                    return frcr
+        # 가격 fetch 실패해도 reference price로 호출. KIS는 ITEM_CD + price를 요구하지만
+        # 가용 금액 계산엔 price가 영향 안 줌. (수량 계산용)
+        ref_price = get_us_price(client, "QQQ", "NASD") or 500.0
+        resp = client.get_overseas_psamount("QQQ", ref_price, exchange="NASD")
+        if resp.get("rt_cd") == "0":
+            output = resp.get("output", {})
+            if isinstance(output, list) and output:
+                output = output[0]
+            # frcr_ord_psbl_amt1: 통합증거금 적용된 외화 주문가능금액 (KIS가 환산)
+            # echm_af_ord_psbl_amt: 환전 이후 추가 가용 (보통 0, 명시적 환전 신청 후만 비제로)
+            frcr = float(output.get("frcr_ord_psbl_amt1", 0) or 0)
+            echm = float(output.get("echm_af_ord_psbl_amt", 0) or 0)
+            # 둘 중 큰 값을 사용 (보수적 매수 가능 추정)
+            available = max(frcr, echm)
+            if available > 0:
+                return available
     except Exception as e:
         log.warning("us_psamount_failed", error=str(e))
 
-    # 2차 fallback: 잔고 조회의 외화 단독 잔고
+    # 2차 fallback: 잔고 조회의 외화 단독 잔고 (통합증거금 미반영)
     try:
         resp = client.get_overseas_balance(exchange="NASD")
         if resp.get("rt_cd") == "0":
