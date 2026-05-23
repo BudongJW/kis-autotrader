@@ -596,6 +596,11 @@ def load_defensive_universe() -> list[dict]:
     return cfg.get("universe", {}).get("defensive", [])
 
 
+def load_income_universe() -> list[dict]:
+    cfg = load_config()
+    return cfg.get("universe", {}).get("income", [])
+
+
 def load_canary_universe() -> list[dict]:
     cfg = load_config()
     return cfg.get("universe", {}).get("canary", [])
@@ -765,6 +770,82 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
         print("  [하락장] 매수 조건 미충족. 현금 보유.")
 
     return used
+
+
+# ──────────────────────────────────────────────────────────
+# 횡보장 인컴 전략 (커버드콜 ETF)
+# ──────────────────────────────────────────────────────────
+
+def run_income_strategy(client: KISClient, budget: int, holdings: dict,
+                        dry_run: bool,
+                        twap_engine: "TWAPEngine | None" = None) -> int:
+    """횡보장 인컴 전략: 커버드콜 ETF 모멘텀 기반 매수.
+
+    HMM sideways/low_vol 상태에서 돌파 전략이 매수하지 못할 때,
+    커버드콜 ETF로 옵션 프리미엄 수익을 추구.
+    """
+    income_universe = load_income_universe()
+    if not income_universe:
+        return 0
+
+    income_syms = {s["symbol"] for s in income_universe}
+    if any(s in income_syms for s in holdings):
+        print("  [인컴] 커버드콜 ETF 이미 보유 중.")
+        return 0
+
+    if budget < 10000:
+        return 0
+
+    print(f"  [인컴] 횡보장 → 커버드콜 ETF 탐색 (배정: {budget:,}원)")
+
+    best_sym, best_name, best_score = None, None, -999
+    for stock in income_universe:
+        symbol = stock["symbol"]
+        name = stock["name"]
+        try:
+            history = fetch_recent_history(client, symbol, days=70)
+            if history is not None and len(history) >= 22:
+                from src.strategies.bear_strategy import weighted_momentum
+                score = weighted_momentum(history["close"])
+                print(f"    {name} ({symbol}): 모멘텀={score:.4f}")
+                if score > best_score:
+                    best_sym, best_name, best_score = symbol, name, score
+        except Exception:
+            pass
+
+    if not best_sym or best_score < -0.1:
+        print("  [인컴] 모멘텀 양호한 커버드콜 ETF 없음. 스킵.")
+        return 0
+
+    cur_price = get_price(client, best_sym)
+    if cur_price <= 0:
+        return 0
+
+    qty = int(budget * 0.999 // cur_price)
+    if qty <= 0:
+        return 0
+
+    total = qty * cur_price
+    print(f"    [인컴 BUY] {best_name} {qty}주 @ {cur_price:,}원 (모멘텀={best_score:.4f})")
+
+    if twap_engine:
+        twap_engine.submit(best_sym, qty, "buy", best_name, cur_price)
+        record_buy(best_sym, cur_price, qty, asset_type="income")
+    elif not dry_run:
+        resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")
+        if resp.get("rt_cd") == "0":
+            log_trade(best_sym, best_name, "buy", qty, cur_price)
+            record_buy(best_sym, cur_price, qty, asset_type="income")
+        else:
+            print(f"    주문 실패: {resp.get('msg1', '')}")
+            return 0
+    else:
+        print("      (dry-run)")
+
+    log_decision(best_sym, best_name, "buy",
+                 f"횡보장 인컴 (커버드콜, 모멘텀={best_score:.4f})",
+                 cur_price, qty=qty, strategy="income")
+    return total
 
 
 # ──────────────────────────────────────────────────────────
@@ -996,7 +1077,15 @@ def run_once(dry_run: bool) -> None:
         etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
 
         if etf_used == 0 and not etf_held:
-            print("  돌파 없음. 현금 보유.")
+            hmm = cfg.get("market_regime", {}).get("hmm_state", "unknown")
+            if hmm in ("sideways", "low_vol"):
+                income_budget = int(cash * size_factor * 0.5)
+                income_used = run_income_strategy(
+                    client, income_budget, holdings, dry_run)
+                if income_used == 0:
+                    print("  돌파·인컴 모두 미충족. 현금 보유.")
+            else:
+                print("  돌파 없음. 현금 보유.")
 
 
 # ──────────────────────────────────────────────────────────
@@ -1347,7 +1436,17 @@ def run_loop(dry_run: bool) -> None:
                     bought_today = True
 
             if not bought_today and not etf_held:
-                print("  돌파 없음. 현금 보유.")
+                loop_hmm = cfg.get("market_regime", {}).get("hmm_state", "unknown")
+                if loop_hmm in ("sideways", "low_vol"):
+                    income_budget = int(etf_budget_cap * size_factor * 0.5)
+                    income_used = run_income_strategy(
+                        client, income_budget, holdings, dry_run, twap_engine=twap)
+                    if income_used > 0:
+                        bought_today = True
+                    else:
+                        print("  돌파·인컴 모두 미충족. 현금 보유.")
+                else:
+                    print("  돌파 없음. 현금 보유.")
 
         # ── 1분 대기 ──
         elapsed = time_mod.time() - epoch_now

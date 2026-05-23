@@ -73,7 +73,7 @@ def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0,
     """
     # 자산 유형별 최대 보유일 (추세추종 원칙 — 승자를 오래 보유)
     max_hold = {"long": 15, "inverse_1x": 20, "inverse_2x": 10,
-                "defensive": 60, "commodity": 20}
+                "defensive": 60, "commodity": 20, "income": 30}
 
     positions = load_positions()
     positions[symbol] = {

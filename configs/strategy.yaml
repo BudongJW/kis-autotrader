@@ -67,6 +67,16 @@ universe:
   - symbol: '214980'
     name: KODEX 단기채권PLUS
     type: short_bond
+  income:
+  - symbol: '498400'
+    name: KODEX 200타겟위클리커버드콜
+    type: income
+  - symbol: '441680'
+    name: TIGER 미국나스닥100커버드콜(합성)
+    type: income
+  - symbol: '482730'
+    name: TIGER 미국S&P500타겟데일리커버드콜
+    type: income
   canary:
   - symbol: '195930'
     name: TIGER 유로스탁50
