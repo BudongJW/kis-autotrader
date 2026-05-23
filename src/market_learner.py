@@ -439,6 +439,28 @@ def pre_market(client: KISClient) -> None:
     print(f"  시장 신뢰도: {confidence:.1%}")
     print(f"  강세 섹터: {', '.join(strong_sectors) if strong_sectors else '없음'}")
 
+    # 6.3. 섹터 로테이션 (주 1회 — 월요일)
+    try:
+        from src.strategies.sector_rotation import run_sector_rotation, is_rotation_day
+        if is_rotation_day():
+            flow_cache = {}
+            try:
+                from src.strategies.flow_signal import load_flow_cache
+                flow_cache = load_flow_cache()
+            except Exception:
+                pass
+            rotation = run_sector_rotation(sectors, flow_cache)
+            print(f"\n  [로테이션] {rotation.detail}")
+            diary.record_change("섹터로테이션", "top_sectors",
+                                old_strong_sectors[:3], rotation.top_sectors[:3],
+                                rotation.detail)
+            diary.record_decision(f"섹터 로테이션: {rotation.detail}")
+        else:
+            print(f"\n  [로테이션] 월요일에만 실행 (오늘: {datetime.now().strftime('%A')})")
+    except Exception as e:
+        print(f"\n  [로테이션] 실패: {e}")
+        diary.record_error(f"섹터 로테이션 실패: {e}")
+
     # 6.5. 오버나이트 갭 신호 (미국장 종가 → 한국장 방향)
     print("\n[6.5] 오버나이트 갭 신호...")
     try:
@@ -861,10 +883,41 @@ def post_market(client: KISClient) -> None:
         print(f"  수급 수집 실패: {e}")
         diary.record_error(f"수급 수집 실패: {e}")
 
-    # 9. 누적 학습 데이터 요약
+    # 9. 포트폴리오 테일 리스크 (VaR/ES)
+    print("\n[9] 테일 리스크 분석...")
+    try:
+        from src.strategies.tail_risk import compute_portfolio_var
+        from src.risk_manager import load_positions
+        positions = load_positions()
+        held_syms = list(positions.keys())
+        if held_syms:
+            held_hists = {}
+            for sym in held_syms[:10]:
+                try:
+                    held_hists[sym] = fetch_recent_history(client, sym, days=70)
+                except Exception:
+                    pass
+            if held_hists:
+                tr = compute_portfolio_var(held_hists)
+                print(f"  VaR₉₅={tr.var_95:.2%} | ES₉₅={tr.es_95:.2%} | "
+                      f"Vol={tr.portfolio_vol:.1%} | MDD={tr.max_drawdown:.2%}")
+                print(f"  리스크: {tr.risk_level} (배율 {tr.size_mult:.0%})")
+                diary.record_metric("var_95", tr.var_95)
+                diary.record_metric("es_95", tr.es_95)
+                diary.record_metric("risk_level", tr.risk_level)
+                diary.record_decision(f"테일 리스크: {tr.detail}")
+            else:
+                print("  보유 종목 히스토리 없음")
+        else:
+            print("  보유 포지션 없음 — 테일 리스크 스킵")
+    except Exception as e:
+        print(f"  테일 리스크 분석 실패: {e}")
+        diary.record_error(f"테일 리스크 분석 실패: {e}")
+
+    # 10. 누적 학습 데이터 요약
     ta_accuracy = load_ta_accuracy()
     total_evals = sum(v["total"] for v in ta_accuracy.values())
-    print(f"\n[9] 누적 학습 현황:")
+    print(f"\n[10] 누적 학습 현황:")
     print(f"  시장 데이터: {len(market_log)}일")
     print(f"  TA 평가: {total_evals}건")
     total_exp = len(_load_experience())

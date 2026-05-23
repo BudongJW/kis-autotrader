@@ -427,6 +427,18 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 sizing_ratio = 0.3 + (fp - BUY_THRESHOLD) / (STRONG_BUY_THRESHOLD - BUY_THRESHOLD) * 0.7
             sizing_ratio = max(0.3, min(1.0, sizing_ratio))
 
+            # 섹터 집중도 확인
+            try:
+                from src.strategies.sector_rotation import check_sector_concentration
+                conc_ok, conc_reason = check_sector_concentration(holdings, universe, symbol)
+                if not conc_ok:
+                    print(f"    [집중도] {conc_reason}")
+                    log_decision(symbol, name, "skip", conc_reason,
+                                 cur_price, strategy="etf", ta_scores=_ta_scores)
+                    continue
+            except Exception:
+                pass
+
             # Drawdown 스케일링: 연속 손실/수익에 따라 조정
             dd_scale, dd_reason = get_drawdown_scale()
             sizing_ratio *= dd_scale
@@ -1206,6 +1218,25 @@ def run_loop(dry_run: bool) -> None:
                     print(f"  [경험] {regime_rec['reason']}")
             except Exception:
                 regime_rec = {}
+
+            # 테일 리스크 체크 (VaR/ES 기반)
+            try:
+                from src.strategies.tail_risk import get_tail_risk_adjustment
+                tr_mult, tr_reason = get_tail_risk_adjustment()
+                if tr_mult < 1.0:
+                    size_factor *= tr_mult
+                    print(f"  [테일리스크] {tr_reason}")
+            except Exception:
+                pass
+
+            # 장중 모멘텀 스캐너 (급등 감지)
+            try:
+                from src.strategies.intraday_scanner import scan_intraday_momentum
+                surges = scan_intraday_momentum(client, universe)
+                for s in surges[:3]:
+                    print(f"  [스캐너] {s.signal}: {s.detail}")
+            except Exception:
+                pass
 
             print(f"\n[{now:%H:%M:%S}] === 전략 체크 ===")
             print(f"  예수금: {cash:,}원 | Kelly={kelly_f:.0%} "
