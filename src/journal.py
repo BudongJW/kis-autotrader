@@ -608,8 +608,17 @@ def generate_daily_note(portfolio: dict) -> str:
     lines.append(f"```")
     lines.append("")
 
-    # ── 13. 학습 메모 (모델 피드백용) ──
-    lines.append("## 11. 학습 메모")
+    # ── 13. AI 학습 일지 (상세) ──
+    try:
+        from src.learning_diary import format_diary_for_journal
+        diary_section = format_diary_for_journal()
+        if diary_section:
+            lines.append(diary_section)
+    except Exception:
+        pass
+
+    # ── 14. 학습 메모 (모델 피드백용) ──
+    lines.append("## 학습 메모")
     lines.append("")
     lines.append("<!-- 이 섹션은 모델이 시장 대응 패턴을 학습하는 데 활용됩니다 -->")
     lines.append("")

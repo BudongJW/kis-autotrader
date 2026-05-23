@@ -293,6 +293,15 @@ def main() -> None:
         except Exception:
             existing = {}
 
+    # 토큰 실패 등으로 total_value=0이면 이전 값 보존
+    if total_value <= 0 and existing.get("total_value", 0) > 0:
+        log.warning("journal_zero_value_guard",
+                     msg="잔고 조회 실패로 total_value=0, 이전 값 보존")
+        total_value = existing["total_value"]
+        cash = existing.get("cash", 0)
+        holdings_value = existing.get("holdings_value", 0)
+        holdings = existing.get("holdings", [])
+
     daily_history = existing.get("daily_history", [])
     today_str = now.strftime("%Y-%m-%d")
 

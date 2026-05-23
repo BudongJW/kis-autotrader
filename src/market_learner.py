@@ -41,6 +41,7 @@ from src.strategies.overnight_gap import get_overnight_signal
 from src.adaptive_learning import run_adaptive_learning, run_us_post_learning
 from src.strategies.signal_fusion import learn_fusion_weights
 from src.pre_briefing import run_pre_briefing
+from src.learning_diary import LearningDiary
 from src.utils.logger import log
 
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -271,7 +272,14 @@ def pre_market(client: KISClient) -> None:
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] 장 전 시장 학습 시작")
     print("=" * 60)
 
+    diary = LearningDiary("pre")
     cfg = load_config()
+
+    # 이전 값 스냅샷 (변경 추적용)
+    old_regime = cfg.get("market_regime", {})
+    old_k = cfg.get("strategies", {}).get("volatility_breakout", {}).get("k", 0.5)
+    old_confidence = cfg.get("market_confidence", 0.5)
+    old_strong_sectors = cfg.get("strong_sectors", [])
 
     # 1. 시장 환경 갱신
     print("\n[1] 시장 환경 분석...")
@@ -281,8 +289,15 @@ def pre_market(client: KISClient) -> None:
         print(f"  추세: {regime.trend} (점수 {regime.trend_score:+.3f})")
         print(f"  변동성: {regime.volatility} (백분위 {regime.vol_percentile:.1f}%)")
         print(f"  추천 K: {regime.recommended_k}")
+        diary.record_metric("trend_score", regime.trend_score)
+        diary.record_metric("vol_percentile", regime.vol_percentile)
+        if old_regime.get("trend") != regime.trend:
+            diary.record_change("시장체제", "trend", old_regime.get("trend", "?"), regime.trend, "선형회귀 추세 변경")
+        if old_regime.get("volatility") != regime.volatility:
+            diary.record_change("시장체제", "volatility", old_regime.get("volatility", "?"), regime.volatility)
     except Exception as e:
         print(f"  시장 환경 분석 실패: {e}")
+        diary.record_error(f"시장 환경 분석 실패: {e}")
         regime = None
 
     # 1.5. HMM 레짐 탐지 (선형 분석 보완)
@@ -297,8 +312,15 @@ def pre_market(client: KISClient) -> None:
             print(f"  [HMM] 전환 확률: " +
                   ", ".join(f"{k}={v:.0%}" for k, v in hmm_regime.transition_prob.items()))
             print(f"  [HMM] 행동: {hmm_action['reason']}")
+            old_hmm = old_regime.get("hmm_state", "unknown")
+            if old_hmm != hmm_regime.state:
+                diary.record_change("HMM", "hmm_state", old_hmm, hmm_regime.state,
+                                    f"신뢰도 {hmm_regime.confidence:.0%}")
+            diary.record_metric("hmm_confidence", hmm_regime.confidence)
+            diary.record_decision(hmm_action["reason"])
     except Exception as e:
         print(f"  [HMM] 레짐 탐지 실패: {e}")
+        diary.record_error(f"HMM 탐지 실패: {e}")
 
     # 2. 섹터 모멘텀
     print("\n[2] 섹터 모멘텀 스캔...")
@@ -322,6 +344,7 @@ def pre_market(client: KISClient) -> None:
     print("\n[4] TA 가중치 학습...")
     ta_accuracy = load_ta_accuracy()
     total_samples = sum(v["total"] for v in ta_accuracy.values())
+    old_ta_weights = dict(cfg.get("strategies", {}).get("ta_weights", DEFAULT_WEIGHTS))
     new_weights = optimize_ta_weights(ta_accuracy)
     print(f"  학습 데이터: {total_samples}건")
     for ind, w in new_weights.items():
@@ -330,10 +353,15 @@ def pre_market(client: KISClient) -> None:
         old_w = DEFAULT_WEIGHTS.get(ind, 0)
         change = "=" if abs(w - old_w) < 0.01 else ("+" if w > old_w else "-")
         print(f"  {ind:<6} {w:.3f} ({change}) 적중률 {rate:.0f}% ({acc.get('total', 0)}건)")
+        ow = old_ta_weights.get(ind, old_w)
+        if abs(w - ow) >= 0.01:
+            diary.record_change("TA가중치", ind, ow, w, f"적중률 {rate:.0f}%")
+    diary.record_metric("ta_samples", total_samples)
 
     # 5. 시장 신뢰도 산출
     confidence = compute_market_confidence(regime, breadth, sectors) if regime else 0.5
     print(f"\n[5] 시장 신뢰도: {confidence:.1%}")
+    diary.record_metric("market_health", breadth.get("health", "unknown"))
 
     # 6. strategy.yaml 업데이트
     print("\n[6] strategy.yaml 업데이트...")
@@ -353,10 +381,13 @@ def pre_market(client: KISClient) -> None:
 
         # HMM K값 조정 적용
         if hmm_action:
+            pre_hmm_k = new_k
             new_k = round(new_k * hmm_action["k_adjustment"], 2)
             new_k = max(0.3, min(0.7, new_k))
             vb["k"] = new_k
             print(f"  K (HMM 조정): → {new_k}")
+
+        diary.record_change("전략", "K", old_k, new_k, "시장환경+HMM 동적조정")
 
         cfg["market_regime"] = {
             "trend": regime.trend,
@@ -376,11 +407,20 @@ def pre_market(client: KISClient) -> None:
 
     # 시장 신뢰도
     cfg["market_confidence"] = confidence
+    diary.record_change("시장", "confidence", old_confidence, confidence, "체제+건강도+섹터 종합")
 
     # 강세 섹터 기록 + 동적 유니버스 보강
     strong_sectors = [name for name, data in sectors.items()
                       if data.get("momentum") in ("strong", "positive")]
     cfg["strong_sectors"] = strong_sectors
+
+    added_sectors = set(strong_sectors) - set(old_strong_sectors)
+    removed_sectors = set(old_strong_sectors) - set(strong_sectors)
+    if added_sectors:
+        diary.record_change("섹터", "강세진입", list(removed_sectors)[:3] if removed_sectors else "없음",
+                            list(added_sectors), "모멘텀 전환")
+    if removed_sectors and not added_sectors:
+        diary.record_change("섹터", "강세이탈", list(removed_sectors), "없음")
 
     # 강세 섹터 ETF를 동적 유니버스에 추가
     current_syms = {s["symbol"] for s in cfg.get("universe", {}).get("default", [])}
@@ -416,8 +456,13 @@ def pre_market(client: KISClient) -> None:
             cfg["market_confidence"] = round(confidence, 3)
             print(f"  신뢰도 조정: {old_conf:.0%} → {confidence:.0%} "
                   f"(갭 {gap_signal.confidence_boost:+.3f})")
+            diary.record_change("갭신호", "confidence", old_conf, round(confidence, 3),
+                                f"{gap_signal.direction} 갭 반영")
+        diary.record_metric("gap_direction", gap_signal.direction)
+        diary.record_metric("gap_strength", gap_signal.strength)
     except Exception as e:
         print(f"  오버나이트 갭 신호 실패: {e}")
+        diary.record_error(f"갭 신호 실패: {e}")
 
     # 7. 경험 기반 추천 (과거 유사 레짐에서의 결과)
     print("\n[7] 경험 기반 레짐 추천...")
@@ -440,6 +485,8 @@ def pre_market(client: KISClient) -> None:
     cfg["adaptive_allocation"] = adaptive
     print(f"  ETF 전략: 승률 {adaptive.get('win_rate', 0.5):.0%} "
           f"({adaptive.get('trades', 0)}건)")
+    diary.record_metric("etf_win_rate", adaptive.get("win_rate", 0.5))
+    diary.record_metric("etf_trades", adaptive.get("trades", 0))
 
     save_config(cfg)
 
@@ -475,7 +522,10 @@ def pre_market(client: KISClient) -> None:
               f"예산: {plan.get('budget', {}).get('final_budget_krw', 0):,}원")
     except Exception as e:
         print(f"  브리핑 생성 실패: {e}")
+        diary.record_error(f"브리핑 생성 실패: {e}")
 
+    diary.save()
+    print(f"\n학습 일지 기록 완료 (변경 {len(diary.changes)}건, 오류 {len(diary.errors)}건)")
     print("\n장 전 학습 완료.")
 
 
@@ -612,6 +662,8 @@ def post_market(client: KISClient) -> None:
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] 장 후 학습 시작")
     print("=" * 60)
 
+    diary = LearningDiary("post")
+
     # 1. TA 신호 적중률 평가
     print("\n[1] TA 신호 평가...")
     evaluate_ta_signals(client)
@@ -623,6 +675,9 @@ def post_market(client: KISClient) -> None:
     print(f"  현재 추세: {patterns.get('current_trend')} ({patterns.get('trend_streak')}일 연속)")
     print(f"  5일 평균 신뢰도: {patterns.get('avg_confidence_5d', 0):.1%}")
     print(f"  신뢰도 방향: {patterns.get('confidence_direction')}")
+    diary.record_metric("trend_streak", patterns.get("trend_streak", 0))
+    diary.record_metric("confidence_direction", patterns.get("confidence_direction", "?"))
+    diary.record_metric("market_data_days", len(market_log))
 
     # 3. 경험 버퍼 결과 평가
     print("\n[3] 경험 평가...")
@@ -675,8 +730,17 @@ def post_market(client: KISClient) -> None:
         wins = [r for r in evaluated if r.get("outcome") == "win"]
         print(f"  오늘 결정: {len(today_exp)}건, 평가 완료: {len(evaluated)}건, "
               f"성공: {len(wins)}건")
+        diary.record_metric("decisions_today", len(today_exp))
+        diary.record_metric("evaluated", len(evaluated))
+        diary.record_metric("wins", len(wins))
+        if today_trades:
+            diary.record_decision(f"오늘 거래 {len(today_trades)}건 평가 완료 "
+                                  f"(성공 {len(wins)}/{len(evaluated)})")
+        else:
+            diary.record_decision("오늘 거래 없음 — TA 평가 스킵")
     except Exception as e:
         print(f"  경험 평가 실패: {e}")
+        diary.record_error(f"경험 평가 실패: {e}")
 
     # 4. 레짐-행동 메모리 갱신
     print("\n[4] 레짐-행동 메모리 갱신...")
@@ -712,18 +776,25 @@ def post_market(client: KISClient) -> None:
         result = daily_retrain(client, symbols, days=120)
         if result:
             print(f"  완료: accuracy={result['accuracy']:.1%}, AUC={result['auc']:.3f}")
+            diary.record_metric("lgbm_accuracy", result["accuracy"])
+            diary.record_metric("lgbm_auc", result["auc"])
+            diary.record_decision(f"LGBM 재학습 완료 (accuracy={result['accuracy']:.1%}, AUC={result['auc']:.3f})")
         else:
             print("  데이터 부족 또는 lightgbm 미설치 — 스킵")
+            diary.record_decision("LGBM 스킵 (데이터 부족)")
     except Exception as e:
         print(f"  LGBM 재학습 실패: {e}")
+        diary.record_error(f"LGBM 재학습 실패: {e}")
 
     # 7. 적응형 학습 (오버나이트갭·보유기간·섹터모멘텀 성과 평가)
     cfg = load_config()
     try:
         cfg = run_adaptive_learning(client, cfg)
         save_config(cfg)
+        diary.record_decision("적응형 학습 5개 서브시스템 실행 완료")
     except Exception as e:
         print(f"  적응 학습 실패: {e}")
+        diary.record_error(f"적응 학습 실패: {e}")
 
     # 7.5. 신호 융합 가중치 학습 (Brier Score 최적화)
     print("\n[7.5] 신호 융합 가중치 학습...")
@@ -731,10 +802,13 @@ def post_market(client: KISClient) -> None:
         fusion_weights = learn_fusion_weights()
         if fusion_weights:
             print(f"  학습 완료: {fusion_weights}")
+            diary.record_decision(f"신호 융합 가중치 학습 완료: {fusion_weights}")
         else:
             print("  경험 데이터 부족 (20건 미만). 기본 가중치 사용.")
+            diary.record_decision("신호 융합 학습 스킵 (경험 20건 미만)")
     except Exception as e:
         print(f"  융합 가중치 학습 실패: {e}")
+        diary.record_error(f"융합 가중치 학습 실패: {e}")
 
     # 8. 누적 학습 데이터 요약
     ta_accuracy = load_ta_accuracy()
@@ -744,7 +818,11 @@ def post_market(client: KISClient) -> None:
     print(f"  TA 평가: {total_evals}건")
     total_exp = len(_load_experience())
     print(f"  경험 버퍼: {total_exp}건")
+    diary.record_metric("ta_total_evals", total_evals)
+    diary.record_metric("experience_buffer", total_exp)
 
+    diary.save()
+    print(f"\n학습 일지 기록 완료 (변경 {len(diary.changes)}건, 오류 {len(diary.errors)}건)")
     print("\n장 후 학습 완료.")
 
 
@@ -761,14 +839,18 @@ def post_us_market(client: KISClient) -> None:
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] 미국장 후 학습 시작")
     print("=" * 60)
 
+    diary = LearningDiary("post_us")
     cfg = load_config()
+    old_confidence = cfg.get("market_confidence", 0.5)
 
     # 1. US 거래 결과 평가 + 교차 시장 데이터
     try:
         cfg = run_us_post_learning(client, cfg)
         save_config(cfg)
+        diary.record_decision("US 거래 결과 평가 + 교차 시장 학습 완료")
     except Exception as e:
         print(f"  US 학습 실패: {e}")
+        diary.record_error(f"US 학습 실패: {e}")
 
     # 2. US 결과 기반 한국장 전략 사전 조정
     print("\n[사전 조정] US 결과 → 한국장 전략 반영...")
@@ -837,9 +919,17 @@ def post_us_market(client: KISClient) -> None:
         print(f"  예측: {predicted_gap} | 행동: {gap_action} | "
               f"신뢰도: {current_conf:.0%} → {new_conf:.0%}")
 
+        diary.record_metric("qqq_change", round(qqq_change, 2))
+        diary.record_metric("spy_change", round(spy_change, 2))
+        diary.record_change("갭예측", "direction", "이전", predicted_gap,
+                            f"QQQ {qqq_change:+.1f}%, SPY {spy_change:+.1f}%")
+        diary.record_change("갭예측", "confidence", old_confidence, round(new_conf, 3),
+                            f"행동: {gap_action}")
+
         save_config(cfg)
     except Exception as e:
         print(f"  사전 조정 실패: {e}")
+        diary.record_error(f"사전 조정 실패: {e}")
 
     # 3. LGBM warm-start (US 데이터 포함 재학습)
     print("\n[LGBM] 모델 갱신...")
@@ -852,11 +942,18 @@ def post_us_market(client: KISClient) -> None:
         result = daily_retrain(client, symbols, days=120)
         if result:
             print(f"  완료: accuracy={result['accuracy']:.1%}, AUC={result['auc']:.3f}")
+            diary.record_metric("lgbm_accuracy", result["accuracy"])
+            diary.record_metric("lgbm_auc", result["auc"])
+            diary.record_decision(f"LGBM 갱신 완료 (accuracy={result['accuracy']:.1%})")
         else:
             print("  데이터 부족 또는 스킵")
+            diary.record_decision("LGBM 스킵 (데이터 부족)")
     except Exception as e:
         print(f"  LGBM 갱신 실패: {e}")
+        diary.record_error(f"LGBM 갱신 실패: {e}")
 
+    diary.save()
+    print(f"\n학습 일지 기록 완료 (변경 {len(diary.changes)}건, 오류 {len(diary.errors)}건)")
     print("\n미국장 후 학습 완료.")
 
 

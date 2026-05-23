@@ -135,6 +135,7 @@ jobs:
             logs/sector_accuracy.json
             logs/us_trade_history.json
             logs/cross_market.json
+            logs/learning_diary.json
           overwrite: true
           retention-days: 180
         if: always()
