@@ -99,6 +99,8 @@ def fetch_us_history(client: KISClient, symbol: str, exchange: str = "NASD",
 
     rows = resp.get("output2", [])
     if not rows:
+        log.warning("us_daily_empty", symbol=symbol, rt_cd=resp.get("rt_cd"),
+                     msg=resp.get("msg1", ""), output1_keys=list(resp.get("output1", {}).keys()) if resp.get("output1") else None)
         raise RuntimeError(f"해외 일봉 데이터 비어있음: {symbol}")
 
     df = pd.DataFrame(rows)

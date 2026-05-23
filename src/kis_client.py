@@ -258,6 +258,7 @@ class KISClient:
             period: D=일, W=주, M=월
             count: 요청 건수 (최대 120)
         """
+        from datetime import date
         return self._get(
             "/uapi/overseas-price/v1/quotations/dailyprice",
             tr_id=TR_OS_DAILY,
@@ -266,7 +267,7 @@ class KISClient:
                 "EXCD": exchange,
                 "SYMB": symbol,
                 "GUBN": "0",     # 0=일, 1=주, 2=월
-                "BYMD": "",      # 빈 문자열이면 최근부터
+                "BYMD": date.today().strftime("%Y%m%d"),
                 "MODP": "1",     # 1=수정주가 반영
                 "KEYB": "",
             },
