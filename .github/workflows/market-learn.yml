@@ -37,7 +37,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt hmmlearn lightgbm scikit-learn yfinance
+        run: pip install -r requirements.txt hmmlearn lightgbm scikit-learn yfinance pykrx
 
       - name: Create .env
         run: |
@@ -136,6 +136,8 @@ jobs:
             logs/us_trade_history.json
             logs/cross_market.json
             logs/learning_diary.json
+            logs/vaa_state.json
+            logs/flow_cache.json
           overwrite: true
           retention-days: 180
         if: always()

@@ -36,11 +36,12 @@ class FusionResult:
 
 # 기본 가중치 (학습 전)
 DEFAULT_WEIGHTS = {
-    "ta_score": 0.25,       # TA 복합 점수 기여
-    "lgbm_prob": 0.30,      # LGBM 예측 확률 기여
-    "breakout": 0.20,       # 변동성 돌파 신호 기여
-    "overnight_gap": 0.10,  # 미국장 갭 기여
-    "regime": 0.15,         # 시장 레짐 기여
+    "ta_score": 0.22,       # TA 복합 점수 기여
+    "lgbm_prob": 0.28,      # LGBM 예측 확률 기여
+    "breakout": 0.18,       # 변동성 돌파 신호 기여
+    "overnight_gap": 0.08,  # 미국장 갭 기여
+    "regime": 0.14,         # 시장 레짐 기여
+    "flow": 0.10,           # 수급(기관/외인) 기여
     "bias": -0.1,           # 보수적 바이어스
 }
 
@@ -87,6 +88,7 @@ def fuse_signals(
     regime: str = "unknown",   # "bull" / "bear" / "sideways"
     regime_confidence: float = 0.5,
     market_confidence: float = 0.5,
+    flow_signal: float = 0.0,  # -1.0 ~ +1.0 (수급 신호, 0=데이터 없음)
 ) -> FusionResult:
     """모든 신호를 가중 결합하여 최종 매수 확률 산출.
 
@@ -125,13 +127,17 @@ def fuse_signals(
     regime_map = {"bull": 0.8, "sideways": 0.0, "bear": -0.8}
     regime_norm = regime_map.get(regime, 0.0) * regime_confidence
 
+    # 수급: 이미 -1~+1 범위
+    flow_norm = max(-1.0, min(1.0, flow_signal))
+
     # ── 가중 결합 ──
     logit = (
-        w.get("ta_score", 0.25) * ta_norm * 3.0 +
-        w.get("lgbm_prob", 0.30) * lgbm_norm * 3.0 +
-        w.get("breakout", 0.20) * breakout_norm * 3.0 +
-        w.get("overnight_gap", 0.10) * gap_norm * 3.0 +
-        w.get("regime", 0.15) * regime_norm * 3.0 +
+        w.get("ta_score", 0.22) * ta_norm * 3.0 +
+        w.get("lgbm_prob", 0.28) * lgbm_norm * 3.0 +
+        w.get("breakout", 0.18) * breakout_norm * 3.0 +
+        w.get("overnight_gap", 0.08) * gap_norm * 3.0 +
+        w.get("regime", 0.14) * regime_norm * 3.0 +
+        w.get("flow", 0.10) * flow_norm * 3.0 +
         w.get("bias", -0.1)
     )
 
@@ -151,12 +157,14 @@ def fuse_signals(
         "breakout": round(breakout_norm, 3),
         "gap": round(gap_norm, 3),
         "regime": round(regime_norm, 3),
+        "flow": round(flow_norm, 3),
     }
 
     detail = (f"융합={final_prob:.0%} [{signal}] "
               f"(TA={ta_norm:+.2f} LGBM={lgbm_norm:+.2f} "
               f"돌파={'O' if breakout_signal else 'X'} "
-              f"갭={gap_norm:+.2f} 레짐={regime_norm:+.2f})")
+              f"갭={gap_norm:+.2f} 레짐={regime_norm:+.2f} "
+              f"수급={flow_norm:+.2f})")
 
     return FusionResult(
         final_prob=round(final_prob, 3),
@@ -191,7 +199,7 @@ def learn_fusion_weights() -> dict | None:
         return None
 
     # 학습 데이터 구성
-    X = []  # [ta_norm, lgbm_norm, breakout, gap, regime]
+    X = []  # [ta_norm, lgbm_norm, breakout, gap, regime, flow]
     y = []  # 1=실제 수익, 0=실제 손실
 
     for r in evaluated:
@@ -209,8 +217,9 @@ def learn_fusion_weights() -> dict | None:
 
         had_breakout = r.get("breakout_signal", action == "buy")
         breakout_norm = 0.6 if had_breakout else -0.3
+        flow_norm = max(-1, min(1, r.get("flow_signal", 0.0)))
 
-        X.append([ta_norm, lgbm_norm, breakout_norm, 0, 0])  # gap/regime 없으면 0
+        X.append([ta_norm, lgbm_norm, breakout_norm, 0, 0, flow_norm])
         y.append(1 if pnl > 0 else 0)
 
     X = np.array(X)
@@ -221,18 +230,18 @@ def learn_fusion_weights() -> dict | None:
     best_weights = dict(DEFAULT_WEIGHTS)
 
     weight_options = [0.10, 0.20, 0.35]
-    param_names = ["ta_score", "lgbm_prob", "breakout", "overnight_gap", "regime"]
 
     # 간소화: 주요 3개 파라미터만 그리드 서치 (ta, lgbm, breakout)
     for w_ta in weight_options:
         for w_lgbm in weight_options:
             for w_brk in weight_options:
-                w_gap = 0.10
-                w_regime = max(0.05, 1.0 - w_ta - w_lgbm - w_brk - w_gap)
+                w_gap = 0.08
+                w_flow = 0.10
+                w_regime = max(0.05, 1.0 - w_ta - w_lgbm - w_brk - w_gap - w_flow)
                 if w_regime > 0.4:
                     continue
 
-                weights = [w_ta, w_lgbm, w_brk, w_gap, w_regime]
+                weights = [w_ta, w_lgbm, w_brk, w_gap, w_regime, w_flow]
 
                 # Brier Score 계산
                 logits = X @ (np.array(weights) * 3.0) - 0.1
@@ -247,6 +256,7 @@ def learn_fusion_weights() -> dict | None:
                         "breakout": w_brk,
                         "overnight_gap": w_gap,
                         "regime": w_regime,
+                        "flow": w_flow,
                         "bias": -0.1,
                     }
 

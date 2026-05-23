@@ -359,6 +359,18 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                     "strength": gap_info.get("strength", 0),
                 }
 
+            # 수급 신호 (pykrx 캐시)
+            flow_val = 0.0
+            try:
+                from src.strategies.flow_signal import load_flow_cache
+                flow_cache = load_flow_cache()
+                if symbol in flow_cache:
+                    flow_val = flow_cache[symbol].get("signal", 0.0)
+                    if flow_val != 0:
+                        print(f"    수급: {flow_cache[symbol].get('detail', '')}")
+            except Exception:
+                pass
+
             # 신호 확률적 융합: 모든 신호를 가중 결합
             fusion = fuse_signals(
                 ta_score=ta.total,
@@ -368,6 +380,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 regime=regime_state,
                 regime_confidence=regime_conf,
                 market_confidence=market_conf,
+                flow_signal=flow_val,
             )
             print(f"    융합: {fusion.detail}")
 
@@ -872,6 +885,18 @@ def run_once(dry_run: bool) -> None:
     elif gap_action == "reduce_size":
         size_factor *= 0.7
         print(f"  [오버나이트] 미국 약세 → 규모 축소 (x0.7)")
+
+    # ── VAA 월간 시그널 반영 ──
+    try:
+        from src.strategies.vaa_rebalance import load_vaa_state
+        vaa = load_vaa_state().get("current", {})
+        if vaa.get("mode") == "defensive":
+            size_factor *= 0.5
+            print(f"  [VAA] 방어 모드 → {vaa.get('target_name', '?')} 선호, 공격 자산 축소 (x0.5)")
+        elif vaa.get("mode") == "offensive":
+            print(f"  [VAA] 공격 모드 → {vaa.get('target_name', '?')} 최우선")
+    except Exception:
+        pass
 
     # ── 레짐 판단 + 전략 분기 ──
     regime_result, allocation, bear_enabled = evaluate_regime(client)

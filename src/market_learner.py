@@ -535,6 +535,22 @@ def pre_market(client: KISClient) -> None:
     except Exception as e:
         diary.record_error(f"시즌 필터 로드 실패: {e}")
 
+    # 10. VAA 월간 리밸런싱 (매월 첫 영업일)
+    try:
+        from src.strategies.vaa_rebalance import run_vaa_rebalance
+        vaa_signal = run_vaa_rebalance(client, cfg)
+        if vaa_signal:
+            diary.record_change("VAA", "mode", "N/A", vaa_signal.mode, vaa_signal.detail)
+            diary.record_metric("vaa_target", vaa_signal.target_symbol)
+            diary.record_metric("vaa_momentum", vaa_signal.target_momentum)
+            diary.record_decision(f"VAA 리밸런싱: {vaa_signal.detail}")
+            print(f"\n[10] VAA 리밸런싱: {vaa_signal.detail}")
+        else:
+            print(f"\n[10] VAA: 리밸런싱 대상일 아님 (매월 초 실행)")
+    except Exception as e:
+        print(f"\n[10] VAA 리밸런싱 실패: {e}")
+        diary.record_error(f"VAA 리밸런싱 실패: {e}")
+
     diary.save()
     print(f"\n학습 일지 기록 완료 (변경 {len(diary.changes)}건, 오류 {len(diary.errors)}건)")
     print("\n장 전 학습 완료.")
@@ -821,10 +837,34 @@ def post_market(client: KISClient) -> None:
         print(f"  융합 가중치 학습 실패: {e}")
         diary.record_error(f"융합 가중치 학습 실패: {e}")
 
-    # 8. 누적 학습 데이터 요약
+    # 8. 수급 데이터 수집 (pykrx)
+    print("\n[8] 수급 데이터 수집...")
+    try:
+        from src.strategies.flow_signal import compute_flow_signal, save_flow_cache, FlowSignal
+        cfg_reload = load_config()
+        flow_universe = cfg_reload.get("universe", {}).get("default", [])
+        flows: dict[str, FlowSignal] = {}
+        for asset in flow_universe:
+            sym = asset["symbol"]
+            sig = compute_flow_signal(sym, days=5)
+            if sig:
+                flows[sym] = sig
+                if sig.signal != 0:
+                    print(f"  {asset.get('name', sym)}: {sig.detail} → {sig.signal:+.2f}")
+        if flows:
+            save_flow_cache(flows)
+            diary.record_metric("flow_symbols", len(flows))
+            diary.record_decision(f"수급 데이터 {len(flows)}종목 수집 완료")
+        else:
+            print("  수급 데이터 없음 (pykrx 미설치 또는 데이터 부족)")
+    except Exception as e:
+        print(f"  수급 수집 실패: {e}")
+        diary.record_error(f"수급 수집 실패: {e}")
+
+    # 9. 누적 학습 데이터 요약
     ta_accuracy = load_ta_accuracy()
     total_evals = sum(v["total"] for v in ta_accuracy.values())
-    print(f"\n[8] 누적 학습 현황:")
+    print(f"\n[9] 누적 학습 현황:")
     print(f"  시장 데이터: {len(market_log)}일")
     print(f"  TA 평가: {total_evals}건")
     total_exp = len(_load_experience())
