@@ -45,6 +45,12 @@ universe:
     name: KODEX K-미래차
   - symbol: '371160'
     name: TIGER 미국필라델피아반도체나스닥
+  - symbol: '132030'
+    name: KODEX 골드선물(H)
+    type: commodity
+  - symbol: '319640'
+    name: TIGER 골드선물(H)
+    type: commodity
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -110,6 +116,21 @@ us_session:
     name: iShares 20+ Year Treasury Bond
     exchange: NASD
     type: defensive
+  - symbol: NVDA
+    name: NVIDIA Corporation
+    exchange: NASD
+  - symbol: AAPL
+    name: Apple Inc.
+    exchange: NASD
+  - symbol: GOOGL
+    name: Alphabet Inc.
+    exchange: NASD
+  - symbol: AMD
+    name: Advanced Micro Devices
+    exchange: NASD
+  - symbol: AMZN
+    name: Amazon.com Inc.
+    exchange: NASD
   strategy:
     k: 0.5
     trend_ma: 20
@@ -120,7 +141,7 @@ us_session:
   market_open_kst: '22:30'
   market_close_kst: 05:00
   summer_time: true
-  max_positions: 2
+  max_positions: 3
   budget_pct: 0.4
   regime_linked: true
 risk:

@@ -524,6 +524,17 @@ def pre_market(client: KISClient) -> None:
         print(f"  브리핑 생성 실패: {e}")
         diary.record_error(f"브리핑 생성 실패: {e}")
 
+    # 9. 시즌 필터 상태 기록
+    try:
+        from src.strategies.seasonal import get_seasonal_adjustment
+        seasonal = get_seasonal_adjustment()
+        diary.record_metric("season", seasonal["season"])
+        diary.record_metric("seasonal_confidence_mult", seasonal["confidence_mult"])
+        diary.record_decision(f"시즌 필터: {seasonal['reason']}")
+        print(f"\n[9] 시즌 필터: {seasonal['reason']}")
+    except Exception as e:
+        diary.record_error(f"시즌 필터 로드 실패: {e}")
+
     diary.save()
     print(f"\n학습 일지 기록 완료 (변경 {len(diary.changes)}건, 오류 {len(diary.errors)}건)")
     print("\n장 전 학습 완료.")

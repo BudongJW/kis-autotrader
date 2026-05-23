@@ -824,9 +824,16 @@ def run_once(dry_run: bool) -> None:
         print("  일일 손실 한도 초과. 신규 매수 차단.")
         return
 
-    # ── 최대 동시 포지션 체크 ──
+    # ── 최대 동시 포지션 체크 (시즌 조정 포함) ──
     risk_cfg = load_risk_params()
-    can_buy, pos_reason = check_max_positions(risk_cfg.get("max_concurrent_positions", 5))
+    max_pos = risk_cfg.get("max_concurrent_positions", 5)
+    try:
+        from src.strategies.seasonal import get_seasonal_adjustment
+        _season = get_seasonal_adjustment()
+        max_pos = max(1, max_pos + _season.get("max_positions_adj", 0))
+    except Exception:
+        pass
+    can_buy, pos_reason = check_max_positions(max_pos)
     if not can_buy:
         print(f"  [포지션] {pos_reason}. 신규 매수 차단.")
         return
@@ -835,6 +842,15 @@ def run_once(dry_run: bool) -> None:
     confidence = get_market_confidence()
     intraday = get_intraday_regime_adjustment(client)
     print(f"  [시장 신뢰도] {confidence:.0%} | {intraday['reason']}")
+
+    # ── 시즌 필터 (할로윈 전략) ──
+    try:
+        from src.strategies.seasonal import get_seasonal_adjustment
+        seasonal = get_seasonal_adjustment()
+        confidence *= seasonal["confidence_mult"]
+        print(f"  [시즌] {seasonal['reason']} (신뢰도 x{seasonal['confidence_mult']})")
+    except Exception:
+        seasonal = None
 
     # ── 오버나이트 갭 신호 반영 ──
     cfg = load_config()
@@ -1088,10 +1104,18 @@ def run_loop(dry_run: bool) -> None:
                 time_mod.sleep(RISK_CHECK_INTERVAL)
                 continue
 
-            # 최대 동시 포지션 체크
+            # 시즌 필터 로드
+            try:
+                from src.strategies.seasonal import get_seasonal_adjustment
+                seasonal = get_seasonal_adjustment()
+            except Exception:
+                seasonal = {"confidence_mult": 1.0, "max_positions_adj": 0}
+
+            # 최대 동시 포지션 체크 (시즌 조정 포함)
             risk_cfg = load_risk_params()
-            can_buy, pos_reason = check_max_positions(
-                risk_cfg.get("max_concurrent_positions", 5))
+            max_pos = risk_cfg.get("max_concurrent_positions", 5)
+            max_pos = max(1, max_pos + seasonal.get("max_positions_adj", 0))
+            can_buy, pos_reason = check_max_positions(max_pos)
             if not can_buy:
                 print(f"[{now:%H:%M:%S}] [포지션] {pos_reason}")
                 time_mod.sleep(RISK_CHECK_INTERVAL)
@@ -1107,8 +1131,9 @@ def run_loop(dry_run: bool) -> None:
             kelly_cap = max(int(cash * kelly_f), int(cash * 0.10))  # 최소 10%
             etf_budget_cap = min(cash, kelly_cap)
 
-            # 시장 신뢰도 반영
+            # 시장 신뢰도 반영 (시즌 필터 적용)
             confidence = get_market_confidence()
+            confidence *= seasonal["confidence_mult"]
             intraday = get_intraday_regime_adjustment(client)
             size_factor = max(0.3, confidence)
             if intraday.get("reduce_size"):
