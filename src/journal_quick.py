@@ -28,6 +28,7 @@ from src.bot.us_session import (
     load_us_config, load_us_positions, get_us_holdings, get_us_available_cash,
 )
 from src.experience import _load_experience
+from src.strategies.r_multiple import get_r_summary, R_LOG_PATH
 from src.utils.logger import log
 
 
@@ -485,6 +486,43 @@ def main() -> None:
         "tax_exemption_remaining_krw": 2_500_000,  # 매년 1.1 리셋
     }
 
+    # Performance metrics (computed from daily_history + realized)
+    perf_metrics = {}
+    if len(daily_history) >= 5:
+        values = [d["total_value"] for d in daily_history]
+        returns = [(values[i] - values[i-1]) / values[i-1] for i in range(1, len(values)) if values[i-1] > 0]
+        if returns:
+            import numpy as np
+            avg_ret = np.mean(returns)
+            std_ret = np.std(returns) if len(returns) > 1 else 0.001
+            sharpe = round(float(avg_ret / std_ret * np.sqrt(252)), 2) if std_ret > 0 else 0
+            # Max drawdown
+            peak = values[0]
+            max_dd = 0
+            for v in values:
+                if v > peak:
+                    peak = v
+                dd = (v - peak) / peak
+                if dd < max_dd:
+                    max_dd = dd
+            # Profit factor
+            winning_pnl = sum(r["pnl"] for r in realized if r["pnl"] > 0)
+            losing_pnl = abs(sum(r["pnl"] for r in realized if r["pnl"] < 0))
+            profit_factor = round(winning_pnl / losing_pnl, 2) if losing_pnl > 0 else 0
+            # Avg win/loss
+            avg_win = round(np.mean([r["pnl_pct"] for r in realized if r["pnl"] > 0]), 2) if wins > 0 else 0
+            avg_loss = round(np.mean([r["pnl_pct"] for r in realized if r["pnl"] < 0]), 2) if losses > 0 else 0
+            perf_metrics = {
+                "sharpe_ratio": sharpe,
+                "max_drawdown_pct": round(max_dd * 100, 2),
+                "profit_factor": profit_factor,
+                "avg_win_pct": avg_win,
+                "avg_loss_pct": avg_loss,
+                "total_return_pct": round((values[-1] / values[0] - 1) * 100, 2) if values[0] > 0 else 0,
+            }
+    # R-multiple summary
+    r_summary = get_r_summary()
+
     # SQLite 원장: 포지션 스냅샷 + 정합성 점검 (KIS 잔고 vs 원장)
     try:
         from src.safety.ledger import snapshot_positions, reconcile
@@ -533,6 +571,8 @@ def main() -> None:
         "realized": realized[-30:],
         "today_summary": today_summary,
         "costs": costs_summary,
+        "performance": perf_metrics,
+        "r_summary": r_summary,
         "daily_history": daily_history,
 
         # 시장 상태
