@@ -27,21 +27,20 @@ POSITIONS_PATH = Path("logs/positions.json")
 
 # ── 리스크 파라미터 ──
 STOP_LOSS_PCT = -0.03        # -3% 손절 (ATR 없을 때 폴백)
-TRAILING_ACTIVATE_PCT = 0.015  # +1.5% 도달 시 추적 손절 활성화 (ATR 없을 때 폴백)
-TRAILING_STOP_PCT = 0.01      # 고점 대비 -1% 하락 시 매도 (ATR 없을 때 폴백)
+TRAILING_ACTIVATE_PCT = 0.02   # +2% 도달 시 추적 손절 활성화 (ATR 없을 때 폴백)
+TRAILING_STOP_PCT = 0.012     # 고점 대비 -1.2% 하락 시 매도 (ATR 없을 때 폴백)
 
 # ── ATR 기반 동적 손절 파라미터 ──
-ATR_STOP_MULTIPLIER = 1.5     # 손절 = 매수가 - ATR × 1.5
-ATR_TRAILING_ACTIVATE = 2.0   # 추적 손절 활성화 = ATR × 2.0 수익 도달 시
-ATR_TRAILING_DROP = 1.0       # 고점 대비 ATR × 1.0 하락 시 매도
+ATR_STOP_MULTIPLIER = 2.0     # 손절 = 매수가 - ATR × 2.0 (Turtle 기준 확대)
+ATR_TRAILING_ACTIVATE = 2.5   # 추적 손절 활성화 = ATR × 2.5 수익 도달 시
+ATR_TRAILING_DROP = 1.5       # 고점 대비 ATR × 1.5 하락 시 매도
 
-# 동적 ROI 테이블: (보유 시간(분), 최소 수익률)
-# 보유 시간이 길어질수록 낮은 수익률에서도 청산
+# 동적 ROI 테이블: 추세추종 원칙 — 승자를 오래 보유
+# 당일 ROI 청산은 비활성, 최소 1일 이상 보유 후 작동
 ROI_TABLE = [
-    (240, 0.005),   # 4시간 후: +0.5% 이상이면 청산
-    (180, 0.008),   # 3시간 후: +0.8%
-    (120, 0.012),   # 2시간 후: +1.2%
-    (60, 0.02),     # 1시간 후: +2.0%
+    (1440, 0.015),  # 1일(24h) 후: +1.5% 이상이면 청산 고려
+    (720, 0.025),   # 12시간 후: +2.5%
+    (360, 0.035),   # 6시간 후: +3.5%
 ]
 
 # 터뷸런스: KOSPI200 변동성이 60일 평균의 N배 초과 시 매수 차단
@@ -72,8 +71,9 @@ def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0,
         atr: 매수 시점의 ATR(14) 값. 0이면 고정 비율 손절로 폴백.
         asset_type: "long" / "inverse_1x" / "inverse_2x" / "defensive"
     """
-    # 인버스 ETF 최대 보유일 (변동성 손실 방지)
-    max_hold = {"long": 5, "inverse_1x": 20, "inverse_2x": 10, "defensive": 60}
+    # 자산 유형별 최대 보유일 (추세추종 원칙 — 승자를 오래 보유)
+    max_hold = {"long": 15, "inverse_1x": 20, "inverse_2x": 10,
+                "defensive": 60, "commodity": 20}
 
     positions = load_positions()
     positions[symbol] = {
@@ -86,7 +86,36 @@ def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0,
         "max_hold_days": max_hold.get(asset_type, 5),
         "atr_at_buy": round(atr, 2),  # ATR 기반 동적 손절용
         "asset_type": asset_type,     # 자산 유형 (하락장 전략 구분)
+        "pyramid_count": 0,           # 피라미딩 횟수
+        "initial_risk": round(atr * ATR_STOP_MULTIPLIER, 2) if atr > 0 else round(price * abs(STOP_LOSS_PCT), 2),
     }
+    save_positions(positions)
+
+
+def record_pyramid(symbol: str, add_price: int, add_qty: int, atr: float = 0.0) -> None:
+    """피라미딩 매수 시 기존 포지션에 평단가·수량 갱신.
+
+    Turtle Trading 방식: 평균 매수가 갱신, pyramid_count 증가.
+    """
+    positions = load_positions()
+    pos = positions.get(symbol)
+    if not pos:
+        record_buy(symbol, add_price, add_qty, atr=atr)
+        return
+
+    old_price = pos["buy_price"]
+    old_qty = pos["qty"]
+    new_qty = old_qty + add_qty
+    avg_price = int((old_price * old_qty + add_price * add_qty) / new_qty)
+
+    pos["buy_price"] = avg_price
+    pos["qty"] = new_qty
+    pos["pyramid_count"] = pos.get("pyramid_count", 0) + 1
+    pos["peak_price"] = max(pos.get("peak_price", avg_price), add_price)
+    if atr > 0:
+        pos["atr_at_buy"] = round(atr, 2)
+        pos["initial_risk"] = round(atr * ATR_STOP_MULTIPLIER, 2)
+    positions[symbol] = pos
     save_positions(positions)
 
 
@@ -118,14 +147,20 @@ def remove_position(symbol: str) -> None:
     save_positions(positions)
 
 
+# 분할 매도 기준: 1차 익절 시 50% 매도, 나머지는 추적 손절
+PARTIAL_SELL_RATIO = 0.5
+PARTIAL_PROFIT_TRIGGER = 0.03  # +3% 수익 시 1차 분할 매도
+
+
 def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
-    """손절매 + 추적 손절 + 동적 ROI 확인.
+    """손절매 + 추적 손절 + 분할 매도 + 동적 ROI 확인.
 
     ATR 정보가 있으면 ATR 기반 동적 손절/추적 손절을 사용하고,
     없으면 기존 고정 비율로 폴백한다.
 
     Returns:
         (should_sell, reason)
+        reason에 "[분할]" 접두어가 있으면 PARTIAL_SELL_RATIO만큼만 매도.
     """
     positions = load_positions()
     pos = positions.get(symbol)
@@ -149,7 +184,7 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
         positions[symbol]["peak_price"] = peak_price
         save_positions(positions)
 
-    # ── 1. 손절매: ATR 기반 or 고정 비율 ──
+    # ── 1. 손절매: ATR 기반 or 고정 비율 (전량 매도) ──
     if atr > 0 and buy_price > 0:
         stop_distance = atr * ATR_STOP_MULTIPLIER
         stop_price = buy_price - stop_distance
@@ -161,7 +196,14 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
         if pnl_pct <= STOP_LOSS_PCT:
             return True, f"손절매 ({pnl_pct:+.1%} ≤ {STOP_LOSS_PCT:.0%})"
 
-    # ── 2. 추적 손절: ATR 기반 or 고정 비율 ──
+    # ── 2. 분할 매도: +3% 도달 시 50% 1차 익절 (나머지는 추적 손절로) ──
+    if not pos.get("partial_sold") and pnl_pct >= PARTIAL_PROFIT_TRIGGER:
+        positions[symbol]["partial_sold"] = True
+        save_positions(positions)
+        return True, (f"[분할] 1차 익절 ({pnl_pct:+.1%} ≥ {PARTIAL_PROFIT_TRIGGER:.0%}, "
+                      f"보유분의 {PARTIAL_SELL_RATIO:.0%} 매도)")
+
+    # ── 3. 추적 손절: ATR 기반 or 고정 비율 (잔여분 전량) ──
     if atr > 0 and buy_price > 0:
         trailing_activate_price = buy_price + atr * ATR_TRAILING_ACTIVATE
         if peak_price >= trailing_activate_price:
@@ -178,20 +220,25 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
                 return True, (f"추적 손절 (고점 {peak_price:,}원에서 "
                               f"{drop_from_peak:+.1%} 하락, 수익 {pnl_pct:+.1%})")
 
-    # ── 3. 동적 ROI: 보유 시간별 최소 수익률 ──
+    # ── 4. 동적 ROI: 보유 시간별 최소 수익률 ──
     if pnl_pct > 0:
         for minutes, min_roi in ROI_TABLE:
             if hold_minutes >= minutes and pnl_pct >= min_roi:
                 return True, (f"ROI 청산 ({hold_minutes:.0f}분 보유, "
                               f"수익 {pnl_pct:+.1%} ≥ {min_roi:.1%})")
 
-    # ── 4. 인버스 ETF 보유기간 강제 청산 ──
+    # ── 5. 인버스 ETF 보유기간 강제 청산 ──
     asset_type = pos.get("asset_type", "long")
     hold_days = pos.get("hold_days", 0)
-    max_hold = pos.get("max_hold_days", 5)
+    max_hold = pos.get("max_hold_days", 15)
     if asset_type.startswith("inverse") and hold_days >= max_hold:
         return True, (f"인버스 보유기간 만료 ({hold_days}/{max_hold}일, "
                       f"{asset_type}, 수익 {pnl_pct:+.1%})")
+
+    # 일반 ETF도 max_hold 초과 시 청산 (추세 종료 간주)
+    if not asset_type.startswith("inverse") and hold_days >= max_hold and pnl_pct < 0.03:
+        return True, (f"최대 보유기간 도달 ({hold_days}/{max_hold}일, "
+                      f"수익 {pnl_pct:+.1%} < +3% — 추세 약화)")
 
     return False, ""
 
@@ -236,8 +283,8 @@ def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
 
     # 적응적 규칙 로드
     rules = _load_hold_rules()
-    min_profit = rules.get("min_profit_to_hold", 0.003)
-    max_hold = rules.get("max_hold_days", pos.get("max_hold_days", 5))
+    min_profit = rules.get("min_profit_to_hold", 0.001)
+    max_hold = rules.get("max_hold_days", pos.get("max_hold_days", 15))
 
     pnl_pct = (current_price - buy_price) / buy_price
     drop_from_peak = (current_price - peak_price) / peak_price if peak_price > 0 else 0
@@ -246,24 +293,24 @@ def should_hold_overnight(symbol: str, current_price: int) -> tuple[bool, str]:
     if hold_days >= max_hold:
         return False, f"최대 보유 일수 도달 ({hold_days}/{max_hold}일)"
 
-    # 손실 중이면 매도 (-0.5% 이하)
-    if pnl_pct < -0.005:
-        return False, f"손실 중 ({pnl_pct:+.1%}), 매도"
+    # 큰 손실 중이면 매도 (-1.5% 이하, 손절은 risk_manager가 별도 처리)
+    if pnl_pct < -0.015:
+        return False, f"손실 확대 ({pnl_pct:+.1%}), 매도"
 
-    # 수익 중이고 고점 대비 적정 범위 → 보유 계속
-    if pnl_pct >= min_profit and drop_from_peak > -0.02:
+    # 수익 중이고 고점 대비 적정 범위 → 보유 계속 (추세추종 원칙)
+    if pnl_pct >= min_profit and drop_from_peak > -0.025:
         pos["hold_days"] = hold_days + 1
         positions[symbol] = pos
         save_positions(positions)
         return True, (f"수익 {pnl_pct:+.1%}, 고점 대비 {drop_from_peak:+.1%} "
                       f"→ 보유 계속 ({hold_days + 1}/{max_hold}일)")
 
-    # 보합이면 1일차까지는 보유, 이후 매도
-    if hold_days < 1 and pnl_pct >= -0.003:
+    # 보합(-0.5%~+0.1%)이면 3일차까지 관찰 (추세 형성 대기)
+    if hold_days < 3 and pnl_pct >= -0.005:
         pos["hold_days"] = hold_days + 1
         positions[symbol] = pos
         save_positions(positions)
-        return True, f"보합 ({pnl_pct:+.1%}), 1일 더 관찰 ({hold_days + 1}/{max_hold}일)"
+        return True, f"보합 ({pnl_pct:+.1%}), 추세 대기 ({hold_days + 1}/{max_hold}일)"
 
     return False, f"보유 조건 미충족 (수익 {pnl_pct:+.1%})"
 

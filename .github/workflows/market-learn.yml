@@ -140,6 +140,7 @@ jobs:
             logs/flow_cache.json
             logs/sector_rotation.json
             logs/tail_risk.json
+            logs/r_multiples.json
           overwrite: true
           retention-days: 180
         if: always()

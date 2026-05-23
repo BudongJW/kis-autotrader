@@ -412,6 +412,20 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
                                  cur_price, strategy="us_etf")
                     continue
 
+            # 펀더멘털 게이트 (개별주만)
+            try:
+                from src.strategies.fundamental_gate import check_fundamentals
+                fund = check_fundamentals(symbol)
+                if not fund.passed:
+                    print(f"    [펀더멘털] {fund.reason}")
+                    log_decision(symbol, name, "skip", fund.reason,
+                                 cur_price, strategy="us_etf")
+                    continue
+                if "통과" in fund.reason:
+                    print(f"    [펀더멘털] {fund.reason}")
+            except Exception:
+                pass
+
             # 매수 수량 계산
             qty = int(budget // cur_price)
             if qty <= 0:

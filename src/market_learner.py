@@ -226,6 +226,66 @@ def optimize_ta_weights(ta_accuracy: dict) -> dict[str, float]:
     return weights
 
 
+def compute_optimal_k(history: pd.DataFrame, k_range: tuple = (0.3, 0.7),
+                      step: float = 0.05, lookback: int = 30) -> dict:
+    """Rolling backtest로 최적 K값을 탐색.
+
+    최근 lookback 거래일 데이터로 각 K에서의 수익률·승률을 시뮬레이션.
+    Returns: {"optimal_k": float, "win_rate": float, "expectancy": float, "detail": str}
+    """
+    if history is None or len(history) < lookback + 5:
+        return {"optimal_k": 0.5, "win_rate": 0, "expectancy": 0,
+                "detail": "데이터 부족, 기본 K=0.5"}
+
+    close = history["close"].astype(float).values
+    high = history["high"].astype(float).values
+    low = history["low"].astype(float).values
+    opn = history["open"].astype(float).values
+
+    best_k, best_exp = 0.5, -999
+    results = {}
+
+    for k_int in range(int(k_range[0] * 100), int(k_range[1] * 100) + 1,
+                        int(step * 100)):
+        k = k_int / 100.0
+        wins, losses = 0, 0
+        pnl_sum = 0.0
+
+        for i in range(-lookback, -1):
+            prev_range = high[i - 1] - low[i - 1]
+            target = opn[i] + prev_range * k
+            if close[i] >= target:
+                ret = (opn[i + 1] - close[i]) / close[i]
+                pnl_sum += ret
+                if ret > 0:
+                    wins += 1
+                else:
+                    losses += 1
+
+        total = wins + losses
+        if total < 3:
+            continue
+        wr = wins / total
+        avg_win = pnl_sum / total if total > 0 else 0
+        exp = wr * abs(avg_win) if avg_win > 0 else avg_win
+        results[k] = {"win_rate": wr, "trades": total, "expectancy": round(pnl_sum / total * 100, 3)}
+
+        if pnl_sum / total > best_exp:
+            best_exp = pnl_sum / total
+            best_k = k
+
+    best_info = results.get(best_k, {})
+    return {
+        "optimal_k": round(best_k, 2),
+        "win_rate": round(best_info.get("win_rate", 0), 3),
+        "expectancy": best_info.get("expectancy", 0),
+        "trades": best_info.get("trades", 0),
+        "detail": (f"Rolling {lookback}일 최적 K={best_k:.2f} "
+                   f"(승률 {best_info.get('win_rate', 0):.0%}, "
+                   f"기대값 {best_info.get('expectancy', 0):+.3f}%)"),
+    }
+
+
 def compute_market_confidence(regime, breadth: dict, sectors: dict) -> float:
     """시장 전체 신뢰도 점수 (0.0 ~ 1.0).
 
@@ -367,27 +427,41 @@ def pre_market(client: KISClient) -> None:
     print("\n[6] strategy.yaml 업데이트...")
 
     if regime:
-        # K값: 시장 환경 기반 동적 조정
+        # K값: 3가지 소스의 가중 평균
         current_k = cfg.get("strategies", {}).get("volatility_breakout", {}).get("k", 0.5)
-        new_k = regime.recommended_k
+        regime_k = regime.recommended_k
+
+        # (1) Rolling backtest 최적 K
+        adaptive_k_info = compute_optimal_k(kospi_hist, lookback=30)
+        adaptive_k = adaptive_k_info["optimal_k"]
+        print(f"\n  [적응 K] {adaptive_k_info['detail']}")
+        diary.record_metric("adaptive_k", adaptive_k)
+        diary.record_metric("adaptive_k_trades", adaptive_k_info.get("trades", 0))
+
+        # (2) 가중 혼합: 레짐 40% + 적응 K 40% + 현재 K 20% (관성)
+        if adaptive_k_info.get("trades", 0) >= 5:
+            blended_k = regime_k * 0.4 + adaptive_k * 0.4 + current_k * 0.2
+        else:
+            blended_k = regime_k * 0.7 + current_k * 0.3
+
         # 급격한 변화 방지: 전일 대비 최대 0.05 변경
-        if abs(new_k - current_k) > 0.05:
-            new_k = current_k + 0.05 * (1 if new_k > current_k else -1)
-        new_k = round(new_k, 2)
+        if abs(blended_k - current_k) > 0.05:
+            blended_k = current_k + 0.05 * (1 if blended_k > current_k else -1)
+        new_k = round(blended_k, 2)
 
         vb = cfg.setdefault("strategies", {}).setdefault("volatility_breakout", {})
         vb["k"] = new_k
-        print(f"  K: {current_k} → {new_k}")
+        print(f"  K: {current_k} → {new_k} (레짐={regime_k}, 적응={adaptive_k})")
 
-        # HMM K값 조정 적용
+        # (3) HMM K값 조정 적용
         if hmm_action:
-            pre_hmm_k = new_k
             new_k = round(new_k * hmm_action["k_adjustment"], 2)
             new_k = max(0.3, min(0.7, new_k))
             vb["k"] = new_k
             print(f"  K (HMM 조정): → {new_k}")
 
-        diary.record_change("전략", "K", old_k, new_k, "시장환경+HMM 동적조정")
+        diary.record_change("전략", "K", old_k, new_k,
+                            f"레짐+적응K+HMM (적응K={adaptive_k}, 승률={adaptive_k_info.get('win_rate', 0):.0%})")
 
         cfg["market_regime"] = {
             "trend": regime.trend,

@@ -35,10 +35,11 @@ from src.strategies.ta_composite import compute_ta_score, TAScore
 from src.bot.runner import fetch_recent_history, get_holding_qty
 from src.tracker import log_trade, get_summary
 from src.risk_manager import (
-    check_stop_loss, check_turbulence, record_buy, remove_position,
-    load_positions, get_kelly_position_size, should_hold_overnight,
+    check_stop_loss, check_turbulence, record_buy, record_pyramid,
+    remove_position,
+    load_positions, save_positions, get_kelly_position_size, should_hold_overnight,
     check_daily_loss_limit, check_max_positions, compute_atr_for_position,
-    get_drawdown_scale,
+    get_drawdown_scale, PARTIAL_SELL_RATIO,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -53,6 +54,7 @@ from src.strategies.bear_strategy import (
 )
 from src.safety import killswitch
 from src.safety.order_gates import check_order
+from src.strategies.r_multiple import log_r_multiple
 from src.utils.logger import log
 
 
@@ -212,6 +214,9 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
                     pnl = (price - buy_p) / buy_p
                     action_type = "held" if hold_d > 0 else "sold_at_open"
                     record_hold_outcome(symbol, hold_d, action_type, buy_p, price, pnl)
+                r_val = log_r_multiple(symbol, price)
+                if r_val is not None:
+                    print(f"    R배수: {r_val:+.2f}R")
                 remove_position(symbol)
                 log.info(f"{label}_sell", symbol=symbol, qty=qty, price=price)
             elif rt == "E":
@@ -222,7 +227,7 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
 
 def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
                         universe_syms: set, dry_run: bool) -> dict[str, int]:
-    """보유 종목에 대해 리스크 체크 (손절/추적손절/ROI). 매도 후 남은 보유분 반환."""
+    """보유 종목에 대해 리스크 체크 (손절/추적손절/분할매도/ROI). 매도 후 남은 보유분 반환."""
     remaining = dict(holdings)
 
     for symbol, qty in holdings.items():
@@ -232,21 +237,38 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
 
         should_sell, reason = check_stop_loss(symbol, price)
         if should_sell:
+            is_partial = reason.startswith("[분할]")
+            sell_qty = max(1, int(qty * PARTIAL_SELL_RATIO)) if is_partial else qty
+
             tag = "ETF" if symbol in universe_syms else "급등주"
-            print(f"  [리스크] {tag} {symbol} {qty}주 @ {price:,}원 — {reason}")
+            label = "분할매도" if is_partial else "리스크"
+            print(f"  [{label}] {tag} {symbol} {sell_qty}/{qty}주 @ {price:,}원 — {reason}")
             if not dry_run:
-                resp = _safe_order_cash(client, symbol, qty, price, "sell")
+                resp = _safe_order_cash(client, symbol, sell_qty, price, "sell")
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, tag, "sell", qty, price)
-                    remove_position(symbol)
-                    remaining.pop(symbol, None)
+                    log_trade(symbol, tag, "sell", sell_qty, price)
+                    if is_partial:
+                        remaining[symbol] = qty - sell_qty
+                        positions = load_positions()
+                        if symbol in positions:
+                            positions[symbol]["qty"] = qty - sell_qty
+                            save_positions(positions)
+                    else:
+                        r_val = log_r_multiple(symbol, price)
+                        if r_val is not None:
+                            print(f"    R배수: {r_val:+.2f}R")
+                        remove_position(symbol)
+                        remaining.pop(symbol, None)
                 elif rt == "E":
                     log.warning("risk_sell_error", symbol=symbol, msg=resp.get("msg1", ""))
             else:
                 print("    (dry-run)")
-                remaining.pop(symbol, None)
+                if not is_partial:
+                    remaining.pop(symbol, None)
+                else:
+                    remaining[symbol] = qty - sell_qty
 
     return remaining
 
@@ -258,10 +280,28 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
     universe_syms = {s["symbol"] for s in universe}
 
     etf_held = {s: q for s, q in holdings.items() if s in universe_syms}
+    # 피라미딩: 기존 보유 중이라도 수익 중이면 추가 매수 허용
+    pyramid_mode = False
     if etf_held:
-        syms = ", ".join(f"{s}({q}주)" for s, q in etf_held.items())
-        print(f"  [ETF] 보유 중: {syms}. 리스크 관리 대기.")
-        return 0
+        positions = load_positions()
+        can_pyramid = False
+        for sym, qty in etf_held.items():
+            pos = positions.get(sym, {})
+            buy_p = pos.get("buy_price", 0)
+            pyramid_count = pos.get("pyramid_count", 0)
+            if buy_p > 0 and pyramid_count < 3:
+                cur_p = get_price(client, sym)
+                pnl = (cur_p - buy_p) / buy_p if buy_p > 0 else 0
+                if pnl >= 0.02:  # +2% 이상 수익 시 피라미딩 가능
+                    can_pyramid = True
+                    print(f"  [피라미딩] {sym} 수익 {pnl:+.1%} — 추가 매수 가능 "
+                          f"({pyramid_count + 1}/3단위)")
+        if not can_pyramid:
+            syms = ", ".join(f"{s}({q}주)" for s, q in etf_held.items())
+            print(f"  [ETF] 보유 중: {syms}. 리스크 관리 대기.")
+            return 0
+        pyramid_mode = True
+        budget = int(budget * 0.5)  # 피라미딩은 반 사이즈
 
     params = load_strategy_params()
     k = params.get("k", 0.5)
@@ -385,19 +425,22 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             print(f"    융합: {fusion.detail}")
 
             if fusion.signal == "SKIP":
-                # C1: 평균회귀 fallback — 변동성 돌파 시그널 없을 때 추가 후보 발굴
-                # 자본 작은 운영자라 sizing은 보수적 (30%)
+                # 평균회귀 fallback — 횡보장(sideways HMM) 전용
                 mr_buy = False
                 try:
-                    from src.strategies.mean_reversion import compute_mean_reversion_signal
-                    mr_sig = compute_mean_reversion_signal(history)
-                    if mr_sig.is_buy and mr_sig.score >= 70:
-                        mr_buy = True
-                        print(f"    [평균회귀] {mr_sig.reason} | score={mr_sig.score} "
-                              f"| RSI={mr_sig.rsi} BB={mr_sig.bb_position_pct}% "
-                              f"VWAP={mr_sig.vwap_deviation_pct:+.1f}%")
-                        # 평균회귀는 작게 진입 (변동성 돌파 대비 신뢰도 낮음)
-                        sizing_ratio = 0.3
+                    hmm_state = cfg.get("market_regime", {}).get("hmm_state", "unknown")
+                    if hmm_state in ("sideways", "low_vol"):
+                        from src.strategies.mean_reversion import compute_mean_reversion_signal
+                        mr_sig = compute_mean_reversion_signal(history)
+                        if mr_sig.is_buy and mr_sig.score >= 70:
+                            mr_buy = True
+                            print(f"    [평균회귀] {mr_sig.reason} | score={mr_sig.score} "
+                                  f"| RSI={mr_sig.rsi} BB={mr_sig.bb_position_pct}% "
+                                  f"VWAP={mr_sig.vwap_deviation_pct:+.1f}%"
+                                  f" (HMM={hmm_state})")
+                            sizing_ratio = 0.3
+                    elif hmm_state not in ("unknown",):
+                        pass  # 추세장에서는 평균회귀 진입 차단
                 except Exception as _mr_e:
                     pass
 
@@ -487,11 +530,17 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                        "atr_at_buy": round(atr_value, 2),
                        "sizing_ratio": round(sizing_ratio, 2)}
 
+            _record_fn = record_pyramid if pyramid_mode else record_buy
+
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
-                record_buy(symbol, cur_price, qty, atr=atr_value)
+                if pyramid_mode:
+                    _record_fn(symbol, cur_price, qty, atr=atr_value)
+                else:
+                    _record_fn(symbol, cur_price, qty, atr=atr_value)
                 log_decision(symbol, name, "buy",
-                             f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})",
+                             f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})"
+                             + (" [피라미딩]" if pyramid_mode else ""),
                              cur_price, qty=qty, strategy="etf", ta_scores=_ta_scores,
                              lgbm_prob=lgbm_prob, extra=_extra)
                 return total
@@ -502,9 +551,13 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
                     log_trade(symbol, name, "buy", qty, cur_price)
-                    record_buy(symbol, cur_price, qty, atr=atr_value)
+                    if pyramid_mode:
+                        _record_fn(symbol, cur_price, qty, atr=atr_value)
+                    else:
+                        _record_fn(symbol, cur_price, qty, atr=atr_value)
                     log_decision(symbol, name, "buy",
-                                 f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})",
+                                 f"융합 {buy_label} ({fusion.final_prob:.0%}, TA={ta.total:+.0f})"
+                                 + (" [피라미딩]" if pyramid_mode else ""),
                                  cur_price, qty=qty, strategy="etf",
                                  ta_scores=_ta_scores,
                                  lgbm_prob=lgbm_prob,
@@ -1077,16 +1130,29 @@ def run_loop(dry_run: bool) -> None:
 
                 should_sell, reason = check_stop_loss(symbol, price)
                 if should_sell:
+                    is_partial = reason.startswith("[분할]")
+                    sell_qty = max(1, int(qty * PARTIAL_SELL_RATIO)) if is_partial else qty
                     tag = "ETF" if symbol in universe_syms else "급등주"
-                    print(f"\n[{now:%H:%M:%S}] [리스크] {tag} {symbol} {qty}주 "
-                          f"@ {price:,}원 — {reason}")
+                    label = "분할매도" if is_partial else "리스크"
+                    print(f"\n[{now:%H:%M:%S}] [{label}] {tag} {symbol} "
+                          f"{sell_qty}/{qty}주 @ {price:,}원 — {reason}")
                     if not dry_run:
-                        resp = _safe_order_cash(client, symbol, qty, price, "sell")
+                        resp = _safe_order_cash(client, symbol, sell_qty, price, "sell")
                         rt = resp.get("rt_cd")
                         print(f"  응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                         if rt == "0":
-                            log_trade(symbol, tag, "sell", qty, price)
-                            remove_position(symbol)
+                            log_trade(symbol, tag, "sell", sell_qty, price)
+                            if is_partial:
+                                holdings[symbol] = qty - sell_qty
+                                positions = load_positions()
+                                if symbol in positions:
+                                    positions[symbol]["qty"] = qty - sell_qty
+                                    save_positions(positions)
+                            else:
+                                r_val = log_r_multiple(symbol, price)
+                                if r_val is not None:
+                                    print(f"  R배수: {r_val:+.2f}R")
+                                remove_position(symbol)
                             risk_sold = True
                         elif rt == "E":
                             log.warning("loop_risk_sell_error", symbol=symbol,
