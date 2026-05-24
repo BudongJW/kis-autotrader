@@ -129,6 +129,9 @@ def run_loop(dry_run: bool) -> None:
             print("  full_stop → 미국장 봇 진입 안 함. 종료.")
             return
 
+    wait_start = time_mod.time()
+    MAX_WAIT_SECONDS = 7200  # 개장 대기 최대 2시간
+
     while True:
         now = _now()
         t = now.time()
@@ -139,6 +142,11 @@ def run_loop(dry_run: bool) -> None:
             print(f"\n⚠️  [{now:%H:%M:%S}] Killswitch full_stop. 루프 종료.")
             break
 
+        # ── 주말 체크 (토·일 = 5, 6) ──
+        if now.weekday() >= 5:
+            print(f"[{now:%H:%M:%S}] 주말 — 미국장 휴장. 종료.")
+            break
+
         # ── 개장 전: 대기 ──
         if not _time_in_range(t, open_t, close_t):
             # 이미 한 바퀴 돌았다면 (폐장 이후) → 종료
@@ -146,7 +154,12 @@ def run_loop(dry_run: bool) -> None:
                 print(f"\n[{now:%H:%M:%S}] 미국장 폐장. 루프 종료.")
                 break
 
-            # 개장 대기
+            # 개장 대기 — 최대 2시간
+            waited = epoch_now - wait_start
+            if waited > MAX_WAIT_SECONDS:
+                print(f"[{now:%H:%M:%S}] 개장 대기 {waited/60:.0f}분 초과. 종료.")
+                break
+
             print(f"[{now:%H:%M:%S}] 미국장 개장 대기 ({open_t.strftime('%H:%M')} KST)")
             time_mod.sleep(60)
             continue
