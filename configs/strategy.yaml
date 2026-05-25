@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.56
+    k: 0.55
     trend_ma: 15
     optimized_at: '2026-05-24'
     train_sharpe: 2.69
@@ -147,7 +147,7 @@ market_regime:
   volatility: normal
   trend_score: 0.443
   vol_percentile: 70.0
-  analyzed_at: 2026-05-25 10:31
+  analyzed_at: 2026-05-25 20:16
   hmm_state: sideways
   hmm_confidence: 0.9662736452661156
   hmm_transition:
