@@ -491,8 +491,21 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
             qty = int(budget * 0.999 * sizing_ratio // cur_price)
             if qty <= 0:
-                print(f"    매수 불가 (예산 {budget:,}원×{sizing_ratio:.0%}, 주가 {cur_price:,}원)")
-                continue
+                # 소액 자본 최소 1주 보장: 강한 신호(돌파 + 융합 65%↑)면 1주 매수 허용
+                # 단 cash의 30% 이내, 그리고 universe당 최대 1주 (자본 분산)
+                strong_signal = breakout_passed and fusion.final_prob >= 0.65
+                single_share_cost = int(cur_price * 1.001)  # 수수료 여유
+                # 사용 가능 cash 확인 (budget이 아닌 전체 예수금 기준)
+                avail_cash = get_available_cash(client)
+                max_single_position = int(avail_cash * 0.30)
+                if (strong_signal and single_share_cost <= max_single_position
+                        and single_share_cost <= avail_cash):
+                    qty = 1
+                    print(f"    [최소1주] 강신호 (돌파+융합 {fusion.final_prob:.0%}) — 1주 매수 허용")
+                    print(f"    예산: {single_share_cost:,}원 / 가용: {avail_cash:,}원")
+                else:
+                    print(f"    매수 불가 (예산 {budget:,}원×{sizing_ratio:.0%}, 주가 {cur_price:,}원)")
+                    continue
 
             # 호가 임밸런스 timing filter — 매수 직전 호가 약세면 SKIP
             try:
@@ -1320,7 +1333,9 @@ def run_loop(dry_run: bool) -> None:
 
             # Kelly Criterion: 전체 자본 대비 최적 투입 비율
             kelly_f = get_kelly_position_size("combined")
-            kelly_cap = max(int(cash * kelly_f), int(cash * 0.10))  # 최소 10%
+            # 최소 Kelly 20% 보장 (소액 자본에서 1주도 못 사는 문제 회피)
+            # 강한 신호 시 사이즈 추가 확장은 run_etf_strategy에서 1주 보장 로직으로 처리
+            kelly_cap = max(int(cash * kelly_f), int(cash * 0.20))
             etf_budget_cap = min(cash, kelly_cap)
 
             # 시장 신뢰도 반영 (시즌 필터 적용)

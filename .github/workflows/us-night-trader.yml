@@ -2,20 +2,28 @@ name: US Night Trader
 
 on:
   schedule:
-    # 미국장 개장 직전 (KST 기준) — 월~금 미국장 = UTC 월~금 저녁
-    # 서머타임 (3월 둘째 일요일 ~ 11월 첫째 일요일): 22:30 KST = 13:30 UTC
-    - cron: '25 13 * * 1-5'
-    # 동절기: 23:30 KST = 14:30 UTC
-    - cron: '25 14 * * 1-5'
-    # 봇 내부에서 is_us_market_hours()로 실제 개장 여부 확인 → 비개장 시 즉시 종료
+    # ── 개장 직전 4중 redundancy (GitHub Actions UTC morning cron 지연 대응) ──
+    # 5-26 데이터: 13:30 UTC가 실제로 16:54 UTC 발화 (3h 24m 지연)
+    # → 30분 전부터 여러 번 시도해서 정시 발화 확률 ↑
+    # 서머타임: 22:30 KST 개장
+    - cron: '0 13 * * 1-5'    # 22:00 KST (개장 30분 전)
+    - cron: '15 13 * * 1-5'   # 22:15 KST
+    - cron: '25 13 * * 1-5'   # 22:25 KST
+    - cron: '45 13 * * 1-5'   # 22:45 KST (개장 후 fallback)
+    # 동절기: 23:30 KST 개장
+    - cron: '0 14 * * 1-5'    # 23:00 KST
+    - cron: '25 14 * * 1-5'   # 23:25 KST
+    - cron: '45 14 * * 1-5'   # 23:45 KST
 
-    # 백업: 미국장 중반 (서머타임 KST 01:00 = UTC 16:00, 동절기 KST 02:00 = UTC 17:00)
+    # 백업: 미국장 중반 (서머 01:00 KST, 동절 02:00 KST)
     - cron: '0 16 * * 1-5'
     - cron: '0 17 * * 1-5'
 
-    # 안전망: 미국장 폐장 전 (서머타임 KST 04:30 = UTC 19:30, 동절기 KST 05:30 = UTC 20:30)
+    # 안전망: 미국장 폐장 전 (서머 04:30 KST, 동절 05:30 KST)
     - cron: '30 19 * * 1-5'
     - cron: '30 20 * * 1-5'
+    # 봇 내부에서 is_us_market_hours()로 실제 개장 여부 확인 → 비개장 시 즉시 종료
+    # concurrency: cancel-in-progress: false 라 중복 발화는 큐잉/드롭됨 (서로 안 죽임)
 
   workflow_dispatch:
     inputs:

@@ -466,8 +466,8 @@ def kelly_fraction(win_rate: float, avg_win: float, avg_loss: float,
     if half:
         f_star *= 0.5  # Half-Kelly
 
-    # 상한 클램프: 최대 25% (과도한 집중 방지)
-    return min(f_star, 0.25)
+    # 상한 클램프: 최대 35% (소액 자본에서 1주도 못 사는 문제 완화)
+    return min(f_star, 0.35)
 
 
 def get_kelly_position_size(strategy: str = "combined") -> float:
@@ -483,7 +483,7 @@ def get_kelly_position_size(strategy: str = "combined") -> float:
     from src.tracker import TRADE_LOG_PATH
 
     if not TRADE_LOG_PATH.exists():
-        return 0.10  # 기본값: 10%
+        return 0.20  # 기본값: 20% (거래 이력 없을 때 소액 자본 매수 가능성 확보)
 
     buys: dict[str, list] = {}
     pnl_list: list[float] = []
@@ -511,7 +511,7 @@ def get_kelly_position_size(strategy: str = "combined") -> float:
                     pnl_list.append(pnl_pct)
 
     if len(pnl_list) < 5:
-        return 0.10  # 샘플 부족 → 보수적
+        return 0.20  # 샘플 부족 → 20% (이전 10%는 소액 자본에서 매수 불가)
 
     wins = [p for p in pnl_list if p > 0]
     losses = [p for p in pnl_list if p <= 0]
