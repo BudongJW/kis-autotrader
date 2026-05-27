@@ -49,6 +49,23 @@ EXCHANGE_ORDER_MAP = {
     "AMEX": "AMEX",
 }
 
+# 시세 endpoint(HHDFS*)는 3글자 코드를 요구. 잔고·주문 endpoint(JTTT*)는 4글자.
+# debug 결과 (5-27): NASD로 호출 시 일봉 endpoint가 silent fail로 빈 응답 반환.
+EXCHANGE_QUOTE_MAP = {
+    "NASD": "NAS",   # NASD → NAS (시세 endpoint용)
+    "NYSE": "NYS",
+    "AMEX": "AMS",
+    # 이미 3글자면 그대로 패스
+    "NAS": "NAS",
+    "NYS": "NYS",
+    "AMS": "AMS",
+}
+
+
+def _to_quote_excd(exchange: str) -> str:
+    """시세 endpoint용 3글자 거래소 코드로 정규화."""
+    return EXCHANGE_QUOTE_MAP.get(exchange, exchange)
+
 
 class KISClient:
     """KIS REST API 호출 래퍼. rate limit 자동 적용."""
@@ -235,14 +252,16 @@ class KISClient:
 
         Args:
             symbol: 해외 종목 티커 (예: "AAPL", "QQQ")
-            exchange: NASD / NYSE / AMEX
+            exchange: NASD / NYSE / AMEX (자동으로 3글자로 변환)
         """
+        # 시세 endpoint는 3글자 코드 요구 (NAS/NYS/AMS). 4글자는 silent fail.
+        excd = _to_quote_excd(exchange)
         return self._get(
             "/uapi/overseas-price/v1/quotations/price",
             tr_id=TR_OS_PRICE,
             params={
                 "AUTH": "",
-                "EXCD": exchange,
+                "EXCD": excd,
                 "SYMB": symbol,
             },
         )
@@ -254,17 +273,19 @@ class KISClient:
 
         Args:
             symbol: 해외 종목 티커
-            exchange: NASD / NYSE / AMEX
+            exchange: NASD / NYSE / AMEX (자동으로 3글자로 변환)
             period: D=일, W=주, M=월
             count: 요청 건수 (최대 120)
         """
         from datetime import date
+        # 시세 endpoint는 3글자 코드 요구. 4글자(NASD)는 rt_cd=0이지만 빈 데이터.
+        excd = _to_quote_excd(exchange)
         return self._get(
             "/uapi/overseas-price/v1/quotations/dailyprice",
             tr_id=TR_OS_DAILY,
             params={
                 "AUTH": "",
-                "EXCD": exchange,
+                "EXCD": excd,
                 "SYMB": symbol,
                 "GUBN": "0",     # 0=일, 1=주, 2=월
                 "BYMD": date.today().strftime("%Y%m%d"),
