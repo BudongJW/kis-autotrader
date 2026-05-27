@@ -26,6 +26,8 @@ TR_INQUIRE_BALANCE_LIVE = "TTTC8434R"
 TR_INQUIRE_BALANCE_PAPER = "VTTC8434R"
 TR_INQUIRE_PSBL_ORDER_LIVE = "TTTC8908R"   # 국내 매수가능조회 (실전)
 TR_INQUIRE_PSBL_ORDER_PAPER = "VTTC8908R"  # 국내 매수가능조회 (모의)
+TR_DAILY_CCLD_LIVE = "TTTC8001R"           # 일별 체결·미체결 조회 (실전, 3개월 이내)
+TR_DAILY_CCLD_PAPER = "VTTC8001R"          # 일별 체결·미체결 조회 (모의)
 
 # ── 해외주식 TR_ID ──
 TR_OS_PRICE = "HHDFS00000300"             # 해외주식 현재가
@@ -409,6 +411,46 @@ class KISClient:
                 "FUND_STTL_ICLD_YN": "N",
                 "FNCG_AMT_AUTO_RDPT_YN": "N",
                 "PRCS_DVSN": "01",
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+            },
+        )
+
+    def inquire_daily_ccld(
+        self,
+        start_date: str,
+        end_date: str,
+        symbol: str = "",
+        ccld_type: str = "00",  # 00=전체, 01=체결, 02=미체결
+        side: str = "00",        # 00=전체, 01=매도, 02=매수
+        sort: str = "00",        # 00=역순, 01=정순
+    ) -> dict:
+        """국내 주식 일별 체결·미체결 조회 — 3개월 이내.
+
+        Args:
+            start_date: YYYYMMDD
+            end_date:   YYYYMMDD
+            symbol:     특정 종목 필터 (빈 문자열 = 전체)
+            ccld_type:  00=전체, 01=체결만, 02=미체결만
+            side:       00=전체, 01=매도, 02=매수
+        """
+        tr_id = TR_DAILY_CCLD_LIVE if settings.is_live else TR_DAILY_CCLD_PAPER
+        return self._get(
+            "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+            tr_id=tr_id,
+            params={
+                "CANO": settings.kis_account_no,
+                "ACNT_PRDT_CD": settings.kis_account_prod_code,
+                "INQR_STRT_DT": start_date,
+                "INQR_END_DT": end_date,
+                "SLL_BUY_DVSN_CD": side,
+                "INQR_DVSN": sort,
+                "PDNO": symbol,
+                "CCLD_DVSN": ccld_type,
+                "ORD_GNO_BRNO": "",
+                "ODNO": "",
+                "INQR_DVSN_3": "00",
+                "INQR_DVSN_1": "",
                 "CTX_AREA_FK100": "",
                 "CTX_AREA_NK100": "",
             },
