@@ -523,6 +523,22 @@ def main() -> None:
     # R-multiple summary
     r_summary = get_r_summary()
 
+    # 체결 검증 — trades.csv vs KIS ccld 비교
+    # 5-27 사례: 봇이 매수 기록했는데 KIS가 거부한 경우 자동 감지·정정
+    try:
+        from src.safety.execution_verifier import reconcile_trades
+        recon_trades = reconcile_trades(client)
+        if recon_trades.get("rejected", 0) > 0 or recon_trades.get("mismatches"):
+            print(f"  [체결 검증] reviewed={recon_trades['reviewed']}, "
+                  f"executed={recon_trades['executed']}, "
+                  f"rejected={recon_trades['rejected']}, "
+                  f"pending={recon_trades.get('pending', 0)}")
+            for m in recon_trades.get("mismatches", [])[:5]:
+                print(f"    ⚠️ {m}")
+    except Exception as e:
+        log.warning("execution_verify_failed", error=str(e))
+        recon_trades = {}
+
     # SQLite 원장: 포지션 스냅샷 + 정합성 점검 (KIS 잔고 vs 원장)
     try:
         from src.safety.ledger import snapshot_positions, reconcile

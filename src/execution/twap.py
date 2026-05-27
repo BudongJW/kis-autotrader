@@ -204,8 +204,31 @@ class TWAPEngine:
         now = time.time()
         executed = []
 
+        # 동시호가 시간 진입 시 매수 트랜치 차단 (15:15 이후 신규 매수 거부됨)
+        # KIS는 15:20부터 동시호가 처리. 15:15 이후 매수 주문은 거부될 가능성 큼.
+        # 5-27 사례: 13:48 매수 결정 → TWAP 분할 → 15:20:34 트랜치 실행 → KIS 거부.
+        from datetime import datetime, time as dtime
+        from zoneinfo import ZoneInfo
+        _kst = ZoneInfo("Asia/Seoul")
+        _now_t = datetime.now(_kst).time()
+        _CUTOFF = dtime(15, 15)
+        _block_buy_late = _now_t >= _CUTOFF
+
         for order in self.orders:
             if order.is_complete:
+                continue
+
+            # 15:15 이후 매수 트랜치 자동 차단 (KIS 동시호가 거부 회피)
+            if _block_buy_late and order.side == "buy":
+                # 남은 트랜치를 강제 완료 처리 (skip)
+                pending = [t for t in order.tranches if not t.executed]
+                if pending:
+                    print(f"  [TWAP] {order.name} 매수 트랜치 {len(pending)}개 "
+                          f"15:15 이후 자동 SKIP (동시호가 거부 회피)")
+                    log.warning("twap_late_buy_blocked",
+                                symbol=order.symbol, pending=len(pending))
+                    for t in pending:
+                        t.executed = True  # skip 처리 (완료로 마킹)
                 continue
 
             # 트랜치 간격 체크
