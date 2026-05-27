@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.5
+    k: 0.54
     trend_ma: 15
     optimized_at: '2026-05-24'
     train_sharpe: 2.69
@@ -145,16 +145,16 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.47
-  vol_percentile: 64.0
-  analyzed_at: 2026-05-26 10:25
-  hmm_state: bull
-  hmm_confidence: 0.9858848132660369
+  trend_score: 0.505
+  vol_percentile: 70.0
+  analyzed_at: 2026-05-27 10:32
+  hmm_state: sideways
+  hmm_confidence: 0.946320398735844
   hmm_transition:
-    bull: 7.206469539654581e-12
-    sideways: 0.9999999999927934
-    bear: 8.088987590067689e-20
-market_confidence: 0.9
+    sideways: 6.156250275329202e-07
+    bear: 0.9999993843749717
+    bull: 8.061786729931723e-16
+market_confidence: 0.838
 strong_sectors:
 - 반도체
 - 2차전지
@@ -167,13 +167,12 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  direction: neutral
+  nasdaq_change: 1.19
+  sp500_change: 0.61
+  direction: bullish
+  strength: 0.32
+  confidence_boost: 0.038
   recommended_action: normal
-  nasdaq_change: 0
-  sp500_change: 0
-  strength: 0.0
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
 - symbol: '305720'
   name: KODEX 2차전지
