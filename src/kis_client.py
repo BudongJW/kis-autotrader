@@ -24,6 +24,8 @@ TR_ORDER_CASH_PAPER_BUY = "VTTC0802U"  # 모의 현금 매수
 TR_ORDER_CASH_PAPER_SELL = "VTTC0801U" # 모의 현금 매도
 TR_INQUIRE_BALANCE_LIVE = "TTTC8434R"
 TR_INQUIRE_BALANCE_PAPER = "VTTC8434R"
+TR_INQUIRE_PSBL_ORDER_LIVE = "TTTC8908R"   # 국내 매수가능조회 (실전)
+TR_INQUIRE_PSBL_ORDER_PAPER = "VTTC8908R"  # 국내 매수가능조회 (모의)
 
 # ── 해외주식 TR_ID ──
 TR_OS_PRICE = "HHDFS00000300"             # 해외주식 현재가
@@ -409,5 +411,44 @@ class KISClient:
                 "PRCS_DVSN": "01",
                 "CTX_AREA_FK100": "",
                 "CTX_AREA_NK100": "",
+            },
+        )
+
+    def inquire_psbl_order(
+        self,
+        symbol: str,
+        price: int,
+        order_division: str = "00",
+        include_overseas: str = "N",
+    ) -> dict:
+        """국내 주식 매수가능조회 — 통합증거금 영향 진단용.
+
+        Args:
+            symbol: 종목코드
+            price: 주문 단가
+            order_division: 00=지정가, 01=시장가
+            include_overseas: Y/N — 해외 통합증거금 포함 여부
+
+        주요 응답 필드:
+            ord_psbl_cash: 주문 가능 현금
+            nrcvb_buy_amt: 미수동 매수금액
+            nrcvb_buy_qty: 미수동 매수수량
+            max_buy_amt: 최대 매수금액 (신용 포함)
+            max_buy_qty: 최대 매수수량
+            cma_evlu_amt: CMA 평가금액
+            ovrs_re_use_amt_wcrc: 해외 재사용 가능금액
+        """
+        tr_id = TR_INQUIRE_PSBL_ORDER_LIVE if settings.is_live else TR_INQUIRE_PSBL_ORDER_PAPER
+        return self._get(
+            "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+            tr_id=tr_id,
+            params={
+                "CANO": settings.kis_account_no,
+                "ACNT_PRDT_CD": settings.kis_account_prod_code,
+                "PDNO": symbol,
+                "ORD_UNPR": str(price),
+                "ORD_DVSN": order_division,
+                "CMA_EVLU_AMT_ICLD_YN": "N",
+                "OVRS_ICLD_YN": include_overseas,
             },
         )
