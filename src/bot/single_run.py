@@ -372,8 +372,9 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             breakout_passed = signal.type.value == "BUY"
 
             if not breakout_passed:
-                # 돌파 미통과: TA가 충분히 강하면 융합 평가로 넘김, 아니면 skip
-                if ta.total < 20:
+                # 돌파 미통과: TA 임계값 완화 (was 20 → 5)
+                # 거의 모든 종목이 융합 평가로 진입 → 실제 차단은 fusion에서
+                if ta.total < 5:
                     log_decision(symbol, name, "skip", f"신호 없음: {signal.reason}",
                                  cur_price, strategy="etf", ta_scores=_ta_scores)
                     continue
@@ -432,7 +433,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                     if hmm_state in ("sideways", "low_vol"):
                         from src.strategies.mean_reversion import compute_mean_reversion_signal
                         mr_sig = compute_mean_reversion_signal(history)
-                        if mr_sig.is_buy and mr_sig.score >= 70:
+                        if mr_sig.is_buy and mr_sig.score >= 50:  # was 70 — active mode
                             mr_buy = True
                             print(f"    [평균회귀] {mr_sig.reason} | score={mr_sig.score} "
                                   f"| RSI={mr_sig.rsi} BB={mr_sig.bb_position_pct}% "
@@ -491,20 +492,32 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
             qty = int(budget * 0.999 * sizing_ratio // cur_price)
             if qty <= 0:
-                # 소액 자본 최소 1주 보장: 강한 신호(돌파 + 융합 65%↑)면 1주 매수 허용
-                # 단 cash의 30% 이내, 그리고 universe당 최대 1주 (자본 분산)
-                strong_signal = breakout_passed and fusion.final_prob >= 0.65
-                single_share_cost = int(cur_price * 1.001)  # 수수료 여유
-                # 사용 가능 cash 확인 (budget이 아닌 전체 예수금 기준)
+                # 소액 자본 최소 1주 보장 (active mode 확장):
+                # - 돌파+융합 50%+ 또는 융합 55%+ 또는 TA 25+ → 1주 매수 허용
+                # - 자본 분산: 단일 종목 max 35% of cash
+                medium_signal = (
+                    (breakout_passed and fusion.final_prob >= 0.50)
+                    or fusion.final_prob >= 0.55
+                    or ta.total >= 25
+                )
+                single_share_cost = int(cur_price * 1.001)
                 avail_cash = get_available_cash(client)
-                max_single_position = int(avail_cash * 0.30)
-                if (strong_signal and single_share_cost <= max_single_position
+                max_single_position = int(avail_cash * 0.35)
+                if (medium_signal and single_share_cost <= max_single_position
                         and single_share_cost <= avail_cash):
                     qty = 1
-                    print(f"    [최소1주] 강신호 (돌파+융합 {fusion.final_prob:.0%}) — 1주 매수 허용")
+                    reason_label = (
+                        "강신호 돌파+융합" if (breakout_passed and fusion.final_prob >= 0.65)
+                        else "중간 돌파+융합" if (breakout_passed and fusion.final_prob >= 0.50)
+                        else f"융합 {fusion.final_prob:.0%}" if fusion.final_prob >= 0.55
+                        else f"TA={ta.total:+.0f} 강세"
+                    )
+                    print(f"    [최소1주] {reason_label} (융합 {fusion.final_prob:.0%}, "
+                          f"TA {ta.total:+.0f}, 돌파 {'O' if breakout_passed else 'X'}) — 1주 매수")
                     print(f"    예산: {single_share_cost:,}원 / 가용: {avail_cash:,}원")
                 else:
-                    print(f"    매수 불가 (예산 {budget:,}원×{sizing_ratio:.0%}, 주가 {cur_price:,}원)")
+                    print(f"    매수 불가 (예산 {budget:,}원×{sizing_ratio:.0%}, 주가 {cur_price:,}원, "
+                          f"신호 약함: 융합 {fusion.final_prob:.0%}, TA {ta.total:+.0f})")
                     continue
 
             # 호가 임밸런스 timing filter — 매수 직전 호가 약세면 SKIP

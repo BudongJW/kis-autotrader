@@ -36,7 +36,7 @@ RSI_OVERSOLD = 30           # RSI(7) 이 미만 = 과매도
 BB_LOWER_TOUCH_BP = -150    # BB 하단 -1.5σ 이탈 (basis points 단위)
 VWAP_DEVIATION_BP = -150    # VWAP -1.5% 이탈
 TREND_MA_PERIOD = 60        # 60일 이동평균
-MIN_SCORE_FOR_BUY = 60      # 0-100 점수
+MIN_SCORE_FOR_BUY = 45      # 0-100 점수 (was 60 — active mode 완화)
 
 
 @dataclass

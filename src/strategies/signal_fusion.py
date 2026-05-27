@@ -45,9 +45,10 @@ DEFAULT_WEIGHTS = {
     "bias": -0.1,           # 보수적 바이어스
 }
 
-# 매수 임계값
-BUY_THRESHOLD = 0.55
-STRONG_BUY_THRESHOLD = 0.70
+# 매수 임계값 — active mode (학습 cold start에서 매매 빈도 확보)
+# 거래 데이터 누적되면 점진적으로 보수화하는 방향으로 조정 권장
+BUY_THRESHOLD = 0.48          # was 0.55 — 융합 절반 정도면 매수 시도
+STRONG_BUY_THRESHOLD = 0.62   # was 0.70 — 돌파 미통과여도 융합이 좀 강하면 통과
 
 
 def _sigmoid(x: float) -> float:
