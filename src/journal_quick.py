@@ -528,25 +528,34 @@ def main() -> None:
         "tax_exemption_remaining_krw": 2_500_000,  # 매년 1.1 리셋
     }
 
-    # Performance metrics (computed from daily_history + realized)
+    # Performance metrics (PnL 기반 — 자금 흐름 영향 제거)
+    # 기존 버그: total_value 차이를 returns로 사용 → 입금/이체가 변동성으로 잡힘
+    # Fix: cumul_pnl 변화를 returns로. 거래 0건이면 모두 0.
     perf_metrics = {}
+    INITIAL_CAPITAL = 500_000
     if len(daily_history) >= 5:
-        values = [d["total_value"] for d in daily_history]
-        returns = [(values[i] - values[i-1]) / values[i-1] for i in range(1, len(values)) if values[i-1] > 0]
-        if returns:
+        pnl_series = [d.get("cumul_pnl", 0) for d in daily_history]
+        returns = [
+            (pnl_series[i] - pnl_series[i-1]) / INITIAL_CAPITAL
+            for i in range(1, len(pnl_series))
+        ]
+        # 거래 0건 → returns 전부 0 → 메트릭 전부 0
+        if returns and any(abs(r) > 1e-9 for r in returns):
             import numpy as np
             avg_ret = np.mean(returns)
-            std_ret = np.std(returns) if len(returns) > 1 else 0.001
-            sharpe = round(float(avg_ret / std_ret * np.sqrt(252)), 2) if std_ret > 0 else 0
-            # Max drawdown
-            peak = values[0]
+            std_ret = np.std(returns) if len(returns) > 1 else 0
+            sharpe = round(float(avg_ret / std_ret * np.sqrt(252)), 2) if std_ret > 1e-9 else 0
+            # Max drawdown (cumul_pnl 기반)
+            peak = max(pnl_series[0], 0)
             max_dd = 0
-            for v in values:
+            for v in pnl_series:
                 if v > peak:
                     peak = v
-                dd = (v - peak) / peak
-                if dd < max_dd:
-                    max_dd = dd
+                base = peak + INITIAL_CAPITAL
+                if base > 0:
+                    dd = (v - peak) / base
+                    if dd < max_dd:
+                        max_dd = dd
             # Profit factor
             winning_pnl = sum(r["pnl"] for r in realized if r["pnl"] > 0)
             losing_pnl = abs(sum(r["pnl"] for r in realized if r["pnl"] < 0))
@@ -560,7 +569,17 @@ def main() -> None:
                 "profit_factor": profit_factor,
                 "avg_win_pct": avg_win,
                 "avg_loss_pct": avg_loss,
-                "total_return_pct": round((values[-1] / values[0] - 1) * 100, 2) if values[0] > 0 else 0,
+                "total_return_pct": round(pnl_series[-1] / INITIAL_CAPITAL * 100, 2),
+            }
+        else:
+            # 거래 없음 → 모든 메트릭 0
+            perf_metrics = {
+                "sharpe_ratio": 0,
+                "max_drawdown_pct": 0,
+                "profit_factor": 0,
+                "avg_win_pct": 0,
+                "avg_loss_pct": 0,
+                "total_return_pct": 0,
             }
     # R-multiple summary
     r_summary = get_r_summary()
