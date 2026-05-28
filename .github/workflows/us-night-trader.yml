@@ -2,28 +2,17 @@ name: US Night Trader
 
 on:
   schedule:
-    # ── 개장 직전 4중 redundancy (GitHub Actions UTC morning cron 지연 대응) ──
-    # 5-26 데이터: 13:30 UTC가 실제로 16:54 UTC 발화 (3h 24m 지연)
-    # → 30분 전부터 여러 번 시도해서 정시 발화 확률 ↑
-    # 서머타임: 22:30 KST 개장
-    - cron: '0 13 * * 1-5'    # 22:00 KST (개장 30분 전)
-    - cron: '15 13 * * 1-5'   # 22:15 KST
-    - cron: '25 13 * * 1-5'   # 22:25 KST
-    - cron: '45 13 * * 1-5'   # 22:45 KST (개장 후 fallback)
-    # 동절기: 23:30 KST 개장
-    - cron: '0 14 * * 1-5'    # 23:00 KST
-    - cron: '25 14 * * 1-5'   # 23:25 KST
-    - cron: '45 14 * * 1-5'   # 23:45 KST
-
-    # 백업: 미국장 중반 (서머 01:00 KST, 동절 02:00 KST)
-    - cron: '0 16 * * 1-5'
-    - cron: '0 17 * * 1-5'
-
-    # 안전망: 미국장 폐장 전 (서머 04:30 KST, 동절 05:30 KST)
-    - cron: '30 19 * * 1-5'
-    - cron: '30 20 * * 1-5'
+    # public repo라 분 한도 무제한. 매 5분 watchdog cron으로 dead time 최소화.
+    # concurrency cancel-in-progress: false → 진행 중 loop가 있으면 새 cron은 큐잉/드롭.
+    #
+    # Pre-open (서머/동절 모두 커버, UTC 12:30~14:30)
+    - cron: '30,50 12 * * 1-5'    # 21:30, 21:50 KST
+    - cron: '10 13 * * 1-5'       # 22:10 KST
+    # 미국장 본세션 watchdog (서머 22:30~05:00 KST = UTC 13:30~20:00)
+    # 동절 23:30~06:00 KST = UTC 14:30~21:00 → 양쪽 다 커버
+    - cron: '*/5 13-20 * * 1-5'   # UTC 13:00~20:55 매 5분
+    - cron: '*/15 21 * * 1-5'     # UTC 21:00~21:45 (동절 마감 직전)
     # 봇 내부에서 is_us_market_hours()로 실제 개장 여부 확인 → 비개장 시 즉시 종료
-    # concurrency: cancel-in-progress: false 라 중복 발화는 큐잉/드롭됨 (서로 안 죽임)
 
   workflow_dispatch:
     inputs:
@@ -32,15 +21,15 @@ on:
         required: false
         default: 'false'
       mode:
-        description: 'loop (연속감시) / once (1회)'
+        description: 'loop (연속감시) / once (1회) / refresh (대시보드만)'
         required: false
         default: 'loop'
 
+# mode별로 concurrency 그룹 분리 → portfolio refresh가 진행 중 loop 살해 X
 concurrency:
-  group: us-night-trader
-  # 모든 cron이 시장 중에 발화하므로 진행 중 봇을 cancel하면 거래 세션 중단됨.
-  # false로 두면 중복 cron은 큐잉/드롭되어 진행 중 봇이 안전하게 완주.
-  cancel-in-progress: false
+  group: us-night-trader-${{ github.event.inputs.mode || 'loop' }}
+  # loop는 안 죽임, once/refresh는 사용자가 의도적으로 새로고침
+  cancel-in-progress: ${{ github.event.inputs.mode != 'loop' && github.event.inputs.mode != '' }}
 
 env:
   TZ: Asia/Seoul
