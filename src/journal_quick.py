@@ -565,6 +565,13 @@ def main() -> None:
     except Exception:
         ks_status = {"active": False, "mode": "off"}
 
+    # 거부된 주문 (execution_verifier가 잡은 rejected) — SQLite ledger에서 최근 30건
+    try:
+        from src.safety.ledger import get_recent_orders
+        rejected_orders = get_recent_orders(limit=30, status="rejected")
+    except Exception:
+        rejected_orders = []
+
     portfolio = {
         "updated_at": now.isoformat(),
         "initial_capital": 500000,
@@ -585,6 +592,7 @@ def main() -> None:
         "win_rate": win_rate,
         "trades": all_trades[-50:],
         "realized": realized[-30:],
+        "rejected_orders": rejected_orders,
         "today_summary": today_summary,
         "costs": costs_summary,
         "performance": perf_metrics,
