@@ -322,15 +322,45 @@ def main() -> None:
     except Exception:
         pass
 
+    # 진짜 PnL 계산 — 자금 흐름(입금·이체·계좌변경) 분리
+    # day_pnl = 오늘 실현 손익 + 미실현 평가 변화 (잔고 차이 X)
+    # cumul_pnl = 전체 실현 손익 + 현재 미실현 손익
+    # net_deposit = 잔고와 PnL 차이 (참고용, 입금·출금 합계 추정)
+
+    # trades.csv 기반 실현/미실현 사전 계산 (day_pnl 계산용)
+    _trades_for_pnl = _load_trades()
+    _realized_for_pnl = _compute_realized_trades(_trades_for_pnl)
+    _realized_pnl_pre = sum(r["pnl"] for r in _realized_for_pnl)
+    _unrealized_pnl_pre = sum(h.get("pnl", 0) for h in holdings)
+    _today_sum_pre = _compute_today_summary(_trades_for_pnl, _realized_for_pnl)
+    _today_realized_net = _today_sum_pre.get("realized_pnl_net", 0) or 0
+
+    # 어제 entry에서 미실현 손익 회수 (없으면 0)
+    prev_entry = None
+    if daily_history and daily_history[-1].get("date") != today_str:
+        prev_entry = daily_history[-1]
+    prev_unrealized = prev_entry.get("unrealized_pnl", 0) if prev_entry else 0
+
+    # 오늘 day_pnl = 오늘 실현 + 미실현 변화
+    unrealized_change = _unrealized_pnl_pre - prev_unrealized
+    real_day_pnl = _today_realized_net + unrealized_change
+
+    # 누적 PnL = 전체 실현 + 현재 미실현 (initial_capital 무관)
+    real_cumul_pnl = _realized_pnl_pre + _unrealized_pnl_pre
+
+    # 자금 흐름 추정 (참고용, PnL 아님)
+    net_deposit = total_value - 500_000 - real_cumul_pnl
+
     today_entry = {
         "date": today_str,
         "total_value": total_value,
         "cash": cash,
         "holdings_value": holdings_value,
-        "day_pnl": total_value - (daily_history[-1]["total_value"]
-                                   if daily_history and daily_history[-1]["date"] != today_str
-                                   else 500000),
-        "cumul_pnl": total_value - 500000,
+        "day_pnl": real_day_pnl,                 # 진짜 일별 손익 (자금 흐름 제외)
+        "cumul_pnl": real_cumul_pnl,             # 진짜 누적 손익
+        "realized_pnl": _realized_pnl_pre,       # 누적 실현 손익
+        "unrealized_pnl": _unrealized_pnl_pre,   # 현재 미실현 손익
+        "net_deposit": net_deposit,              # 추정 입금/이체 합계 (참고)
         "regime": regime_info.get("trend", "unknown"),
         "hmm_state": regime_info.get("hmm_state", "unknown"),
         "confidence": confidence,
@@ -341,6 +371,18 @@ def main() -> None:
         daily_history[-1] = today_entry
     else:
         daily_history.append(today_entry)
+
+    # 과거 daily_history 정정 — 자금 흐름이 PnL로 잘못 잡힌 케이스 정리
+    # 5-12 ~ 5-28 사이의 비정상 entry 제거 (계좌 이전·휴장·입금일에 ±수십만 PnL)
+    # 거래 0건이면 PnL은 모두 0
+    if _realized_pnl_pre == 0 and _unrealized_pnl_pre == 0:
+        for entry in daily_history[:-1]:  # 오늘 외 과거
+            if entry.get("date") != today_str:
+                entry["day_pnl"] = 0
+                entry["cumul_pnl"] = 0
+                # realized/unrealized 필드가 없으면 0 추가 (backwards compat)
+                entry.setdefault("realized_pnl", 0)
+                entry.setdefault("unrealized_pnl", 0)
 
     # Kelly & Drawdown
     kelly_combined = 0.10
