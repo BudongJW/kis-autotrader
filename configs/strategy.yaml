@@ -164,12 +164,13 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 0.91
-  sp500_change: 0.58
-  direction: bullish
-  strength: 0.26
-  confidence_boost: 0.031
+  direction: neutral
   recommended_action: normal
+  nasdaq_change: 0.33
+  sp500_change: 0
+  strength: 0.05
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: '305720'
   name: KODEX 2차전지
