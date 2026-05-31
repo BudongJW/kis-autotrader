@@ -3,16 +3,16 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.37
-    trend_ma: 15
-    optimized_at: '2026-05-24'
-    train_sharpe: 2.69
+    k: 0.6000000000000001
+    trend_ma: 10
+    optimized_at: '2026-05-31'
+    train_sharpe: 2.61
     train_return: 14.32
     train_mdd: -4.2
-    val_sharpe: 5.41
-    val_return: 8.49
-    val_mdd: -1.21
-    backtest_sharpe: 2.69
+    val_sharpe: 5.25
+    val_return: 9.69
+    val_mdd: -1.22
+    backtest_sharpe: 2.61
     backtest_return: 14.32
     backtest_mdd: -4.2
   ta_weights:
@@ -145,15 +145,9 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.555
-  vol_percentile: 62.0
-  analyzed_at: 2026-05-29 10:30
-  hmm_state: bull
-  hmm_confidence: 0.8223749354876397
-  hmm_transition:
-    sideways: 0.915595027640081
-    bull: 0.04736772021140325
-    bear: 0.03703725214851559
+  trend_score: 0.629
+  vol_percentile: 60.0
+  analyzed_at: '2026-05-31'
 market_confidence: 0.671
 strong_sectors:
 - 반도체
