@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.55
+    k: 0.5
     trend_ma: 10
     optimized_at: '2026-05-31'
     train_sharpe: 2.61
@@ -145,19 +145,18 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.572
-  vol_percentile: 40.0
-  analyzed_at: 2026-06-01 10:37
+  trend_score: 0.573
+  vol_percentile: 42.0
+  analyzed_at: 2026-06-01 21:46
   hmm_state: sideways
-  hmm_confidence: 0.9999978057974402
+  hmm_confidence: 0.9999984924488666
   hmm_transition:
-    bear: 0.017839532126730385
-    bull: 2.752113747662935e-06
-    sideways: 0.9821577157595219
-market_confidence: 0.64
+    bear: 0.01783402737940386
+    bull: 1.7913365901244993e-06
+    sideways: 0.982164181284006
+market_confidence: 0.62
 strong_sectors:
 - 반도체
-- 2차전지
 - 자동차
 - 금융
 - IT
@@ -171,8 +170,6 @@ overnight_signal:
   confidence_boost: 0
   recommended_action: normal
 dynamic_universe:
-- symbol: '305720'
-  name: KODEX 2차전지
 - symbol: 091180
   name: KODEX 자동차
 - symbol: '102110'
