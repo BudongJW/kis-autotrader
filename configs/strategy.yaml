@@ -163,12 +163,13 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 0.2
-  sp500_change: 0.22
   direction: neutral
-  strength: 0.1
-  confidence_boost: 0
   recommended_action: normal
+  nasdaq_change: 0.24
+  sp500_change: 0
+  strength: 0.04
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091180
   name: KODEX 자동차
