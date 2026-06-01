@@ -5,8 +5,8 @@
   (기본)     : 1회 체크 후 종료.
 
 전략: 변동성 돌파 + TA (us_session.py 전략 모듈)
-  - QQQ/SPY/SQQQ/SOXL/TLT 유니버스
-  - 한국장 레짐 연동 (bear → SQQQ 우선)
+  - QQQ/SPY/SH/SMH/TLT 유니버스
+  - 한국장 레짐 연동 (bear → SH 우선)
   - USD 기준 손절/추적손절
 
 리스크 관리 (1분마다 체크):
@@ -46,6 +46,9 @@ STRATEGY_CHECK_EARLY = 120      # 개장 초반: 2분
 EARLY_SESSION_MINUTES = 30      # 개장 후 30분까지 '초반'
 # 폐장 전 청산 시점
 CLOSE_BEFORE_MINUTES = 15       # 폐장 15분 전 청산 시작
+# 개장 직전 대기 허용 한도. 다음 개장까지 이보다 더 남았으면(장외 dead zone)
+# 대기 없이 즉시 종료한다. pre-open cron(개장 60분 전부터)은 모두 커버.
+PREOPEN_WAIT_LIMIT_MIN = 120
 
 
 def _now() -> datetime:
@@ -154,6 +157,14 @@ def run_loop(dry_run: bool) -> None:
                 print(f"\n[{now:%H:%M:%S}] 미국장 폐장. 루프 종료.")
                 break
 
+            # 장외 dead zone: 폐장 후 깬 watchdog run은 다음 개장까지 한참 남음.
+            # 의미 없이 2시간 idle하지 말고 즉시 종료. 정당한 pre-open 대기만 허용.
+            mins_to_open = _minutes_until_open(now, open_t)
+            if mins_to_open > PREOPEN_WAIT_LIMIT_MIN:
+                print(f"\n[{now:%H:%M:%S}] 장외 시간 — 개장({open_t.strftime('%H:%M')} KST)까지 "
+                      f"{mins_to_open / 60:.1f}h. 대기 없이 종료.")
+                break
+
             # 개장 대기 — 최대 2시간
             waited = epoch_now - wait_start
             if waited > MAX_WAIT_SECONDS:
@@ -215,6 +226,15 @@ def run_loop(dry_run: bool) -> None:
     # 루프 종료 후 최종 저널 업데이트
     _update_journal()
     print(f"\n[US Night Loop] 종료. {'=' * 40}")
+
+
+def _minutes_until_open(now: datetime, open_t: dtime) -> float:
+    """다음 개장까지 남은 분. 오늘 개장 시각이 이미 지났으면 내일 개장 기준."""
+    open_dt = now.replace(hour=open_t.hour, minute=open_t.minute,
+                          second=0, microsecond=0)
+    if open_dt <= now:
+        open_dt += timedelta(days=1)
+    return (open_dt - now).total_seconds() / 60
 
 
 def _get_close_datetime(now: datetime, close_t: dtime) -> datetime:

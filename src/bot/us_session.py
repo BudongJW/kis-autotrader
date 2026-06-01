@@ -6,7 +6,7 @@
 
 전략: 변동성 돌파 + TA 복합 점수 (국내 ETF와 동일 로직)
   - 미국 ETF(QQQ, SPY 등)에 변동성 돌파 적용
-  - 한국장 레짐이 bear면 인버스 ETF(SQQQ) 우선
+  - 한국장 레짐이 bear면 인버스 ETF(SH) 우선
 
 리스크:
   - USD 기준 손절 -2.5%
@@ -92,7 +92,30 @@ def get_us_market_times() -> tuple[dtime, dtime]:
 
 def fetch_us_history(client: KISClient, symbol: str, exchange: str = "NASD",
                      days: int = 70) -> pd.DataFrame:
-    """해외주식 일별 시세를 DataFrame으로 변환."""
+    """해외주식 일별 시세를 DataFrame으로 변환.
+
+    1차: KIS 해외 일봉 endpoint.
+    2차(폴백): KIS가 빈 데이터/오류를 반환하면 yfinance로 OHLCV 조회.
+      (yfinance는 requirements에 포함. 신호 생성용 일봉만 쓰고, 실제 주문가는
+       KIS 현재가(get_us_price)를 그대로 사용하므로 가격 정합성 문제 없음.)
+    """
+    try:
+        df = _fetch_us_history_kis(client, symbol, exchange, days)
+        if df is not None and len(df) >= 5:
+            return df
+        log.warning("us_daily_kis_empty_fallback_yf", symbol=symbol)
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_daily_kis_failed_fallback_yf", symbol=symbol, error=str(e))
+
+    df = _fetch_us_history_yf(symbol, days)
+    if df is None or df.empty:
+        raise RuntimeError(f"해외 일봉 데이터 비어있음 (KIS+yfinance): {symbol}")
+    return df
+
+
+def _fetch_us_history_kis(client: KISClient, symbol: str, exchange: str,
+                          days: int) -> pd.DataFrame | None:
+    """KIS 해외 일봉 조회. 빈 데이터면 None (rt_cd!=0이면 RuntimeError)."""
     resp = client.get_overseas_daily_price(symbol, exchange=exchange)
     if resp.get("rt_cd") != "0":
         raise RuntimeError(f"해외 일봉 실패: {resp.get('msg1', 'unknown')}")
@@ -101,7 +124,7 @@ def fetch_us_history(client: KISClient, symbol: str, exchange: str = "NASD",
     if not rows:
         log.warning("us_daily_empty", symbol=symbol, rt_cd=resp.get("rt_cd"),
                      msg=resp.get("msg1", ""), output1_keys=list(resp.get("output1", {}).keys()) if resp.get("output1") else None)
-        raise RuntimeError(f"해외 일봉 데이터 비어있음: {symbol}")
+        return None
 
     df = pd.DataFrame(rows)
     # KIS 해외 일봉 컬럼: xymd(날짜), open, high, low, clos(종가), tvol(거래량)
@@ -122,6 +145,35 @@ def fetch_us_history(client: KISClient, symbol: str, exchange: str = "NASD",
     df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
     df = df.sort_values("date").set_index("date")
     return df[["open", "high", "low", "close", "volume"]].tail(days)
+
+
+def _fetch_us_history_yf(symbol: str, days: int = 70) -> pd.DataFrame | None:
+    """yfinance 폴백 — 미국 일봉 OHLCV. 실패 시 None."""
+    try:
+        import yfinance as yf
+
+        period_days = max(days * 2, 120)  # 여유 조회 후 tail
+        df = yf.download(symbol, period=f"{period_days}d", interval="1d",
+                         auto_adjust=True, progress=False)
+        if df is None or df.empty:
+            return None
+        # yfinance 신버전은 단일 티커도 MultiIndex 컬럼을 줄 수 있음 → 평탄화
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.rename(columns={
+            "Open": "open", "High": "high", "Low": "low",
+            "Close": "close", "Volume": "volume",
+        })
+        cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+        if "close" not in cols:
+            return None
+        df = df[cols].copy()
+        df.index = pd.to_datetime(df.index)
+        df.index.name = "date"
+        return df.tail(days)
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_daily_yf_failed", symbol=symbol, error=str(e))
+        return None
 
 
 def get_us_price(client: KISClient, symbol: str, exchange: str = "NASD") -> float:
@@ -362,7 +414,7 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
                     bear_state = json.load(f)
                 if bear_state.get("regime") in ("BEAR", "CRISIS"):
                     prefer_inverse = True
-                    print(f"  [US] 한국장 {bear_state['regime']} → 인버스(SQQQ) 우선")
+                    print(f"  [US] 한국장 {bear_state['regime']} → 인버스(SH) 우선")
         except Exception:
             pass
 

@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 from src.utils.logger import log
 
-ETF_TICKERS = {"QQQ", "SPY", "SQQQ", "TLT", "GLD", "SHY", "IEF", "TQQQ"}
+ETF_TICKERS = {"QQQ", "SPY", "SH", "SMH", "TLT", "GLD", "SHY", "IEF",
+               "SQQQ", "TQQQ", "SOXL"}
 
 
 @dataclass

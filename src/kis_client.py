@@ -234,13 +234,18 @@ class KISClient:
                 order_type = "00"
                 print(f"  [주문] 15:20 이후 → 지정가 전환 ({symbol} @ {price:,}원)")
 
+        # 시장가(01)는 KIS가 ORD_UNPR="0"을 요구한다.
+        # 0이 아닌 단가를 보내면 rt_cd=7 "주문단가를 0으로 입력하세요"로 전량 거부됨
+        # (호출부가 사이징/안전체크용 price를 넘기는데, 시장가엔 단가를 실으면 안 됨).
+        # 지정가(00)만 단가를 싣고, 원화 단가는 정수여야 하므로 int로 정규화.
+        ord_unpr = "0" if order_type == "01" else str(int(round(price)))
         body = {
             "CANO": settings.kis_account_no,
             "ACNT_PRDT_CD": settings.kis_account_prod_code,
             "PDNO": symbol,
             "ORD_DVSN": order_type,
             "ORD_QTY": str(qty),
-            "ORD_UNPR": str(price),
+            "ORD_UNPR": ord_unpr,
         }
         return self._safe_post(
             "/uapi/domestic-stock/v1/trading/order-cash",
@@ -281,9 +286,14 @@ class KISClient:
             period: D=일, W=주, M=월
             count: 요청 건수 (최대 120)
         """
-        from datetime import date
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
         # 시세 endpoint는 3글자 코드 요구. 4글자(NASD)는 rt_cd=0이지만 빈 데이터.
         excd = _to_quote_excd(exchange)
+        # BYMD(조회 기준일)는 미국 동부 기준 오늘로 설정.
+        # KST date.today()는 한국 야간 세션 동안 미국보다 하루 앞서가서
+        # KIS가 "미래 일자"로 인식 → rt_cd=0인데 output2 빈 데이터(nrec=0) 반환.
+        bymd = _dt.now(_ZI("America/New_York")).strftime("%Y%m%d")
         return self._get(
             "/uapi/overseas-price/v1/quotations/dailyprice",
             tr_id=TR_OS_DAILY,
@@ -292,7 +302,7 @@ class KISClient:
                 "EXCD": excd,
                 "SYMB": symbol,
                 "GUBN": "0",     # 0=일, 1=주, 2=월
-                "BYMD": date.today().strftime("%Y%m%d"),
+                "BYMD": bymd,
                 "MODP": "1",     # 1=수정주가 반영
                 "KEYB": "",
             },

@@ -126,3 +126,55 @@ def test_killswitch_workflow_uses_safe_choice_names():
     # YAML boolean 키워드 미사용 확인 (단독 라인의 '- on' 등)
     assert "\n          - on\n" not in text
     assert "\n          - off\n" not in text
+
+
+# ──────────────────────────────────────────────────────────
+# 버그 #6: 시장가 주문에 단가를 실어 rt_cd=7 전량 거부
+# (6-01 발견 — 한 주 내내 국장 매매 0건의 진짜 원인.
+#  _safe_order_cash가 order_type 미지정 → 기본 "01"(시장가)인데
+#  price를 함께 전달 → KIS "주문단가를 0으로 입력하세요" 거부)
+# ──────────────────────────────────────────────────────────
+
+def _make_client_capturing_body():
+    """auth 없이 KISClient를 만들고 _safe_post가 body를 캡처하도록."""
+    from src.kis_client import KISClient
+
+    client = KISClient.__new__(KISClient)  # __init__(인증) 우회
+    captured = {}
+
+    def _fake_post(path, tr_id=None, body=None):
+        captured.clear()
+        captured.update(body or {})
+        return {"rt_cd": "0", "msg1": "ok"}
+
+    client._safe_post = _fake_post
+    return client, captured
+
+
+def test_market_order_sends_zero_price():
+    """시장가(01) 주문은 ORD_UNPR='0'이어야 한다 (가격을 넘겨도 무시)."""
+    client, captured = _make_client_capturing_body()
+    client.order_cash("091180", qty=1, price=40975, side="buy", order_type="01")
+    # 15:20 이전이면 시장가 그대로 → 단가 0,
+    # 15:20 이후 자동 지정가 전환되면 DVSN=00 + 단가=가격. 둘 다 정합해야 함.
+    if captured["ORD_DVSN"] == "01":
+        assert captured["ORD_UNPR"] == "0", "시장가인데 0이 아닌 단가 → rt_cd=7 거부"
+    else:
+        assert captured["ORD_DVSN"] == "00"
+        assert captured["ORD_UNPR"] == "40975"
+
+
+def test_limit_order_sends_price():
+    """지정가(00) 주문은 ORD_UNPR=정수 단가를 실어야 한다."""
+    client, captured = _make_client_capturing_body()
+    client.order_cash("091180", qty=1, price=40975, side="buy", order_type="00")
+    assert captured["ORD_DVSN"] == "00"
+    assert captured["ORD_UNPR"] == "40975"
+
+
+def test_limit_order_float_price_normalized_to_int():
+    """float 단가(40975.0)도 정수 문자열 '40975'로 정규화 (소수점 거부 회피)."""
+    client, captured = _make_client_capturing_body()
+    client.order_cash("091180", qty=1, price=40975.0, side="buy", order_type="00")
+    assert captured["ORD_UNPR"] == "40975"
+    assert "." not in captured["ORD_UNPR"]

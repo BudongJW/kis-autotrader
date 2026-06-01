@@ -96,14 +96,16 @@ us_session:
   - symbol: SPY
     name: SPDR S&P 500
     exchange: NYSE
-  - symbol: SQQQ
-    name: ProShares UltraPro Short QQQ (3x inverse)
-    exchange: NASD
+  # 레버리지 ETP 금지(CLAUDE.md #6) → 1x로 교체.
+  # SQQQ(3x inverse) → SH(1x inverse), SOXL(3x bull) → SMH(1x semi).
+  - symbol: SH
+    name: ProShares Short S&P500 (1x inverse)
+    exchange: NYSE
     type: inverse
     max_hold_days: 5
-  - symbol: SOXL
-    name: Direxion Semiconductor Bull 3X
-    exchange: NYSE
+  - symbol: SMH
+    name: VanEck Semiconductor ETF (1x)
+    exchange: NASD
   - symbol: TLT
     name: iShares 20+ Year Treasury Bond
     exchange: NASD
