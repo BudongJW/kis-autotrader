@@ -96,8 +96,6 @@ us_session:
   - symbol: SPY
     name: SPDR S&P 500
     exchange: NYSE
-  # 레버리지 ETP 금지(CLAUDE.md #6) → 1x로 교체.
-  # SQQQ(3x inverse) → SH(1x inverse), SOXL(3x bull) → SMH(1x semi).
   - symbol: SH
     name: ProShares Short S&P500 (1x inverse)
     exchange: NYSE
@@ -147,32 +145,33 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.573
-  vol_percentile: 42.0
-  analyzed_at: 2026-06-01 21:46
+  trend_score: 0.592
+  vol_percentile: 50.0
+  analyzed_at: 2026-06-02 10:43
   hmm_state: sideways
-  hmm_confidence: 0.9999984924488666
+  hmm_confidence: 0.9218213071114134
   hmm_transition:
-    bear: 0.01783402737940386
-    bull: 1.7913365901244993e-06
-    sideways: 0.982164181284006
+    sideways: 3.489899018977583e-05
+    bull: 0.9999650956199716
+    bear: 5.389838643300045e-09
 market_confidence: 0.62
 strong_sectors:
-- 반도체
+- 2차전지
 - 자동차
 - 금융
 - IT
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  direction: neutral
-  recommended_action: normal
-  nasdaq_change: 0.24
+  nasdaq_change: 0.42
   sp500_change: 0
-  strength: 0.04
-  confidence_boost: 0.0
-  source: us_post_learning
+  direction: neutral
+  strength: 0.1
+  confidence_boost: 0
+  recommended_action: normal
 dynamic_universe:
+- symbol: '305720'
+  name: KODEX 2차전지
 - symbol: 091180
   name: KODEX 자동차
 - symbol: '102110'
