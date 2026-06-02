@@ -1,0 +1,116 @@
+name: Status Check (read-only)
+
+# 온디맨드 상태 새로고침. 거래는 절대 하지 않고, KIS API로 현재 잔고·보유종목만
+# 조회해 portfolio.json을 저널 repo에 푸시한다. 매매 루프와 독립이라 장중 아무 때나
+# 호출해 "지금 계좌 상태"를 확인할 수 있다. 아티팩트는 다운로드만(읽기전용) —
+# 업로드하지 않으므로 진행 중인 loop의 상태(토큰·거래기록)를 덮어쓰지 않는다.
+
+on:
+  workflow_dispatch: {}
+
+# 매매 워크플로(autotrader/us-night-trader)와 다른 그룹 → loop를 절대 건드리지 않음.
+# 상태 체크끼리는 최신 1개만 의미 있으므로 진행 중이면 취소(중복 방지).
+concurrency:
+  group: status-check
+  cancel-in-progress: true
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pykrx hmmlearn optuna lightgbm scikit-learn yfinance
+
+      - name: Create .env
+        run: |
+          cat > .env <<'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+          sed -i 's/^[[:space:]]*//' .env
+
+      # ── 읽기전용 컨텍스트(거래기록·토큰·포지션). 업로드는 하지 않는다. ──
+      - name: Download trade log
+        uses: actions/download-artifact@v4
+        with:
+          name: trade-log
+          path: logs/
+        continue-on-error: true
+
+      - name: Download token cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kis-token-cache
+          path: logs/
+        continue-on-error: true
+
+      - name: Download positions
+        uses: actions/download-artifact@v4
+        with:
+          name: positions-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Download US positions
+        uses: actions/download-artifact@v4
+        with:
+          name: us-positions-state
+          path: logs/
+        continue-on-error: true
+
+      - name: Download learning data
+        uses: actions/download-artifact@v4
+        with:
+          name: learning-data
+          path: logs/
+        continue-on-error: true
+
+      - name: Download SQLite ledger
+        uses: actions/download-artifact@v4
+        with:
+          name: ledger-db
+          path: logs/
+        continue-on-error: true
+
+      - name: Checkout journal repo
+        uses: actions/checkout@v4
+        with:
+          repository: BudongJW/kis-trading-journal
+          token: ${{ secrets.JOURNAL_PAT }}
+          path: journal
+
+      # KIS API로 현재 잔고/보유 실시간 조회 → portfolio.json 갱신 (거래 없음)
+      - name: Refresh portfolio status (live balance)
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: python -m src.journal_quick
+
+      - name: Push status refresh
+        run: |
+          cd journal
+          git config user.name "kis-autotrader-bot"
+          git config user.email "bot@kis-autotrader"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "auto: 상태 새로고침(읽기전용) $(date +'%H:%M')"
+            git push
+          fi
