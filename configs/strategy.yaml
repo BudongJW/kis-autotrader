@@ -145,18 +145,18 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.592
-  vol_percentile: 50.0
-  analyzed_at: 2026-06-02 10:43
+  trend_score: 0.595
+  vol_percentile: 44.0
+  analyzed_at: 2026-06-02 20:25
   hmm_state: sideways
-  hmm_confidence: 0.9218213071114134
+  hmm_confidence: 0.8818882740118125
   hmm_transition:
-    sideways: 3.489899018977583e-05
-    bull: 0.9999650956199716
-    bear: 5.389838643300045e-09
+    sideways: 0.00016997688614437572
+    bull: 0.9998300229740441
+    bear: 1.3981161846697618e-10
 market_confidence: 0.62
 strong_sectors:
-- 2차전지
+- 반도체
 - 자동차
 - 금융
 - IT
@@ -164,14 +164,12 @@ strong_sectors:
 - 미국나스닥
 overnight_signal:
   nasdaq_change: 0.42
-  sp500_change: 0
+  sp500_change: 0.26
   direction: neutral
   strength: 0.1
   confidence_boost: 0
   recommended_action: normal
 dynamic_universe:
-- symbol: '305720'
-  name: KODEX 2차전지
 - symbol: 091180
   name: KODEX 자동차
 - symbol: '102110'
