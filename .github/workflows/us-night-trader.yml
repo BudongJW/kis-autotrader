@@ -153,7 +153,16 @@ jobs:
           if git diff --cached --quiet; then
             echo "No journal changes"
           else
-            git commit -m "auto: US night update $(date +'%H:%M')"
+            # 커밋 라벨을 KST 시각에 맞춰 정직하게 (env: TZ=Asia/Seoul 적용됨).
+            # 이 워크플로는 미국장 시간(밤 21~07 KST) 외에도 watchdog/장외 새로고침으로
+            # 한국 낮에 돌 수 있는데, 그때 "US night update"로 찍히면 오해를 부른다.
+            H=$((10#$(date +'%H'))); HM=$(date +'%H:%M')
+            if [ "$H" -ge 21 ] || [ "$H" -le 7 ]; then
+              MSG="auto: 미국장 야간 업데이트 $HM"
+            else
+              MSG="auto: 장외 새로고침(미국장 마감) $HM"
+            fi
+            git commit -m "$MSG"
             git push
           fi
         continue-on-error: true
