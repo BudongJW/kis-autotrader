@@ -178,3 +178,33 @@ def test_limit_order_float_price_normalized_to_int():
     client.order_cash("091180", qty=1, price=40975.0, side="buy", order_type="00")
     assert captured["ORD_UNPR"] == "40975"
     assert "." not in captured["ORD_UNPR"]
+
+
+# ──────────────────────────────────────────────────────────
+# 버그 #7: 루프가 GitHub 하드 타임아웃(360분)에 강제 종료 → 정리 스텝 스킵 →
+# 체결 기록 유실 (6-02 498400 매수 기록 유실). 하드 한도 전 자체 정상 종료해야 함.
+# ──────────────────────────────────────────────────────────
+
+def test_loop_self_timeout_before_github_hard_limit():
+    """자체 최대 실행시간이 GitHub 하드 타임아웃(360분)보다 충분히 짧아야 한다.
+    그래야 강제 종료 전에 정상 break → 거래기록·저널 정리 스텝이 실행됨."""
+    from src.bot.single_run import MAX_LOOP_RUNTIME_SEC
+    GITHUB_HARD_LIMIT = 360 * 60
+    # 셋업(~3분)+정리(~3분) 여유를 위해 최소 10분 마진
+    assert MAX_LOOP_RUNTIME_SEC <= GITHUB_HARD_LIMIT - 10 * 60
+
+
+def test_runtime_exceeded_boundary():
+    """경과 < 한도면 False, >= 한도면 True (핸드오프 종료 판정)."""
+    from src.bot.single_run import _runtime_exceeded, MAX_LOOP_RUNTIME_SEC
+    start = 1_000_000.0
+    assert _runtime_exceeded(start, start) is False                       # 막 시작
+    assert _runtime_exceeded(start, start + MAX_LOOP_RUNTIME_SEC - 1) is False
+    assert _runtime_exceeded(start, start + MAX_LOOP_RUNTIME_SEC) is True
+    assert _runtime_exceeded(start, start + MAX_LOOP_RUNTIME_SEC + 60) is True
+
+
+def test_us_loop_has_same_runtime_cap():
+    """미국 야간 루프도 동일하게 하드 한도 전 자체 종료 상수를 가져야 한다."""
+    from src.bot.night_run import MAX_LOOP_RUNTIME_SEC as US_CAP
+    assert US_CAP <= 360 * 60 - 10 * 60

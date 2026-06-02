@@ -110,6 +110,19 @@ STRATEGY_CHECK_EARLY = 120     # 장 초반(09:00~10:00) 전략 체크: 2분
 TURBULENCE_CHECK_INTERVAL = 180  # 터뷸런스 체크: 3분
 EARLY_SESSION_END = dtime(10, 0)  # 장 초반 종료 시각
 
+# 루프 자체 최대 실행시간(초). GitHub Actions 잡 하드 타임아웃(360분)에
+# 걸려 강제 종료되면 정리 스텝(거래기록 업로드·저널 푸시)이 스킵돼 체결 기록이
+# 유실된다(2026-06-02 498400 매수 기록 유실 사례). 하드 한도보다 먼저 스스로
+# 정상 종료(break)해 정리 스텝을 보장하고, 다음 스케줄 run이 세션을 이어받는다.
+# 340분 = 잡 셋업(~3분)+정리(~3분)에도 360분 한도까지 여유 확보.
+MAX_LOOP_RUNTIME_SEC = 340 * 60
+
+
+def _runtime_exceeded(loop_start_epoch: float, now_epoch: float,
+                      limit_sec: float = MAX_LOOP_RUNTIME_SEC) -> bool:
+    """루프 시작 후 limit_sec 이상 경과했는지. 하드 타임아웃 전 정상 종료 판정용."""
+    return (now_epoch - loop_start_epoch) >= limit_sec
+
 
 def load_config() -> dict:
     with CONFIG_PATH.open(encoding="utf-8") as f:
@@ -1138,6 +1151,7 @@ def run_loop(dry_run: bool) -> None:
     universe_syms = {s["symbol"] for s in universe}
     twap = TWAPEngine()
 
+    loop_start_epoch = time_mod.time()  # 하드 타임아웃 전 자체 종료 기준
     last_strategy_check = 0.0     # epoch. 전략 체크 마지막 시각
     last_turbulence_check = 0.0   # epoch. 터뷸런스 체크 마지막 시각
     sold_at_open = False          # 시가 매도 완료 여부
@@ -1176,6 +1190,15 @@ def run_loop(dry_run: bool) -> None:
         # ── Killswitch 매 루프 체크 ──
         if killswitch.is_full_stop():
             print(f"\n⚠️  [{now:%H:%M:%S}] Killswitch full_stop 감지. 루프 종료.")
+            break
+
+        # ── 자체 최대 실행시간 → 정상 종료(핸드오프) ──
+        # GitHub 하드 타임아웃(360분)에 강제 종료되면 정리 스텝이 스킵돼
+        # 거래기록이 유실되므로, 그 전에 스스로 break해 정리 스텝을 보장한다.
+        # 마감 전이면 다음 스케줄 run이 세션을 이어받는다(concurrency 큐).
+        if _runtime_exceeded(loop_start_epoch, epoch_now):
+            print(f"\n[{now:%H:%M:%S}] 최대 실행시간({MAX_LOOP_RUNTIME_SEC // 60}분) 도달 "
+                  f"— 정상 종료(핸드오프). 정리 스텝 실행 후 다음 run이 이어받음.")
             break
 
         # ── 장 마감 → 종료 ──

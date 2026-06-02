@@ -50,6 +50,11 @@ CLOSE_BEFORE_MINUTES = 15       # 폐장 15분 전 청산 시작
 # 대기 없이 즉시 종료한다. pre-open cron(개장 60분 전부터)은 모두 커버.
 PREOPEN_WAIT_LIMIT_MIN = 120
 
+# 루프 자체 최대 실행시간(초). 미국장 본세션(~390분)은 GitHub 하드 타임아웃(360분)을
+# 넘으므로, 그 전에 스스로 정상 종료해 정리 스텝(거래기록·저널 푸시)을 보장한다.
+# (KR single_run과 동일 사유 — 강제 종료 시 체결 기록 유실 방지)
+MAX_LOOP_RUNTIME_SEC = 340 * 60
+
 
 def _now() -> datetime:
     return datetime.now(KST)
@@ -133,6 +138,7 @@ def run_loop(dry_run: bool) -> None:
             return
 
     wait_start = time_mod.time()
+    loop_start_epoch = wait_start  # 하드 타임아웃 전 자체 종료 기준
     MAX_WAIT_SECONDS = 7200  # 개장 대기 최대 2시간
 
     while True:
@@ -143,6 +149,13 @@ def run_loop(dry_run: bool) -> None:
         # ── Killswitch 매 루프 체크 ──
         if killswitch.is_full_stop():
             print(f"\n⚠️  [{now:%H:%M:%S}] Killswitch full_stop. 루프 종료.")
+            break
+
+        # ── 자체 최대 실행시간 → 정상 종료(핸드오프) ──
+        # 하드 타임아웃 강제 종료 시 정리 스텝 스킵 → 거래기록 유실 방지.
+        if (epoch_now - loop_start_epoch) >= MAX_LOOP_RUNTIME_SEC:
+            print(f"\n[{now:%H:%M:%S}] 최대 실행시간({MAX_LOOP_RUNTIME_SEC // 60}분) 도달 "
+                  f"— 정상 종료(핸드오프). 다음 run이 이어받음.")
             break
 
         # ── 주말 체크 (토·일 = 5, 6) ──
