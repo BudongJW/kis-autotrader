@@ -208,3 +208,91 @@ def test_us_loop_has_same_runtime_cap():
     """미국 야간 루프도 동일하게 하드 한도 전 자체 종료 상수를 가져야 한다."""
     from src.bot.night_run import MAX_LOOP_RUNTIME_SEC as US_CAP
     assert US_CAP <= 360 * 60 - 10 * 60
+
+
+# ──────────────────────────────────────────────────────────
+# 버그 #8: NYSE Arca ETF(SPY·SH)를 NYSE 코드로 주문 → "거래정지종목" 거부
+# (6-03 확인). KIS는 Arca 종목을 AMEX 책으로 라우팅 → 거부 시 대체 거래소 재시도.
+# ──────────────────────────────────────────────────────────
+
+def _client_with_programmed_order(responses_by_exchange):
+    """거래소별 응답을 프로그램한 KISClient + 호출된 거래소 기록."""
+    from src.kis_client import KISClient
+    client = KISClient.__new__(KISClient)
+    calls = []
+
+    def _fake_post(path, tr_id=None, body=None):
+        ex = body["OVRS_EXCG_CD"]
+        calls.append(ex)
+        return responses_by_exchange[ex]
+
+    client._safe_post = _fake_post
+    return client, calls
+
+
+def test_overseas_order_retries_alt_exchange_on_reject():
+    """NYSE 거부 → AMEX로 1회 재시도, 성공 응답 반환."""
+    client, calls = _client_with_programmed_order({
+        "NYSE": {"rt_cd": "7", "msg1": "거래정지종목(주식)은 취소주문만 가능"},
+        "AMEX": {"rt_cd": "0", "msg1": "정상처리"},
+    })
+    resp = client.order_overseas("SH", 6, 32.97, side="buy", exchange="NYSE")
+    assert resp["rt_cd"] == "0"
+    assert calls == ["NYSE", "AMEX"], "거부 후 대체 거래소(AMEX)로 재시도해야 함"
+
+
+def test_overseas_order_no_retry_when_first_ok():
+    """첫 주문 성공이면 재시도 없음 (이중 주문 방지)."""
+    client, calls = _client_with_programmed_order({
+        "AMEX": {"rt_cd": "0", "msg1": "정상처리"},
+    })
+    resp = client.order_overseas("SH", 6, 32.97, side="buy", exchange="AMEX")
+    assert resp["rt_cd"] == "0"
+    assert calls == ["AMEX"]
+
+
+def test_overseas_order_no_retry_for_nasd():
+    """NASD는 대체 거래소가 없으므로 거부돼도 재시도 안 함."""
+    client, calls = _client_with_programmed_order({
+        "NASD": {"rt_cd": "1", "msg1": "잔고부족"},
+    })
+    resp = client.order_overseas("QQQ", 1, 500.0, side="buy", exchange="NASD")
+    assert resp["rt_cd"] == "1"
+    assert calls == ["NASD"], "NASD는 재시도 없이 1회만"
+
+
+def test_overseas_order_retry_only_once():
+    """양쪽 모두 거부돼도 무한루프 없이 정확히 2회만 시도."""
+    client, calls = _client_with_programmed_order({
+        "NYSE": {"rt_cd": "7", "msg1": "거래정지"},
+        "AMEX": {"rt_cd": "7", "msg1": "거래정지"},
+    })
+    resp = client.order_overseas("SPY", 1, 600.0, side="buy", exchange="NYSE")
+    assert resp["rt_cd"] == "7"
+    assert calls == ["NYSE", "AMEX"]
+
+
+def test_spy_sh_use_amex_exchange():
+    """SPY·SH는 Arca 상장이므로 유니버스 exchange가 AMEX여야 한다."""
+    import yaml
+    from pathlib import Path
+    cfg_path = Path("configs/strategy.yaml")
+    if not cfg_path.exists():
+        import pytest
+        pytest.skip("strategy.yaml not in test env")
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    # us 유니버스 찾기
+    def _find_universe(d):
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if k == "universe" and isinstance(v, list) and any(
+                        isinstance(x, dict) and x.get("symbol") in ("QQQ", "SPY") for x in v):
+                    return v
+                r = _find_universe(v)
+                if r:
+                    return r
+        return None
+    uni = _find_universe(cfg) or []
+    ex = {x["symbol"]: x.get("exchange") for x in uni if isinstance(x, dict)}
+    assert ex.get("SPY") == "AMEX", f"SPY는 AMEX여야 함 (현재 {ex.get('SPY')})"
+    assert ex.get("SH") == "AMEX", f"SH는 AMEX여야 함 (현재 {ex.get('SH')})"

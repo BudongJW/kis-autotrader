@@ -311,6 +311,10 @@ class KISClient:
     # ------------------------------------------------------------------
     # 해외주식 주문
     # ------------------------------------------------------------------
+    # NYSE Arca/American 상장 ETF는 KIS가 "AMEX" 책으로 라우팅한다.
+    # 잘못된 거래소로 주문하면 "거래정지종목" 등으로 거부되므로, 거부 시 대체 1회 재시도.
+    _US_EXCHANGE_ALT = {"NYSE": "AMEX", "AMEX": "NYSE"}
+
     def order_overseas(
         self,
         symbol: str,
@@ -320,6 +324,7 @@ class KISClient:
         side: str,
         exchange: str = "NASD",
         order_type: str = "00",  # 00=지정가, 32=시장가(MOC)
+        _retry: bool = False,
     ) -> dict:
         """해외주식 현금 주문 (매수/매도).
 
@@ -330,6 +335,10 @@ class KISClient:
             side: "buy" / "sell"
             exchange: NASD / NYSE / AMEX
             order_type: "00"=지정가, "32"=MOC(장마감시장가)
+            _retry: 대체 거래소 재시도 호출 여부(내부용). 무한루프 방지.
+
+        거부(rt_cd!=0) 시 NYSE↔AMEX 대체 거래소로 1회 자동 재시도한다.
+        (거부 응답이므로 미체결 — 재시도해도 이중 체결 위험 없음)
         """
         if side == "buy":
             tr_id = TR_OS_ORDER_BUY_LIVE if settings.is_live else TR_OS_ORDER_BUY_PAPER
@@ -349,11 +358,22 @@ class KISClient:
             "ORD_SVR_DVSN_CD": "0",
             "CTAC_TLNO": "",
         }
-        return self._safe_post(
+        resp = self._safe_post(
             "/uapi/overseas-stock/v1/trading/order",
             tr_id=tr_id,
             body=body,
         )
+
+        # 거부 시 대체 거래소(NYSE↔AMEX)로 1회 재시도 — Arca ETF 라우팅 오류 자동 보정.
+        alt = self._US_EXCHANGE_ALT.get(exchange)
+        if not _retry and alt and resp.get("rt_cd") not in ("0", None):
+            print(f"      [거래소 재시도] {symbol} {exchange} 거부"
+                  f"(rt_cd={resp.get('rt_cd')}, {resp.get('msg1', '')}) → {alt} 재시도")
+            return self.order_overseas(
+                symbol, qty, price, side=side, exchange=alt,
+                order_type=order_type, _retry=True,
+            )
+        return resp
 
     # ------------------------------------------------------------------
     # 해외주식 잔고

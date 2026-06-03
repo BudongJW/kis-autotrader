@@ -93,12 +93,14 @@ us_session:
   - symbol: QQQ
     name: Invesco QQQ (Nasdaq 100)
     exchange: NASD
+  # SPY·SH는 NYSE Arca 상장 → KIS 주문/시세는 AMEX 코드를 요구.
+  # NYSE로 두면 일봉 빈데이터(yfinance 폴백) + 주문 "거래정지종목" 거부 발생(6-03 확인).
   - symbol: SPY
     name: SPDR S&P 500
-    exchange: NYSE
+    exchange: AMEX
   - symbol: SH
     name: ProShares Short S&P500 (1x inverse)
-    exchange: NYSE
+    exchange: AMEX
     type: inverse
     max_hold_days: 5
   - symbol: SMH
