@@ -147,13 +147,13 @@ market_regime:
   volatility: normal
   trend_score: 0.595
   vol_percentile: 44.0
-  analyzed_at: 2026-06-03 11:04
+  analyzed_at: 2026-06-03 21:01
   hmm_state: sideways
   hmm_confidence: 0.8818882740118125
   hmm_transition:
-    sideways: 0.00016997688614437572
+    sideways: 0.00016997688614431698
     bull: 0.9998300229740441
-    bear: 1.3981161846697618e-10
+    bear: 1.3981161846699272e-10
 market_confidence: 0.62
 strong_sectors:
 - 반도체
