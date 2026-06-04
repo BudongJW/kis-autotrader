@@ -296,3 +296,49 @@ def test_spy_sh_use_amex_exchange():
     ex = {x["symbol"]: x.get("exchange") for x in uni if isinstance(x, dict)}
     assert ex.get("SPY") == "AMEX", f"SPY는 AMEX여야 함 (현재 {ex.get('SPY')})"
     assert ex.get("SH") == "AMEX", f"SH는 AMEX여야 함 (현재 {ex.get('SH')})"
+
+
+# ──────────────────────────────────────────────────────────
+# 버그 #9: 하락장 인버스 매수가 2X 곱버스(252670)를 사면 CLAUDE.md #6 위반.
+# 레버리지 인버스는 어떤 경우에도 매수되면 안 됨 (설정+코드 이중 차단).
+# ──────────────────────────────────────────────────────────
+
+def test_is_leveraged_type_detection():
+    """_is_leveraged_type가 레버리지만 정확히 판정 (1x·기본은 False)."""
+    from src.bot.single_run import _is_leveraged_type
+    # 레버리지 → True
+    for t in ("inverse_2x", "leverage_2x", "3x", "INVERSE_2X", "곱버스"):
+        assert _is_leveraged_type(t) is True, f"{t}는 레버리지로 판정돼야 함"
+    # 1배수/기본 → False
+    for t in ("inverse_1x", "inverse", "defensive", "", None):
+        assert _is_leveraged_type(t) is False, f"{t}는 레버리지가 아님"
+
+
+def test_load_inverse_universe_excludes_leverage(monkeypatch):
+    """유니버스에 레버리지가 섞여 있어도 load 단계에서 제외된다."""
+    import src.bot.single_run as sr
+    fake_cfg = {"universe": {"inverse": [
+        {"symbol": "114800", "name": "KODEX 인버스", "type": "inverse_1x"},
+        {"symbol": "252670", "name": "KODEX 200선물인버스2X", "type": "inverse_2x"},
+    ]}}
+    monkeypatch.setattr(sr, "load_config", lambda: fake_cfg)
+    loaded = sr.load_inverse_universe()
+    syms = {s["symbol"] for s in loaded}
+    assert "114800" in syms
+    assert "252670" not in syms, "2X 레버리지는 로드에서 제외돼야 함"
+
+
+def test_strategy_yaml_has_no_leverage_inverse():
+    """strategy.yaml inverse 유니버스에 레버리지 종목이 없어야 한다."""
+    import yaml
+    from pathlib import Path
+    cfg_path = Path("configs/strategy.yaml")
+    if not cfg_path.exists():
+        import pytest
+        pytest.skip("strategy.yaml not in test env")
+    from src.bot.single_run import _is_leveraged_type
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    inv = (cfg.get("universe", {}) or {}).get("inverse", []) or []
+    bad = [s for s in inv if _is_leveraged_type(s.get("type"))]
+    assert not bad, f"레버리지 인버스가 유니버스에 남아있음: {[s.get('symbol') for s in bad]}"
+    assert "252670" not in {s.get("symbol") for s in inv}, "곱버스(252670) 제거돼야 함"

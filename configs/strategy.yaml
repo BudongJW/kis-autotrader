@@ -34,14 +34,12 @@ universe:
   - symbol: 069500
     name: KODEX 200
   inverse:
+  # 레버리지 인버스 금지(CLAUDE.md #6). 1x(114800)만 사용.
+  # 252670 KODEX 200선물인버스2X(곱버스, 2x)는 제거 — 횡보장 자본잠식 위험.
   - symbol: '114800'
     name: KODEX 인버스
     type: inverse_1x
     max_hold_days: 20
-  - symbol: '252670'
-    name: KODEX 200선물인버스2X
-    type: inverse_2x
-    max_hold_days: 10
   defensive:
   - symbol: '152380'
     name: KODEX 국고채10년

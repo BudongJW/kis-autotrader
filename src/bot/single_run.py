@@ -625,9 +625,23 @@ def load_bear_config() -> dict:
     return cfg.get("bear_strategy", {})
 
 
+def _is_leveraged_type(asset_type: str | None) -> bool:
+    """레버리지 ETP 여부(CLAUDE.md #6 금지 대상).
+
+    inverse_2x / leverage_2x / 3x / 곱버스 등을 모두 레버리지로 판정.
+    inverse_1x · inverse · defensive 등 1배수는 False.
+    """
+    if not asset_type:
+        return False
+    t = str(asset_type).lower()
+    return any(tag in t for tag in ("2x", "3x", "4x", "lev", "곱버스"))
+
+
 def load_inverse_universe() -> list[dict]:
     cfg = load_config()
-    return cfg.get("universe", {}).get("inverse", [])
+    # 레버리지 인버스는 설정에 남아 있어도 로드 단계에서 걸러낸다(CLAUDE.md #6 이중 방어).
+    inv = cfg.get("universe", {}).get("inverse", [])
+    return [s for s in inv if not _is_leveraged_type(s.get("type"))]
 
 
 def load_defensive_universe() -> list[dict]:
@@ -692,6 +706,13 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                 symbol = stock["symbol"]
                 name = stock["name"]
                 asset_type = stock.get("type", "inverse_1x")
+                # 레버리지 인버스 절대 금지(CLAUDE.md #6) — 로드 필터에 더한 최종 방어선.
+                if _is_leveraged_type(asset_type):
+                    print(f"    [인버스] {name} 레버리지({asset_type}) — 매수 금지(스킵)")
+                    log_decision(symbol, name, "skip",
+                                 f"레버리지 인버스 금지: {asset_type}",
+                                 0.0, strategy="bear_inverse")
+                    continue
                 try:
                     history = fetch_recent_history(client, symbol, days=70)
                     sig = inverse_breakout_signal(history, k=k, trend_ma=ma)
