@@ -34,8 +34,6 @@ universe:
   - symbol: 069500
     name: KODEX 200
   inverse:
-  # 레버리지 인버스 금지(CLAUDE.md #6). 1x(114800)만 사용.
-  # 252670 KODEX 200선물인버스2X(곱버스, 2x)는 제거 — 횡보장 자본잠식 위험.
   - symbol: '114800'
     name: KODEX 인버스
     type: inverse_1x
@@ -69,15 +67,13 @@ bear_strategy:
     bear_entry_threshold: -0.03
     bear_exit_threshold: 0.02
     confirmation_days: 3
-  # 급락 조기 대응 트리거 (escalate-only). 느린 레짐이 놓친 급락을 조기 방어 격상.
-  # 인버스(BEAR)는 3일 지속 급락에서만 — 1일 단발은 CAUTION, 1일 극단은 CRISIS(현금).
   rapid_decline:
     enabled: true
-    caution_1d: -0.03   # 1일 -3% → CAUTION(방어, 인버스 X)
-    caution_3d: -0.05   # 3일 누적 -5% → CAUTION
-    bear_3d: -0.08      # 3일 지속 -8% → BEAR(인버스 허용)
-    crisis_1d: -0.08    # 1일 극단 -8% → CRISIS(현금)
-    crisis_3d: -0.12    # 3일 누적 -12% → CRISIS
+    caution_1d: -0.03
+    caution_3d: -0.05
+    bear_3d: -0.08
+    crisis_1d: -0.08
+    crisis_3d: -0.12
   canary_alert:
     momentum_months:
     - 1
