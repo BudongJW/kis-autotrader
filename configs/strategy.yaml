@@ -93,8 +93,6 @@ us_session:
   - symbol: QQQ
     name: Invesco QQQ (Nasdaq 100)
     exchange: NASD
-  # SPY·SH는 NYSE Arca 상장 → KIS 주문/시세는 AMEX 코드를 요구.
-  # NYSE로 두면 일봉 빈데이터(yfinance 폴백) + 주문 "거래정지종목" 거부 발생(6-03 확인).
   - symbol: SPY
     name: SPDR S&P 500
     exchange: AMEX
@@ -147,16 +145,16 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.595
-  vol_percentile: 44.0
-  analyzed_at: 2026-06-03 21:01
+  trend_score: 0.612
+  vol_percentile: 38.0
+  analyzed_at: 2026-06-04 11:02
   hmm_state: sideways
-  hmm_confidence: 0.8818882740118125
+  hmm_confidence: 0.8049104540366119
   hmm_transition:
-    sideways: 0.00016997688614431698
-    bull: 0.9998300229740441
-    bear: 1.3981161846699272e-10
-market_confidence: 0.62
+    bull: 0.9318547852146573
+    sideways: 0.06814521478534272
+    bear: 9.602305708063495e-26
+market_confidence: 0.587
 strong_sectors:
 - 반도체
 - 자동차
@@ -165,13 +163,12 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  direction: neutral
-  recommended_action: normal
-  nasdaq_change: -0.99
-  sp500_change: -0.7
+  nasdaq_change: -0.89
+  sp500_change: -0.74
+  direction: bearish
   strength: 0.28
-  confidence_boost: 0.0
-  source: us_post_learning
+  confidence_boost: -0.033
+  recommended_action: reduce_size
 dynamic_universe:
 - symbol: 091180
   name: KODEX 자동차
