@@ -69,6 +69,15 @@ bear_strategy:
     bear_entry_threshold: -0.03
     bear_exit_threshold: 0.02
     confirmation_days: 3
+  # 급락 조기 대응 트리거 (escalate-only). 느린 레짐이 놓친 급락을 조기 방어 격상.
+  # 인버스(BEAR)는 3일 지속 급락에서만 — 1일 단발은 CAUTION, 1일 극단은 CRISIS(현금).
+  rapid_decline:
+    enabled: true
+    caution_1d: -0.03   # 1일 -3% → CAUTION(방어, 인버스 X)
+    caution_3d: -0.05   # 3일 누적 -5% → CAUTION
+    bear_3d: -0.08      # 3일 지속 -8% → BEAR(인버스 허용)
+    crisis_1d: -0.08    # 1일 극단 -8% → CRISIS(현금)
+    crisis_3d: -0.12    # 3일 누적 -12% → CRISIS
   canary_alert:
     momentum_months:
     - 1

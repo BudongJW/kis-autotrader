@@ -143,6 +143,71 @@ def check_canary(canary_histories: dict[str, pd.DataFrame],
 # 레짐 판단 (SMA200 + 카나리아 + HMM 결합)
 # ──────────────────────────────────────────────────────────
 
+# 레짐 방어 등급 (클수록 방어적). escalate-only 병합에 사용.
+REGIME_RANK = {"BULL": 0, "CAUTION": 1, "BEAR": 2, "CRISIS": 3}
+
+
+def more_defensive(a: str, b: str) -> str:
+    """두 레짐 중 더 방어적인(등급 높은) 쪽 반환. escalate-only 병합용."""
+    return a if REGIME_RANK.get(a, 0) >= REGIME_RANK.get(b, 0) else b
+
+
+def detect_rapid_decline(index_history: pd.DataFrame,
+                         cfg: dict | None = None) -> dict:
+    """지수(KODEX 200/SPY)의 1일·3일 누적 급락률로 빠른 위험 레벨 판정.
+
+    느린 레짐(SMA200·카나리아)이 놓치는 급락을 조기에 잡는다.
+    whipsaw 방지: 인버스(BEAR)는 3일 지속 급락에서만, 1일 단발은 CAUTION까지만,
+    1일 극단은 CRISIS(현금)로 — 떨어지는 칼날에 인버스로 뛰어들지 않는다.
+
+    Returns:
+        {"level": "NONE"/"CAUTION"/"BEAR"/"CRISIS",
+         "ret_1d": float|None, "ret_3d": float|None, "detail": str}
+    """
+    cfg = cfg or {}
+    rc = cfg.get("rapid_decline", {}) or {}
+    if not rc.get("enabled", True):
+        return {"level": "NONE", "ret_1d": None, "ret_3d": None,
+                "detail": "급락 트리거 비활성"}
+
+    # 임계값 (보수적 기본값)
+    caution_1d = rc.get("caution_1d", -0.03)
+    caution_3d = rc.get("caution_3d", -0.05)
+    bear_3d = rc.get("bear_3d", -0.08)
+    crisis_1d = rc.get("crisis_1d", -0.08)
+    crisis_3d = rc.get("crisis_3d", -0.12)
+
+    if index_history is None or len(index_history) < 2:
+        return {"level": "NONE", "ret_1d": None, "ret_3d": None,
+                "detail": "데이터 부족"}
+
+    closes = index_history["close"].astype(float)
+    c0 = float(closes.iloc[-1])
+    ret_1d = c0 / float(closes.iloc[-2]) - 1.0 if float(closes.iloc[-2]) > 0 else 0.0
+    ret_3d = None
+    if len(closes) >= 4 and float(closes.iloc[-4]) > 0:
+        ret_3d = c0 / float(closes.iloc[-4]) - 1.0
+
+    # CRISIS: 1일 극단 급락 또는 3일 누적 폭락 → 현금(인버스도 회피)
+    if ret_1d <= crisis_1d or (ret_3d is not None and ret_3d <= crisis_3d):
+        return {"level": "CRISIS", "ret_1d": ret_1d, "ret_3d": ret_3d,
+                "detail": f"급락 CRISIS (1일 {ret_1d:+.1%}"
+                          f"{f', 3일 {ret_3d:+.1%}' if ret_3d is not None else ''})"}
+
+    # BEAR: 3일 지속 급락에서만 (인버스 허용) — whipsaw 방지
+    if ret_3d is not None and ret_3d <= bear_3d:
+        return {"level": "BEAR", "ret_1d": ret_1d, "ret_3d": ret_3d,
+                "detail": f"3일 지속 급락 BEAR (3일 {ret_3d:+.1%})"}
+
+    # CAUTION: 1일 단발 급락 또는 3일 완만한 하락 → 방어(인버스 X)
+    if ret_1d <= caution_1d or (ret_3d is not None and ret_3d <= caution_3d):
+        return {"level": "CAUTION", "ret_1d": ret_1d, "ret_3d": ret_3d,
+                "detail": f"급락 경고 CAUTION (1일 {ret_1d:+.1%}"
+                          f"{f', 3일 {ret_3d:+.1%}' if ret_3d is not None else ''})"}
+
+    return {"level": "NONE", "ret_1d": ret_1d, "ret_3d": ret_3d, "detail": "정상"}
+
+
 def detect_market_regime(
     kospi_history: pd.DataFrame,
     canary_histories: dict[str, pd.DataFrame],
@@ -239,6 +304,17 @@ def detect_market_regime(
         if regime == "CAUTION" and canary_bad == 0:
             regime = "BULL"
             details.append(f"HMM bull ({hmm_confidence:.0%}) + 카나리아 양호 → BULL 복귀")
+
+    # 급락 빠른 트리거 (escalate-only): 느린 레짐(SMA200·카나리아)이 놓친 급락을
+    # 조기에 더 방어적으로만 격상. 절대 덜 방어적으로 되돌리지 않는다.
+    rapid = detect_rapid_decline(kospi_history, cfg)
+    if rapid["level"] != "NONE":
+        escalated = more_defensive(regime, rapid["level"])
+        if escalated != regime:
+            details.append(f"⚡급락 트리거 {rapid['level']} → {regime}에서 {escalated} 격상 "
+                           f"({rapid['detail']})")
+            regime = escalated
+            confidence = max(confidence, 0.6)  # 급락은 확신 있는 방어 신호
 
     result = MarketRegimeResult(
         regime=regime,
