@@ -138,36 +138,29 @@ jobs:
           path: journal
         continue-on-error: true
 
-      - name: Update portfolio status
+      - name: Update journal (portfolio + trades 누적)
         if: always()
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
-        run: python -m src.journal_quick
-        continue-on-error: true
-
-      - name: Push journal update
-        if: always()
         run: |
-          cd journal
-          git config user.name "kis-autotrader-bot"
-          git config user.email "bot@kis-autotrader"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No journal changes"
-          else
-            # 커밋 라벨을 KST 시각에 맞춰 정직하게 (env: TZ=Asia/Seoul 적용됨).
-            # 이 워크플로는 미국장 시간(밤 21~07 KST) 외에도 watchdog/장외 새로고침으로
-            # 한국 낮에 돌 수 있는데, 그때 "US night update"로 찍히면 오해를 부른다.
-            H=$((10#$(date +'%H'))); HM=$(date +'%H:%M')
-            if [ "$H" -ge 21 ] || [ "$H" -le 7 ]; then
-              MSG="auto: 미국장 야간 업데이트 $HM"
-            else
-              MSG="auto: 장외 새로고침(미국장 마감) $HM"
-            fi
-            git commit -m "$MSG"
-            git push
-          fi
+          git -C journal config user.name "kis-autotrader-bot"
+          git -C journal config user.email "bot@kis-autotrader"
+          # 커밋 라벨을 KST 시각에 맞춰 정직하게 (env: TZ=Asia/Seoul). 밤 21~07시는
+          # 미국 야간, 그 외는 watchdog/장외 새로고침.
+          H=$((10#$(date +'%H'))); HM=$(date +'%H:%M')
+          if [ "$H" -ge 21 ] || [ "$H" -le 7 ]; then MSG="auto: 미국장 야간 업데이트 $HM"; else MSG="auto: 장외 새로고침(미국장 마감) $HM"; fi
+          # canonical trades.csv에 이번 run 거래를 union 누적 후 portfolio 재생성·푸시(재시도).
+          for i in 1 2 3; do
+            git -C journal fetch origin main && git -C journal reset --hard origin/main
+            python -m src.merge_trades journal/state/trades.csv logs/trades.csv || true
+            cp journal/state/trades.csv logs/trades.csv 2>/dev/null || true
+            python -m src.journal_quick || true
+            git -C journal add -A
+            if git -C journal diff --cached --quiet; then echo "변경 없음"; break; fi
+            git -C journal commit -m "$MSG"
+            if git -C journal push; then echo "푸시 완료"; break; else echo "푸시 거부 — 재시도 $i"; fi
+          done
         continue-on-error: true
 
       - name: Upload trade log

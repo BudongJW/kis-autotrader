@@ -139,27 +139,26 @@ jobs:
           path: journal
         continue-on-error: true
 
-      - name: Update portfolio status
+      - name: Update journal (portfolio + trades 누적)
         if: always()
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
-        run: python -m src.journal_quick
-        continue-on-error: true
-
-      - name: Push journal update
-        if: always()
         run: |
-          cd journal
-          git config user.name "kis-autotrader-bot"
-          git config user.email "bot@kis-autotrader"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No journal changes"
-          else
-            git commit -m "auto: portfolio update $(date +'%H:%M')"
-            git push
-          fi
+          git -C journal config user.name "kis-autotrader-bot"
+          git -C journal config user.email "bot@kis-autotrader"
+          # canonical trades.csv에 이번 run 거래를 union 누적 후 portfolio 재생성·푸시.
+          # 오버랩/양 워크플로 경합 대비: 최신으로 reset → 재병합 → push, 거부 시 재시도.
+          for i in 1 2 3; do
+            git -C journal fetch origin main && git -C journal reset --hard origin/main
+            python -m src.merge_trades journal/state/trades.csv logs/trades.csv || true
+            cp journal/state/trades.csv logs/trades.csv 2>/dev/null || true
+            python -m src.journal_quick || true
+            git -C journal add -A
+            if git -C journal diff --cached --quiet; then echo "변경 없음"; break; fi
+            git -C journal commit -m "auto: portfolio update $(date +'%H:%M')"
+            if git -C journal push; then echo "푸시 완료"; break; else echo "푸시 거부 — 재시도 $i"; fi
+          done
         continue-on-error: true
 
       - name: Upload trade log

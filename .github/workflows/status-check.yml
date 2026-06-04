@@ -95,6 +95,14 @@ jobs:
           token: ${{ secrets.JOURNAL_PAT }}
           path: journal
 
+      # canonical trades.csv(journal/state)를 logs로 복원 → journal_quick이 전체
+      # 거래 이력을 읽도록. 이게 없으면 빈 trades.csv로 today_summary를 0으로 덮어씀.
+      - name: Restore canonical trades.csv
+        run: |
+          mkdir -p logs
+          cp journal/state/trades.csv logs/trades.csv 2>/dev/null || echo "canonical 없음"
+        continue-on-error: true
+
       # KIS API로 현재 잔고/보유 실시간 조회 → portfolio.json 갱신 (거래 없음)
       - name: Refresh portfolio status (live balance)
         env:
@@ -104,13 +112,17 @@ jobs:
 
       - name: Push status refresh
         run: |
-          cd journal
-          git config user.name "kis-autotrader-bot"
-          git config user.email "bot@kis-autotrader"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "auto: 상태 새로고침(읽기전용) $(date +'%H:%M')"
-            git push
-          fi
+          for i in 1 2 3; do
+            git -C journal fetch origin main && git -C journal reset --hard origin/main
+            cp journal/state/trades.csv logs/trades.csv 2>/dev/null || true
+            python -m src.journal_quick || true
+            git -C journal config user.name "kis-autotrader-bot"
+            git -C journal config user.email "bot@kis-autotrader"
+            git -C journal add -A
+            if git -C journal diff --cached --quiet; then echo "변경 없음"; break; fi
+            git -C journal commit -m "auto: 상태 새로고침(읽기전용) $(date +'%H:%M')"
+            if git -C journal push; then echo "푸시 완료"; break; else echo "재시도 $i"; fi
+          done
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'

@@ -184,6 +184,29 @@ def _load_fusion_info() -> dict:
         return {"trained": False}
 
 
+def _net_bought_symbols(trades: list[dict]) -> set[str]:
+    """trades.csv에서 순매수(매수합 - 매도합 > 0)인 종목 집합 = 봇이 현재 보유 중인 것.
+
+    positions.json이 (아티팩트 복원 실패 등으로) 비어 있어도, 영속되는 trades.csv로
+    '이 broker 보유분은 봇이 산 것'임을 식별해 manual 오분류를 막는다.
+    표시(대시보드)용이며, 봇의 실제 매도 판단(single_run의 positions.json)과는 무관.
+    """
+    net: dict[str, int] = {}
+    for t in trades:
+        sym = t.get("symbol", "")
+        if not sym:
+            continue
+        try:
+            q = int(float(t.get("qty", 0)))
+        except (TypeError, ValueError):
+            continue
+        if t.get("side") == "buy":
+            net[sym] = net.get(sym, 0) + q
+        elif t.get("side") == "sell":
+            net[sym] = net.get(sym, 0) - q
+    return {s for s, q in net.items() if q > 0}
+
+
 def main() -> None:
     if not JOURNAL_DIR.exists():
         print("  journal/ 디렉토리 없음. 스킵.")
@@ -240,6 +263,9 @@ def main() -> None:
     # 보유 종목 상세 구성
     holdings = []
     holdings_value = 0
+    # 봇이 순매수한 종목(영속 trades.csv 기준) — positions.json 복원 실패 시 귀속용
+    bot_bought = _net_bought_symbols(_load_trades())
+
     for sym, info in api_holdings.items():
         qty = info["qty"]
         cur_price = info["current_price"]
@@ -273,8 +299,13 @@ def main() -> None:
                 h["trailing_activate"] = round(buy_p + atr * 2.0)
             elif buy_p > 0:
                 h["stop_price"] = round(buy_p * 0.97)
+        elif sym in bot_bought:
+            # positions.json엔 없지만 trades.csv상 봇이 순매수 → 봇 보유로 귀속(manual 아님)
+            buy_p = info["buy_avg_price"]
+            if buy_p > 0:
+                h["stop_price"] = round(buy_p * 0.97)
         else:
-            # 봇이 매수하지 않은 종목 (수동 보유분)
+            # 거래 기록에도 없음 → 진짜 수동 보유분 (봇 매도 대상 아님)
             h["manual"] = True
             buy_p = info["buy_avg_price"]
             if buy_p > 0:
