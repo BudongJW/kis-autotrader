@@ -60,15 +60,12 @@ universe:
     name: TIGER 유로스탁50
   - symbol: '132030'
     name: KODEX 골드선물(H)
-# ── 레버리지 ETF (CLAUDE.md #6 개정, 2026-06-05) ──
-# 강한 확인된 상승추세(BULL+bull+확신+급락無)에서만 진입. 기본 OFF·dry-run —
-# 모의 검증 통과 후 사용자가 enabled/dry_run 조정(#7). 레버리지 인버스(곱버스)는 계속 금지.
 leveraged:
-  enabled: true        # 모의(dry-run) 검증 ON — 게이트·신호 관찰
-  dry_run: true        # 주문 미전송(모의). 실거래는 검증 후 false로 전환(#7)
+  enabled: true
+  dry_run: true
   min_hmm_confidence: 0.7
-  hard_stop_pct: 0.04  # 하드 손절 -4% (일반보다 타이트)
-  max_weight: 0.15     # 자본의 최대 15%
+  hard_stop_pct: 0.04
+  max_weight: 0.15
   universe:
   - symbol: '122630'
     name: KODEX 레버리지
@@ -116,9 +113,6 @@ bear_strategy:
   volatility_target: 0.12
 us_session:
   enabled: true
-  # 저가 ETF 위주 재구성(2026-06-05): US 현금 $429로 실제 매매 가능하도록.
-  # 모두 1주 < ~$120(예산 $172 내). 개별주·고가 ETF(QQQ/SPY/SMH 등) 제거.
-  # 거래소: Arca 상장 ETF → AMEX, 국채 ETF → NASD. (order_overseas의 AMEX↔NYSE 재시도가 보정)
   universe:
   - symbol: SPLG
     name: SPDR Portfolio S&P 500 (저가 S&P)
