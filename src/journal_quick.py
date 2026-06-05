@@ -197,6 +197,66 @@ def compute_total_pnl(realized_pnl: float, unrealized_pnl: float,
     return total_pnl, round(total_pnl / base * 100, 2)
 
 
+def _build_learning(cfg: dict) -> dict:
+    """학습 페이지용 데이터 집계 — 레짐·LGBM·전략파라미터·TA가중치·학습일지.
+
+    config의 학습 산출물(market_regime/overnight_signal/strong_sectors/strategies/
+    adaptive) + state/learning 복원분(logs/lgbm_features.json, logs/learning_diary.json)을
+    읽어 대시보드 학습 페이지가 렌더할 형태로 정리.
+    """
+    import json as _json
+    from pathlib import Path as _P
+
+    def _load(p):
+        try:
+            return _json.loads(_P(p).read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    mr = cfg.get("market_regime", {}) or {}
+    og = cfg.get("overnight_signal", {}) or {}
+    strat = cfg.get("strategies", {}) or {}
+    vb = strat.get("volatility_breakout", {}) or {}
+    ta_w = strat.get("ta_weights", {}) or {}
+
+    feats = _load("logs/lgbm_features.json") or {}
+    fi = feats.get("feature_importance", {}) or {}
+    top_features = sorted(fi.items(), key=lambda x: -x[1])[:10]
+
+    diary = _load("logs/learning_diary.json")
+    diary_recent = diary[-8:][::-1] if isinstance(diary, list) else []
+
+    return {
+        "market": {
+            "trend": mr.get("trend"), "hmm_state": mr.get("hmm_state"),
+            "hmm_confidence": round((mr.get("hmm_confidence") or 0) * 100, 1),
+            "volatility": mr.get("volatility"), "vol_percentile": mr.get("vol_percentile"),
+            "market_confidence": cfg.get("market_confidence"),
+            "analyzed_at": mr.get("analyzed_at"),
+        },
+        "overnight": {
+            "direction": og.get("direction"), "nasdaq_change": og.get("nasdaq_change"),
+            "sp500_change": og.get("sp500_change"),
+            "recommended_action": og.get("recommended_action"),
+        },
+        "strong_sectors": cfg.get("strong_sectors", []),
+        "lgbm": {
+            "accuracy": round((feats.get("accuracy") or 0) * 100, 1),
+            "auc": feats.get("auc"), "n_samples": feats.get("n_samples"),
+            "trained_at": feats.get("trained_at"),
+            "top_features": [{"name": n, "importance": round(v, 1)} for n, v in top_features],
+        },
+        "strategy_params": {
+            "k": vb.get("k"), "trend_ma": vb.get("trend_ma"),
+            "train_sharpe": vb.get("train_sharpe"), "val_sharpe": vb.get("val_sharpe"),
+            "optimized_at": vb.get("optimized_at"),
+        },
+        "ta_weights": ta_w,
+        "adaptive": cfg.get("adaptive_allocation", {}) or {},
+        "diary": diary_recent,
+    }
+
+
 def _net_bought_symbols(trades: list[dict]) -> set[str]:
     """trades.csv에서 순매수(매수합 - 매도합 > 0)인 종목 집합 = 봇이 현재 보유 중인 것.
 
@@ -356,6 +416,7 @@ def main() -> None:
     overnight_signal = {}
     strong_sectors = []
     k_value = params.get("k", 0.5)
+    learning_info = {}
     try:
         with CONFIG_PATH.open(encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
@@ -363,6 +424,7 @@ def main() -> None:
         confidence = cfg.get("market_confidence", 0.5)
         overnight_signal = cfg.get("overnight_signal", {})
         strong_sectors = cfg.get("strong_sectors", [])
+        learning_info = _build_learning(cfg)  # 학습 페이지용 집계
     except Exception:
         pass
 
@@ -759,6 +821,9 @@ def main() -> None:
 
         # 오늘의 전략 결정 로그
         "decisions": today_decisions,
+
+        # AI 학습 현황 (학습 페이지용)
+        "learning": learning_info,
     }
 
     PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)

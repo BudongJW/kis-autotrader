@@ -103,6 +103,13 @@ jobs:
           cp journal/state/trades.csv logs/trades.csv 2>/dev/null || echo "canonical 없음"
         continue-on-error: true
 
+      # 학습 상태(LGBM·일지) 복원 → journal_quick이 학습 페이지 데이터 생성
+      - name: Restore learning state
+        run: |
+          mkdir -p logs
+          if [ -d state/learning ]; then cp -f state/learning/* logs/ 2>/dev/null && echo "학습 복원" || true; fi
+        continue-on-error: true
+
       # KIS API로 현재 잔고/보유 실시간 조회 → portfolio.json 갱신 (거래 없음)
       - name: Refresh portfolio status (live balance)
         env:
