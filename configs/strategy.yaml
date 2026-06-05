@@ -64,8 +64,8 @@ universe:
 # 강한 확인된 상승추세(BULL+bull+확신+급락無)에서만 진입. 기본 OFF·dry-run —
 # 모의 검증 통과 후 사용자가 enabled/dry_run 조정(#7). 레버리지 인버스(곱버스)는 계속 금지.
 leveraged:
-  enabled: false       # 실거래 OFF (모의 검증 전)
-  dry_run: true        # 켜도 우선 모의(주문 미전송)
+  enabled: true        # 모의(dry-run) 검증 ON — 게이트·신호 관찰
+  dry_run: true        # 주문 미전송(모의). 실거래는 검증 후 false로 전환(#7)
   min_hmm_confidence: 0.7
   hard_stop_pct: 0.04  # 하드 손절 -4% (일반보다 타이트)
   max_weight: 0.15     # 자본의 최대 15%
