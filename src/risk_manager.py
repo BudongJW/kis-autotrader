@@ -92,6 +92,56 @@ def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0,
     save_positions(positions)
 
 
+def adopt_carried_positions(broker_holdings: dict, universe_symbols: set,
+                            traded_symbols: set) -> int:
+    """이전 run에서 산 캐리 포지션을 positions.json에 흡수해 손절 관리 대상화.
+
+    positions.json이 매 run 리셋되어(아티팩트 미복원) 봇이 자기 보유분을 잊고
+    손절을 안 거는 문제 해결(6-05 091160 -6.47% 방치 사례). 흡수 대상은
+    broker 보유분 중 (봇 유니버스 ∩ 봇 거래이력)이면서 positions에 없는 것.
+    유니버스 밖이거나 봇 거래이력 없는 종목 = 진짜 수동 보유분 → 흡수 안 함(봇이 안 건드림).
+
+    Args:
+        broker_holdings: {symbol: {"qty": int, "buy_price": int, "current_price": int}}
+        universe_symbols: 봇이 매매하는 종목 집합
+        traded_symbols: 봇이 과거에 거래한 종목 집합 (canonical trades.csv 기준)
+    Returns: 흡수한 포지션 수
+    """
+    positions = load_positions()
+    adopted = 0
+    for sym, info in (broker_holdings or {}).items():
+        if sym in positions:
+            continue
+        if sym not in universe_symbols or sym not in traded_symbols:
+            continue  # 진짜 수동 보유분 → 보호(흡수 안 함)
+        try:
+            buy_p = int(float(info.get("buy_price", 0) or 0))
+            qty = int(float(info.get("qty", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+        if buy_p <= 0 or qty <= 0:
+            continue
+        cur = int(float(info.get("current_price", buy_p) or buy_p))
+        positions[sym] = {
+            "buy_price": buy_p,
+            "buy_time": datetime.now().isoformat(),
+            "buy_date": datetime.now().strftime("%Y-%m-%d"),
+            "qty": qty,
+            "peak_price": max(buy_p, cur),
+            "hold_days": 1,
+            "max_hold_days": 15,
+            "atr_at_buy": 0.0,  # ATR 모름 → 고정 비율 손절로 폴백
+            "asset_type": "long",
+            "pyramid_count": 0,
+            "initial_risk": round(buy_p * abs(STOP_LOSS_PCT), 2),
+            "adopted": True,
+        }
+        adopted += 1
+    if adopted:
+        save_positions(positions)
+    return adopted
+
+
 def record_pyramid(symbol: str, add_price: int, add_qty: int, atr: float = 0.0) -> None:
     """피라미딩 매수 시 기존 포지션에 평단가·수량 갱신.
 

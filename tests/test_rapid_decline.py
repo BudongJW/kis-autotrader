@@ -109,3 +109,37 @@ def test_regime_unchanged_when_rapid_none(monkeypatch):
     res = bs.detect_market_regime(uptrend, {}, hmm_state="unknown",
                                   hmm_confidence=0.5, cfg={})
     assert res.regime == "BULL"
+
+
+# ── 레버리지 진입 게이트 (CLAUDE.md #6 가드) ────────────────
+
+def test_leveraged_allowed_only_in_strong_uptrend():
+    """BULL + bull + 고확신 + 급락無일 때만 허용."""
+    from src.strategies.bear_strategy import leveraged_entry_allowed
+    ok, _ = leveraged_entry_allowed("BULL", "NONE", "bull", 0.8)
+    assert ok is True
+
+
+def test_leveraged_blocked_in_sideways():
+    from src.strategies.bear_strategy import leveraged_entry_allowed
+    ok, reason = leveraged_entry_allowed("BULL", "NONE", "sideways", 0.9)
+    assert ok is False and "횡보" in reason or "bull 아님" in reason
+
+
+def test_leveraged_blocked_in_non_bull_regime():
+    from src.strategies.bear_strategy import leveraged_entry_allowed
+    for regime in ("CAUTION", "BEAR", "CRISIS"):
+        ok, _ = leveraged_entry_allowed(regime, "NONE", "bull", 0.9)
+        assert ok is False, f"{regime}에서 레버리지 허용되면 안 됨"
+
+
+def test_leveraged_blocked_on_rapid_decline():
+    from src.strategies.bear_strategy import leveraged_entry_allowed
+    ok, _ = leveraged_entry_allowed("BULL", "CAUTION", "bull", 0.9)
+    assert ok is False  # 급락 트리거 있으면 차단
+
+
+def test_leveraged_blocked_on_low_confidence():
+    from src.strategies.bear_strategy import leveraged_entry_allowed
+    ok, _ = leveraged_entry_allowed("BULL", "NONE", "bull", 0.5)
+    assert ok is False  # 확신 부족

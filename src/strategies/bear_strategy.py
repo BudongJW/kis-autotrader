@@ -208,6 +208,32 @@ def detect_rapid_decline(index_history: pd.DataFrame,
     return {"level": "NONE", "ret_1d": ret_1d, "ret_3d": ret_3d, "detail": "정상"}
 
 
+def leveraged_entry_allowed(regime: str, rapid_level: str = "NONE",
+                            hmm_state: str = "unknown", hmm_confidence: float = 0.0,
+                            cfg: dict | None = None) -> tuple[bool, str]:
+    """레버리지 ETF 진입 허용 게이트 (CLAUDE.md #6 가드).
+
+    레버리지는 변동성 손실로 횡보·하락장에서 자본을 잠식하므로, **강하게 확인된
+    상승추세에서만** 허용한다:
+      - 레짐 BULL
+      - 급락 트리거 NONE
+      - HMM 상태 bull + 확신도 >= min_hmm_confidence
+    하나라도 불충족이면 차단. Returns: (allowed, reason)
+    """
+    cfg = cfg or {}
+    lc = cfg.get("leveraged") or {}
+    min_conf = lc.get("min_hmm_confidence", 0.7)
+    if regime != "BULL":
+        return False, f"레짐 {regime}(BULL 아님) → 레버리지 금지"
+    if rapid_level and rapid_level != "NONE":
+        return False, f"급락 트리거 {rapid_level} → 레버리지 금지"
+    if hmm_state != "bull":
+        return False, f"HMM {hmm_state}(bull 아님/횡보) → 레버리지 금지"
+    if hmm_confidence < min_conf:
+        return False, f"HMM 확신 부족({hmm_confidence:.0%} < {min_conf:.0%}) → 레버리지 금지"
+    return True, "강한 상승추세 확인(BULL+bull+확신+급락無) → 레버리지 진입 허용"
+
+
 def detect_market_regime(
     kospi_history: pd.DataFrame,
     canary_histories: dict[str, pd.DataFrame],

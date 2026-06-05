@@ -112,6 +112,15 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      # canonical trades.csv 복원 (journal repo는 public) → 봇이 전체 거래이력을 보고
+      # 캐리 포지션을 손절 관리 대상으로 흡수할 수 있게.
+      - name: Restore canonical trades.csv
+        run: |
+          mkdir -p logs
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/trades.csv" -o logs/trades.csv \
+            && echo "canonical trades.csv 복원" || echo "canonical 없음 — 빈 상태로 시작"
+        continue-on-error: true
+
       - name: Run bot
         env:
           PYTHONPATH: '.'

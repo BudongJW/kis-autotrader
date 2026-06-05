@@ -51,6 +51,7 @@ from src.pre_briefing import load_briefing, get_precomputed_target
 from src.strategies.bear_strategy import (
     detect_market_regime, compute_bear_allocation, inverse_breakout_signal,
     compute_annualized_vol, log_bear_trade, get_adaptive_params,
+    leveraged_entry_allowed,
 )
 from src.safety import killswitch
 from src.safety.order_gates import check_order
@@ -659,6 +660,80 @@ def load_canary_universe() -> list[dict]:
     return cfg.get("universe", {}).get("canary", [])
 
 
+def load_leveraged_config() -> dict:
+    return load_config().get("leveraged", {}) or {}
+
+
+def run_leveraged_strategy(client: KISClient, budget: int, holdings: dict,
+                           regime_result, rapid_level: str, hmm_state: str,
+                           hmm_conf: float, dry_run: bool) -> int:
+    """레버리지 ETF 추세추종 진입 (CLAUDE.md #6 가드, 기본 OFF).
+
+    강한 상승추세 게이트(leveraged_entry_allowed) 통과 시에만, 하드손절·비중캡 적용.
+    leveraged.enabled=false면 즉시 종료. dry_run/leveraged.dry_run이면 주문 미전송(모의).
+    """
+    lc = load_leveraged_config()
+    if not lc.get("enabled", False):
+        return 0
+    allowed, reason = leveraged_entry_allowed(
+        regime_result.regime if regime_result else "BULL",
+        rapid_level, hmm_state, hmm_conf, {"leveraged": lc})
+    if not allowed:
+        print(f"  [레버리지] 진입 차단 — {reason}")
+        return 0
+    lev_dry = dry_run or lc.get("dry_run", True)
+    uni = [u for u in (lc.get("universe") or []) if u.get("market", "KR") == "KR"]
+    if not uni:
+        return 0
+    if any(u["symbol"] in holdings for u in uni):
+        print("  [레버리지] 이미 보유 중. 스킵.")
+        return 0
+    params = load_strategy_params()
+    k = params.get("k", 0.5)
+    ma = params.get("trend_ma", 20)
+    hard_stop = float(lc.get("hard_stop_pct", 0.04))
+    print(f"  [레버리지] 게이트 통과 — {reason} "
+          f"{'(dry-run 모의)' if lev_dry else '(LIVE 실거래)'}, 배정 {budget:,}원")
+    for stock in uni:
+        symbol = stock["symbol"]
+        name = stock["name"]
+        try:
+            history = fetch_recent_history(client, symbol, days=70)
+            # 상향 변동성 돌파 판정 (방향무관 — 레버리지 롱도 동일 돌파 수식)
+            sig = inverse_breakout_signal(history, k=k, trend_ma=ma)
+            print(f"    {name}: {sig['reason']}")
+            if not sig["breakout"]:
+                continue
+            ta = compute_ta_score(history)
+            if ta.total < 15:
+                print(f"    TA={ta.total:+.0f} 부족, 스킵")
+                continue
+            cur_price = int(sig["price"])
+            qty = int(budget * 0.999 // cur_price)
+            if qty <= 0:
+                continue
+            total = qty * cur_price
+            print(f"    [레버리지 BUY] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 "
+                  f"(TA={ta.total:+.0f}, 하드손절 -{hard_stop:.0%})")
+            if lev_dry:
+                print("      (dry-run — 주문 미전송)")
+                return total
+            resp = _safe_order_cash(client, symbol, qty, cur_price, "buy")
+            print(f"      응답: rt_cd={resp.get('rt_cd')}, msg={resp.get('msg1', '')}")
+            if resp.get("rt_cd") == "0":
+                record_buy(symbol, cur_price, qty,
+                           asset_type=stock.get("type", "leverage_2x"))
+                from src.risk_manager import save_positions
+                pos = load_positions()
+                if symbol in pos:
+                    pos[symbol]["initial_risk"] = round(cur_price * hard_stop, 2)
+                    save_positions(pos)
+                return total
+        except Exception as e:
+            log.warning("leveraged_buy_failed", symbol=symbol, error=str(e))
+    return 0
+
+
 def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                       regime_result, allocation, dry_run: bool,
                       twap_engine: TWAPEngine | None = None) -> int:
@@ -1136,6 +1211,20 @@ def run_once(dry_run: bool) -> None:
 
         etf_used = run_etf_strategy(client, etf_budget, holdings, universe, dry_run)
 
+        # ── 레버리지 ETF (BULL 강추세 게이트, CLAUDE.md #6 가드, 기본 OFF) ──
+        try:
+            lev_cfg = load_leveraged_config()
+            if lev_cfg.get("enabled", False):
+                hmm_s = cfg.get("market_regime", {}).get("hmm_state", "unknown")
+                hmm_c = float(cfg.get("market_regime", {}).get("hmm_confidence", 0) or 0)
+                lev_budget = int(cash * size_factor * float(lev_cfg.get("max_weight", 0.15)))
+                if lev_budget >= 10000:
+                    # BULL 분기라 급락 트리거는 NONE(있었으면 레짐이 격상돼 여기 안 옴)
+                    run_leveraged_strategy(client, lev_budget, holdings, regime_result,
+                                           "NONE", hmm_s, hmm_c, dry_run)
+        except Exception as e:
+            log.warning("leveraged_strategy_skipped", error=str(e))
+
         if etf_used == 0 and not etf_held:
             hmm = cfg.get("market_regime", {}).get("hmm_state", "unknown")
             if hmm in ("sideways", "low_vol"):
@@ -1202,6 +1291,34 @@ def run_loop(dry_run: bool) -> None:
                 print(f"  {sym}: 평단 {old:,.0f} → {new:,.0f}")
     except Exception as e:
         log.warning("position_sync_skipped", error=str(e))
+
+    # ── 캐리 포지션 흡수: 이전 run에서 산 보유분을 손절 관리 대상으로 ──
+    # positions.json이 매 run 리셋되어 봇이 자기 보유분을 잊고 손절을 안 거는 문제 방지.
+    # (봇 유니버스 ∩ 봇 거래이력)인 broker 보유분만 흡수, 진짜 수동분은 보호.
+    try:
+        from src.risk_manager import adopt_carried_positions
+        from src.merge_trades import traded_symbols
+        bal = client.get_balance()
+        broker_holdings = {}
+        if bal.get("rt_cd") == "0":
+            for it in bal.get("output1", []):
+                sym = it.get("pdno", "")
+                q = int(float(it.get("hldg_qty", 0) or 0))
+                if sym and q > 0:
+                    broker_holdings[sym] = {
+                        "qty": q,
+                        "buy_price": float(it.get("pchs_avg_pric", 0) or 0),
+                        "current_price": float(it.get("prpr", 0) or 0),
+                    }
+        uni_syms = {s["symbol"] for s in universe}
+        uni_syms |= {s["symbol"] for s in load_inverse_universe()}
+        traded = traded_symbols("logs/trades.csv")
+        n = adopt_carried_positions(broker_holdings, uni_syms, traded)
+        if n:
+            print(f"[캐리 흡수] 이전 매수분 {n}개를 손절 관리 대상으로 흡수 "
+                  f"(positions 미복원 보완)")
+    except Exception as e:
+        log.warning("adopt_carried_skipped", error=str(e))
 
     while True:
         now = _now()

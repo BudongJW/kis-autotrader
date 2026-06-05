@@ -111,6 +111,14 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      # canonical trades.csv 복원 (캐리 포지션 손절 관리용)
+      - name: Restore canonical trades.csv
+        run: |
+          mkdir -p logs
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/trades.csv" -o logs/trades.csv \
+            && echo "canonical trades.csv 복원" || echo "canonical 없음"
+        continue-on-error: true
+
       - name: Run US night bot
         env:
           PYTHONPATH: '.'

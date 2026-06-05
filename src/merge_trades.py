@@ -27,6 +27,11 @@ def _read(path: str | Path) -> list[dict]:
         return [row for row in csv.DictReader(f) if row.get("timestamp")]
 
 
+def traded_symbols(path: str | Path) -> set[str]:
+    """trades.csv에서 봇이 한 번이라도 거래한 종목 집합. 캐리 포지션 흡수 판정용."""
+    return {r["symbol"] for r in _read(path) if r.get("symbol")}
+
+
 def merge_rows(*row_lists: list[dict]) -> list[dict]:
     """여러 row dict 리스트를 union·dedup·timestamp 오름차순 정렬."""
     seen: set[tuple] = set()
