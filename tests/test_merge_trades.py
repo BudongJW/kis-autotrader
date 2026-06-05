@@ -153,3 +153,27 @@ def test_adopt_requires_trade_history(tmp_path, monkeypatch):
     broker = {"091160": {"qty": 1, "buy_price": 166100, "current_price": 155000}}
     n = rm.adopt_carried_positions(broker, {"091160"}, traded_symbols=set())
     assert n == 0
+
+
+# ── 누적 손익 계산 (자금흐름 혼입 버그 수정) ──────────────────
+
+def test_total_pnl_excludes_deposits():
+    """6-05 실제 사례: 실현 소액 + 미실현 -14k, 총평가 909,610 → ~-1.4% (≠ -13.43%)."""
+    from src.journal_quick import compute_total_pnl
+    pnl, pct = compute_total_pnl(realized_pnl=1405, unrealized_pnl=-14000,
+                                 total_value=909610)
+    assert pnl == -12595
+    assert -2.0 < pct < -1.0, f"실제 ~-1.4%여야 함 (현재 {pct}%)"
+
+
+def test_total_pnl_positive():
+    from src.journal_quick import compute_total_pnl
+    pnl, pct = compute_total_pnl(50000, 30000, 1080000)
+    assert pnl == 80000
+    assert 7.5 < pct < 8.5  # 80000/(1080000-80000)=8%
+
+
+def test_total_pnl_zero():
+    from src.journal_quick import compute_total_pnl
+    pnl, pct = compute_total_pnl(0, 0, 922856)
+    assert pnl == 0 and pct == 0.0

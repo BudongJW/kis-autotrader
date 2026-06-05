@@ -184,6 +184,19 @@ def _load_fusion_info() -> dict:
         return {"trained": False}
 
 
+def compute_total_pnl(realized_pnl: float, unrealized_pnl: float,
+                      total_value: float) -> tuple[float, float]:
+    """누적 손익(실현+미실현)과 투입원금 대비 %. 입금·이체 무관.
+
+    기존엔 tracker.get_summary의 pnl을 썼는데 자금흐름(입금)이 혼입돼 과장됐다
+    (6-05: 실제 -1.4%인데 -13.43% 표시). total_value에서 손익을 빼 투입원금을
+    역산하고 그 대비로 정규화한다. Returns: (total_pnl, total_pnl_pct)
+    """
+    total_pnl = realized_pnl + unrealized_pnl
+    base = max(1, total_value - total_pnl)
+    return total_pnl, round(total_pnl / base * 100, 2)
+
+
 def _net_bought_symbols(trades: list[dict]) -> set[str]:
     """trades.csv에서 순매수(매수합 - 매도합 > 0)인 종목 집합 = 봇이 현재 보유 중인 것.
 
@@ -664,6 +677,9 @@ def main() -> None:
     except Exception:
         rejected_orders = []
 
+    # 누적 손익 = 실현 + 미실현 (입금·이체 무관, summary["pnl"] 자금흐름 혼입 버그 수정)
+    _total_pnl, _total_pnl_pct = compute_total_pnl(realized_pnl, unrealized_pnl, total_value)
+
     portfolio = {
         "updated_at": now.isoformat(),
         "initial_capital": 500000,
@@ -673,8 +689,8 @@ def main() -> None:
         "killswitch": ks_status,
         "holdings_value": holdings_value,
         "total_value": total_value,
-        "total_pnl": summary["pnl"],
-        "total_pnl_pct": round(summary["pnl_pct"], 2),
+        "total_pnl": _total_pnl,
+        "total_pnl_pct": _total_pnl_pct,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
         "total_trades": len(all_trades),
