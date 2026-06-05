@@ -107,15 +107,25 @@ jobs:
           echo "Phase: $PHASE"
           python -m src.market_learner --phase $PHASE
 
-      - name: Commit config updates
+      - name: Commit config + learning state
         run: |
           git config user.name "kis-autotrader-bot"
           git config user.email "bot@kis-autotrader"
-          git add configs/strategy.yaml
+          # 학습 상태(모델·경험·정확도)를 repo에 영속화 → 트레이딩 봇이 checkout으로 받아
+          # LGBM 융합·자기학습에 사용. 아티팩트(현재 run만 보임) 미복원 문제 우회.
+          mkdir -p state/learning
+          for f in lgbm_model.pkl lgbm_features.json experience.json ta_accuracy.json \
+                   regime_memory.json gap_accuracy.json sector_accuracy.json \
+                   market_history.json strategy_weights.json fusion_weights.json \
+                   bear_state.json bear_performance.json; do
+            [ -f "logs/$f" ] && cp "logs/$f" "state/learning/$f" || true
+          done
+          git add configs/strategy.yaml state/learning
           if git diff --cached --quiet; then
-            echo "No config changes"
+            echo "No changes"
           else
-            git commit -m "auto: 시장 학습 파라미터 갱신 $(date +'%Y-%m-%d %H:%M')"
+            git commit -m "auto: 시장 학습 파라미터·상태 갱신 $(date +'%Y-%m-%d %H:%M')"
+            git pull --rebase origin main || true
             git push
           fi
 

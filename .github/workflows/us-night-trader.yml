@@ -119,6 +119,15 @@ jobs:
             && echo "canonical trades.csv 복원" || echo "canonical 없음"
         continue-on-error: true
 
+      # 학습 상태 복원 (LGBM 모델·경험·정확도 — repo state/learning)
+      - name: Restore learning state
+        run: |
+          mkdir -p logs
+          if [ -d state/learning ]; then
+            cp -f state/learning/* logs/ 2>/dev/null && echo "학습 상태 복원" || echo "학습 상태 일부 없음"
+          fi
+        continue-on-error: true
+
       - name: Run US night bot
         env:
           PYTHONPATH: '.'

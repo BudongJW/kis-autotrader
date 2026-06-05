@@ -121,6 +121,18 @@ jobs:
             && echo "canonical trades.csv 복원" || echo "canonical 없음 — 빈 상태로 시작"
         continue-on-error: true
 
+      # 학습 상태 복원: market-learn이 repo state/learning에 커밋한 LGBM 모델·경험·정확도를
+      # logs로 복원 → 봇이 LGBM 융합·자기학습에 사용(아티팩트 미복원 우회).
+      - name: Restore learning state
+        run: |
+          mkdir -p logs
+          if [ -d state/learning ]; then
+            cp -f state/learning/* logs/ 2>/dev/null && echo "학습 상태 복원(LGBM·경험)" || echo "학습 상태 일부 없음"
+          else
+            echo "state/learning 없음 — 첫 학습 전"
+          fi
+        continue-on-error: true
+
       - name: Run bot
         env:
           PYTHONPATH: '.'

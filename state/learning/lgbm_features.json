@@ -1,0 +1,29 @@
+{
+  "trained_at": "2026-06-05T07:53:11.773776",
+  "mode": "daily_warm_start",
+  "accuracy": 0.6944,
+  "auc": 0.7491,
+  "n_samples": 177,
+  "feature_importance": {
+    "vol_cycle_pos": 172.46,
+    "body_ratio": 78.36,
+    "vol_20d": 74.52,
+    "day_of_week": 69.34,
+    "ma5_20_cross": 59.07,
+    "momentum_accel_3d": 50.95,
+    "upper_shadow": 45.65,
+    "ret_3d": 27.96,
+    "ret_1d": 26.77,
+    "adx": 22.66,
+    "rsi_14": 22.13,
+    "vol_ma5_ratio": 20.22,
+    "ret_5d": 19.93,
+    "ma5_ratio": 17.89,
+    "vol_ma20_ratio": 17.67,
+    "bb_width": 16.0,
+    "macd": 15.77,
+    "ret_10d": 14.64,
+    "obv_slope_10": 12.25,
+    "stoch_k": 7.81
+  }
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "date": "2026-06-05",
+    "timestamp": "2026-06-05 07:52:51",
+    "phase": "post_us",
+    "changes": [
+      {
+        "category": "갭예측",
+        "param": "direction",
+        "old": "이전",
+        "new": "neutral",
+        "reason": "QQQ -0.9%, SPY +0.4%"
+      }
+    ],
+    "metrics": {
+      "qqq_change": -0.9,
+      "spy_change": 0.38,
+      "lgbm_accuracy": 0.694444,
+      "lgbm_auc": 0.749091
+    },
+    "decisions": [
+      "US 거래 결과 평가 + 교차 시장 학습 완료",
+      "LGBM 갱신 완료 (accuracy=69.4%)"
+    ],
+    "errors": []
+  }
+]
