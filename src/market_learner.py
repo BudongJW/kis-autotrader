@@ -1043,7 +1043,7 @@ def post_us_market(client: KISClient) -> None:
             if len(qqq_hist) >= 2:
                 qqq_change = float((qqq_hist["close"].iloc[-1] / qqq_hist["close"].iloc[-2] - 1) * 100)
 
-            spy_hist = fetch_us_history(client, "SPY", "NYSE", days=5)
+            spy_hist = fetch_us_history(client, "SPY", "AMEX", days=5)  # SPY는 NYSE Arca → AMEX
             if len(spy_hist) >= 2:
                 spy_change = float((spy_hist["close"].iloc[-1] / spy_hist["close"].iloc[-2] - 1) * 100)
         except Exception:

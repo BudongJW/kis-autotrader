@@ -497,6 +497,12 @@ def main() -> None:
                 "max_positions": us_cfg.get("max_positions", 2),
                 "budget_pct": us_cfg.get("budget_pct", 0.40),
                 "regime_linked": us_cfg.get("regime_linked", True),
+                # 봇이 스캔하는 US 유니버스(watchlist) — 저가 ETF 재구성 반영
+                "universe": [
+                    {"symbol": u["symbol"], "name": u.get("name", u["symbol"]),
+                     "type": u.get("type", "long")}
+                    for u in (us_cfg.get("universe") or [])
+                ],
             }
     except Exception:
         pass

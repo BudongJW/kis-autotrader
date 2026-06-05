@@ -272,8 +272,9 @@ def test_overseas_order_retry_only_once():
     assert calls == ["NYSE", "AMEX"]
 
 
-def test_spy_sh_use_amex_exchange():
-    """SPY·SH는 Arca 상장이므로 유니버스 exchange가 AMEX여야 한다."""
+def test_us_universe_exchanges_correct():
+    """US 유니버스 거래소: Arca 상장 ETF → AMEX, 국채 ETF → NASD.
+    (저가 ETF 재구성 2026-06-05: SPLG/SCHG/XLF/SH/PSQ=AMEX, TLT/SHY=NASD)"""
     import yaml
     from pathlib import Path
     cfg_path = Path("configs/strategy.yaml")
@@ -281,21 +282,19 @@ def test_spy_sh_use_amex_exchange():
         import pytest
         pytest.skip("strategy.yaml not in test env")
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    # us 유니버스 찾기
-    def _find_universe(d):
-        if isinstance(d, dict):
-            for k, v in d.items():
-                if k == "universe" and isinstance(v, list) and any(
-                        isinstance(x, dict) and x.get("symbol") in ("QQQ", "SPY") for x in v):
-                    return v
-                r = _find_universe(v)
-                if r:
-                    return r
-        return None
-    uni = _find_universe(cfg) or []
+    uni = (cfg.get("us_session", {}) or {}).get("universe", []) or []
     ex = {x["symbol"]: x.get("exchange") for x in uni if isinstance(x, dict)}
-    assert ex.get("SPY") == "AMEX", f"SPY는 AMEX여야 함 (현재 {ex.get('SPY')})"
-    assert ex.get("SH") == "AMEX", f"SH는 AMEX여야 함 (현재 {ex.get('SH')})"
+    # Arca 상장 ETF는 AMEX
+    for sym in ("SPLG", "SCHG", "XLF", "SH", "PSQ"):
+        if sym in ex:
+            assert ex[sym] == "AMEX", f"{sym}는 AMEX여야 함 (현재 {ex[sym]})"
+    # 국채 ETF는 NASD
+    for sym in ("TLT", "SHY"):
+        if sym in ex:
+            assert ex[sym] == "NASD", f"{sym}는 NASD여야 함 (현재 {ex[sym]})"
+    # 고가 종목·개별주 제거 확인 (저가 ETF 재구성)
+    assert "SPY" not in ex and "QQQ" not in ex, "고가 ETF(SPY/QQQ)는 제거됐어야 함"
+    assert "NVDA" not in ex and "AAPL" not in ex, "개별주는 제거됐어야 함"
 
 
 # ──────────────────────────────────────────────────────────

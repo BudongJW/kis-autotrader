@@ -10,8 +10,12 @@ from dataclasses import dataclass
 
 from src.utils.logger import log
 
-ETF_TICKERS = {"QQQ", "SPY", "SH", "SMH", "TLT", "GLD", "SHY", "IEF",
-               "SQQQ", "TQQQ", "SOXL"}
+ETF_TICKERS = {
+    # 현 US 유니버스 (저가 ETF 재구성 2026-06-05) — 펀더멘털 게이트 면제
+    "SPLG", "SCHG", "XLF", "SH", "PSQ", "TLT", "SHY",
+    # 과거/예비 ETF (화이트리스트에 남겨둬도 무해)
+    "QQQ", "SPY", "SMH", "GLD", "IEF", "SQQQ", "TQQQ", "SOXL",
+}
 
 
 @dataclass
