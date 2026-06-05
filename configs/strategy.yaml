@@ -116,40 +116,37 @@ bear_strategy:
   volatility_target: 0.12
 us_session:
   enabled: true
+  # 저가 ETF 위주 재구성(2026-06-05): US 현금 $429로 실제 매매 가능하도록.
+  # 모두 1주 < ~$120(예산 $172 내). 개별주·고가 ETF(QQQ/SPY/SMH 등) 제거.
+  # 거래소: Arca 상장 ETF → AMEX, 국채 ETF → NASD. (order_overseas의 AMEX↔NYSE 재시도가 보정)
   universe:
-  - symbol: QQQ
-    name: Invesco QQQ (Nasdaq 100)
-    exchange: NASD
-  - symbol: SPY
-    name: SPDR S&P 500
+  - symbol: SPLG
+    name: SPDR Portfolio S&P 500 (저가 S&P)
+    exchange: AMEX
+  - symbol: SCHG
+    name: Schwab US Large-Cap Growth (성장)
+    exchange: AMEX
+  - symbol: XLF
+    name: Financial Select Sector SPDR (금융)
     exchange: AMEX
   - symbol: SH
     name: ProShares Short S&P500 (1x inverse)
     exchange: AMEX
     type: inverse
     max_hold_days: 5
-  - symbol: SMH
-    name: VanEck Semiconductor ETF (1x)
-    exchange: NASD
+  - symbol: PSQ
+    name: ProShares Short QQQ (1x inverse 나스닥)
+    exchange: AMEX
+    type: inverse
+    max_hold_days: 5
   - symbol: TLT
-    name: iShares 20+ Year Treasury Bond
+    name: iShares 20+ Year Treasury Bond (장기국채 방어)
     exchange: NASD
     type: defensive
-  - symbol: NVDA
-    name: NVIDIA Corporation
+  - symbol: SHY
+    name: iShares 1-3 Year Treasury Bond (단기국채 현금성)
     exchange: NASD
-  - symbol: AAPL
-    name: Apple Inc.
-    exchange: NASD
-  - symbol: GOOGL
-    name: Alphabet Inc.
-    exchange: NASD
-  - symbol: AMD
-    name: Advanced Micro Devices
-    exchange: NASD
-  - symbol: AMZN
-    name: Amazon.com Inc.
-    exchange: NASD
+    type: defensive
   strategy:
     k: 0.5
     trend_ma: 20
