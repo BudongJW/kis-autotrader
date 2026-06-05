@@ -1297,7 +1297,7 @@ def run_loop(dry_run: bool) -> None:
     # (봇 유니버스 ∩ 봇 거래이력)인 broker 보유분만 흡수, 진짜 수동분은 보호.
     try:
         from src.risk_manager import adopt_carried_positions
-        from src.merge_trades import traded_symbols
+        from src.merge_trades import traded_symbols, net_position, find_unfilled_sells, _read
         bal = client.get_balance()
         broker_holdings = {}
         if bal.get("rt_cd") == "0":
@@ -1310,6 +1310,17 @@ def run_loop(dry_run: bool) -> None:
                         "buy_price": float(it.get("pchs_avg_pric", 0) or 0),
                         "current_price": float(it.get("prpr", 0) or 0),
                     }
+        # 체결 미확인 매도(phantom) 감지: 기록상 순포지션<=0인데 broker엔 실제 보유.
+        # 봇이 "팔았다"고 기록했지만 동시호가 미체결 등으로 실제 잔고에 남은 경우(091160 사례).
+        net = net_position(_read("logs/trades.csv"))
+        broker_qty = {s: info["qty"] for s, info in broker_holdings.items()}
+        phantom = find_unfilled_sells(net, broker_qty)
+        if phantom:
+            print(f"⚠️ [체결검증] 미체결 매도 감지 {len(phantom)}건 — "
+                  f"기록상 청산됐으나 실제 보유 중: "
+                  + ", ".join(f"{s}×{q}주" for s, q in phantom.items())
+                  + " → 포지션 복구·손절 관리")
+            log.warning("unfilled_sell_detected", symbols=list(phantom.keys()))
         uni_syms = {s["symbol"] for s in universe}
         uni_syms |= {s["symbol"] for s in load_inverse_universe()}
         traded = traded_symbols("logs/trades.csv")

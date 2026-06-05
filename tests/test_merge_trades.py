@@ -177,3 +177,37 @@ def test_total_pnl_zero():
     from src.journal_quick import compute_total_pnl
     pnl, pct = compute_total_pnl(0, 0, 922856)
     assert pnl == 0 and pct == 0.0
+
+
+# ── 체결 미확인 매도(phantom) 감지 ───────────────────────────
+
+def test_net_position():
+    from src.merge_trades import net_position
+    trades = [
+        _row("2026-06-04T09:13:38", "091160", "buy"),
+        _row("2026-06-04T11:16:38", "091160", "sell"),   # net 0
+        _row("2026-06-02T09:53:39", "498400", "buy"),      # net +1
+        _row("2026-06-04T10:00:00", "069500", "buy", qty=2),
+        _row("2026-06-04T13:00:00", "069500", "sell", qty=3),  # net -1 (과매도)
+    ]
+    net = net_position(trades)
+    assert net["091160"] == 0
+    assert net["498400"] == 1
+    assert net["069500"] == -1
+
+
+def test_find_unfilled_sells():
+    """기록상 청산(net<=0)인데 broker엔 보유 = 미체결 매도(091160 사례)."""
+    from src.merge_trades import find_unfilled_sells
+    net = {"091160": 0, "498400": 1, "069500": -1}
+    broker = {"091160": 1, "498400": 2, "069500": 2}
+    phantom = find_unfilled_sells(net, broker)
+    assert phantom == {"091160": 1, "069500": 2}  # 498400은 정상 보유(net+1)라 제외
+
+
+def test_find_unfilled_sells_none():
+    from src.merge_trades import find_unfilled_sells
+    # 모두 net>0 정상 보유 → phantom 없음
+    assert find_unfilled_sells({"498400": 2}, {"498400": 2}) == {}
+    # broker 빈 잔고 → phantom 없음
+    assert find_unfilled_sells({"091160": 0}, {}) == {}

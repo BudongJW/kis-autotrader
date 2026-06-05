@@ -32,6 +32,37 @@ def traded_symbols(path: str | Path) -> set[str]:
     return {r["symbol"] for r in _read(path) if r.get("symbol")}
 
 
+def net_position(trades: list[dict]) -> dict[str, int]:
+    """trades.csv 기준 종목별 순포지션 수량(매수합 - 매도합)."""
+    net: dict[str, int] = {}
+    for t in trades:
+        sym = t.get("symbol", "")
+        if not sym:
+            continue
+        try:
+            q = int(float(t.get("qty", 0)))
+        except (TypeError, ValueError):
+            continue
+        if t.get("side") == "buy":
+            net[sym] = net.get(sym, 0) + q
+        elif t.get("side") == "sell":
+            net[sym] = net.get(sym, 0) - q
+    return net
+
+
+def find_unfilled_sells(net_pos: dict[str, int], broker_qty: dict[str, int]) -> dict[str, int]:
+    """체결 미확인 매도(phantom) 감지: 거래기록상 순포지션 <= 0인데 broker엔 실제 보유.
+
+    봇이 매도(rt_cd=0)를 기록했지만 실제 체결이 안 돼(동시호가 미체결 등) 잔고에
+    남아있는 경우. 반환: {symbol: 실제 보유 수량}.
+    """
+    out: dict[str, int] = {}
+    for sym, bq in (broker_qty or {}).items():
+        if bq > 0 and net_pos.get(sym, 0) <= 0:
+            out[sym] = bq
+    return out
+
+
 def merge_rows(*row_lists: list[dict]) -> list[dict]:
     """여러 row dict 리스트를 union·dedup·timestamp 오름차순 정렬."""
     seen: set[tuple] = set()
