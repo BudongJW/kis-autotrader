@@ -148,36 +148,26 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.612
-  vol_percentile: 38.0
-  analyzed_at: 2026-06-04 11:02
+  trend_score: 0.615
+  vol_percentile: 64.0
+  analyzed_at: 2026-06-05 10:35
   hmm_state: sideways
-  hmm_confidence: 0.8049104540366119
+  hmm_confidence: 0.9890931835604341
   hmm_transition:
-    bull: 0.9318547852146573
-    sideways: 0.06814521478534272
-    bear: 9.602305708063495e-26
-market_confidence: 0.587
+    sideways: 9.307917025637532e-07
+    bull: 0.9999990692082972
+    bear: 1.9898415800588538e-16
+market_confidence: 0.42
 strong_sectors:
-- 반도체
-- 자동차
-- 금융
 - IT
-- KOSPI200
-- 미국나스닥
 overnight_signal:
+  nasdaq_change: -0.09
+  sp500_change: 0.41
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -0.9
-  sp500_change: 0.38
-  strength: 0.09
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
-- symbol: 091180
-  name: KODEX 자동차
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:
