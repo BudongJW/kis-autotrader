@@ -257,6 +257,58 @@ def _build_learning(cfg: dict) -> dict:
     }
 
 
+def _compute_gamification(total_trades: int, completed_trades: int, win_rate: float,
+                          total_pnl: float, lgbm_accuracy: float, n_samples: int) -> dict:
+    """학습/거래 성과를 게임 경험치·레벨·업적으로 변환 (학습 페이지 게임화).
+
+    XP는 실제 활동 기반(체결·라운드트립·모델 학습데이터·예측력)이라 봇이 활동·학습할수록
+    오른다. 레벨은 성장 곡선(레벨마다 필요 XP 1.4배↑).
+    """
+    xp = (total_trades * 50 + completed_trades * 200
+          + (n_samples or 0) * 5 + int((lgbm_accuracy or 0) * 5))
+
+    level, prev_cum, need, cum = 1, 0, 600, 600
+    while xp >= cum and level < 99:
+        level += 1
+        prev_cum = cum
+        need = int(need * 1.4)
+        cum += need
+    xp_in_level = xp - prev_cum
+    xp_for_next = cum - prev_cum
+    progress_pct = round(xp_in_level / xp_for_next * 100, 1) if xp_for_next else 0
+
+    titles = {1: "신입 트레이더", 3: "수습 분석가", 5: "전략가",
+              8: "베테랑", 12: "마스터", 20: "퀀트 그랜드마스터"}
+    title = titles[1]
+    for lv in sorted(titles):
+        if level >= lv:
+            title = titles[lv]
+
+    achievements = [
+        {"icon": "🎯", "name": "첫 체결", "desc": "첫 주문 체결", "done": total_trades >= 1},
+        {"icon": "🔁", "name": "첫 라운드트립", "desc": "매수→매도 완료", "done": completed_trades >= 1},
+        {"icon": "🤖", "name": "LGBM 가동", "desc": "갭 예측 모델 학습", "done": (lgbm_accuracy or 0) > 0},
+        {"icon": "🎓", "name": "예측력 65%", "desc": "LGBM 정확도 65%+", "done": (lgbm_accuracy or 0) >= 65},
+        {"icon": "💰", "name": "수익 전환", "desc": "누적 손익 플러스", "done": (total_pnl or 0) > 0},
+        {"icon": "📊", "name": "승률 50%", "desc": "승률 50%+", "done": (win_rate or 0) >= 50},
+        {"icon": "💪", "name": "10거래 달성", "desc": "누적 10체결", "done": total_trades >= 10},
+        {"icon": "🧠", "name": "Lv.5 도달", "desc": "AI 레벨 5", "done": level >= 5},
+    ]
+    stats = [
+        {"label": "예측력", "icon": "🎯", "value": round(lgbm_accuracy or 0), "suffix": "%", "bar": round(lgbm_accuracy or 0)},
+        {"label": "승률", "icon": "📈", "value": round(win_rate or 0), "suffix": "%", "bar": round(win_rate or 0)},
+        {"label": "거래경험", "icon": "💼", "value": total_trades, "suffix": "건", "bar": None},
+        {"label": "학습데이터", "icon": "📚", "value": n_samples or 0, "suffix": "샘플", "bar": None},
+    ]
+    return {
+        "level": level, "title": title, "xp": xp,
+        "xp_in_level": xp_in_level, "xp_for_next": xp_for_next,
+        "progress_pct": progress_pct,
+        "achievements": achievements, "stats": stats,
+        "unlocked_count": sum(1 for a in achievements if a["done"]),
+    }
+
+
 def _net_bought_symbols(trades: list[dict]) -> set[str]:
     """trades.csv에서 순매수(매수합 - 매도합 > 0)인 종목 집합 = 봇이 현재 보유 중인 것.
 
@@ -747,6 +799,13 @@ def main() -> None:
 
     # 누적 손익 = 실현 + 미실현 (입금·이체 무관, summary["pnl"] 자금흐름 혼입 버그 수정)
     _total_pnl, _total_pnl_pct = compute_total_pnl(realized_pnl, unrealized_pnl, total_value)
+
+    # 게임화: 학습/거래 성과 → AI 레벨·XP·업적 (학습 페이지)
+    if learning_info:
+        _lg = learning_info.get("lgbm", {}) or {}
+        learning_info["game"] = _compute_gamification(
+            len(all_trades), len(realized), win_rate, _total_pnl,
+            _lg.get("accuracy", 0), _lg.get("n_samples", 0))
 
     portfolio = {
         "updated_at": now.isoformat(),
