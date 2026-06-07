@@ -480,6 +480,26 @@ def main() -> None:
     except Exception:
         pass
 
+    # 당일 전략 플랜 — 장전 신호 종합(레짐·신뢰도·美 오버나이트·변동성) → 오늘 스탠스
+    day_plan = {}
+    try:
+        from src.strategies.day_plan import build_day_plan
+        _regime = "BULL"
+        _bspath = Path("logs/bear_state.json")
+        try:
+            _bs = json.loads(_bspath.read_text(encoding="utf-8")) if _bspath.exists() else {}
+            _regime = _bs.get("regime") or {"down": "BEAR", "sideways": "CAUTION"}.get(
+                regime_info.get("trend", "up"), "BULL")
+        except Exception:
+            _regime = {"down": "BEAR", "sideways": "CAUTION"}.get(
+                regime_info.get("trend", "up"), "BULL")
+        day_plan = build_day_plan(
+            _regime, confidence, overnight_signal,
+            regime_info.get("volatility", "normal"),
+            regime_info.get("vol_percentile", 50), base_k=k_value)
+    except Exception:
+        pass
+
     # 진짜 PnL 계산 — 자금 흐름(입금·이체·계좌변경) 분리
     # day_pnl = 오늘 실현 손익 + 미실현 평가 변화 (잔고 차이 X)
     # cumul_pnl = 전체 실현 손익 + 현재 미실현 손익
@@ -883,6 +903,9 @@ def main() -> None:
 
         # AI 학습 현황 (학습 페이지용)
         "learning": learning_info,
+
+        # 당일 전략 플랜 (장전 신호 종합 → 오늘 스탠스)
+        "day_plan": day_plan,
     }
 
     PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
