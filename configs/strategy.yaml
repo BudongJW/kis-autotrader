@@ -3,18 +3,18 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.5
-    trend_ma: 10
-    optimized_at: '2026-05-31'
-    train_sharpe: 2.61
-    train_return: 14.32
-    train_mdd: -4.2
-    val_sharpe: 5.25
-    val_return: 9.69
-    val_mdd: -1.22
-    backtest_sharpe: 2.61
-    backtest_return: 14.32
-    backtest_mdd: -4.2
+    k: 0.6000000000000001
+    trend_ma: 20
+    optimized_at: '2026-06-07'
+    train_sharpe: 0.8
+    train_return: 3.12
+    train_mdd: -6.93
+    val_sharpe: 5.14
+    val_return: 8.04
+    val_mdd: -2.19
+    backtest_sharpe: 0.8
+    backtest_return: 3.12
+    backtest_mdd: -6.93
   ta_weights:
     rsi: 0.17
     macd: 0.17
@@ -27,12 +27,8 @@ strategies:
     atr: 0.06
 universe:
   default:
-  - symbol: 091160
-    name: KODEX 반도체
   - symbol: '395160'
     name: KODEX 미국나스닥100TR
-  - symbol: 069500
-    name: KODEX 200
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -162,16 +158,10 @@ risk:
   daily_loss_limit_pct: 0.05
 market_regime:
   trend: up
-  volatility: normal
-  trend_score: 0.615
-  vol_percentile: 64.0
-  analyzed_at: 2026-06-05 10:35
-  hmm_state: sideways
-  hmm_confidence: 0.9890931835604341
-  hmm_transition:
-    sideways: 9.307917025637532e-07
-    bull: 0.9999990692082972
-    bear: 1.9898415800588538e-16
+  volatility: high
+  trend_score: 0.748
+  vol_percentile: 82.0
+  analyzed_at: '2026-06-07'
 market_confidence: 0.27
 strong_sectors:
 - IT
