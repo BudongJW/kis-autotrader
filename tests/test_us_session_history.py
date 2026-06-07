@@ -59,6 +59,44 @@ def test_minutes_until_open_winter():
 
 
 # ──────────────────────────────────────────────────────────
+# 주말 휴장 체크: 금요일 미국장의 토요일 새벽분(KST)을 막던 버그 수정 (6-08)
+# Mon=0 .. Sat=5, Sun=6 / open 22:30, close 05:00 KST(서머)
+# ──────────────────────────────────────────────────────────
+OPEN = dtime(22, 30)
+CLOSE = dtime(5, 0)
+
+
+def test_friday_us_session_saturday_dawn_allowed():
+    """토요일 새벽(00:00~05:00 KST)은 미국 금요일장 → 거래 허용(버그 수정 핵심)."""
+    from src.bot.night_run import _us_weekend_closed
+    assert _us_weekend_closed(5, dtime(0, 34), OPEN, CLOSE) is False
+    assert _us_weekend_closed(5, dtime(3, 5), OPEN, CLOSE) is False
+
+
+def test_saturday_evening_closed():
+    """토요일 저녁(22:30 KST~)은 미국 토요일 → 휴장."""
+    from src.bot.night_run import _us_weekend_closed
+    assert _us_weekend_closed(5, dtime(22, 30), OPEN, CLOSE) is True
+    assert _us_weekend_closed(5, dtime(23, 0), OPEN, CLOSE) is True
+
+
+def test_sunday_and_monday_dawn_closed():
+    """일요일 전체·월요일 새벽(=일요일 미국장)은 휴장."""
+    from src.bot.night_run import _us_weekend_closed
+    assert _us_weekend_closed(6, dtime(2, 0), OPEN, CLOSE) is True   # 일 새벽(토US)
+    assert _us_weekend_closed(6, dtime(23, 0), OPEN, CLOSE) is True  # 일 저녁
+    assert _us_weekend_closed(0, dtime(2, 0), OPEN, CLOSE) is True   # 월 새벽(일US)
+
+
+def test_weekday_sessions_open():
+    """평일 미국장(저녁·새벽)은 모두 거래일."""
+    from src.bot.night_run import _us_weekend_closed
+    assert _us_weekend_closed(4, dtime(23, 0), OPEN, CLOSE) is False  # 금 저녁
+    assert _us_weekend_closed(1, dtime(2, 0), OPEN, CLOSE) is False   # 화 새벽(월US)
+    assert _us_weekend_closed(2, dtime(23, 0), OPEN, CLOSE) is False  # 수 저녁
+
+
+# ──────────────────────────────────────────────────────────
 # fetch_us_history 폴백 디스패치
 # ──────────────────────────────────────────────────────────
 

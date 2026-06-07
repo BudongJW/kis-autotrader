@@ -67,6 +67,21 @@ def _time_in_range(t: dtime, start: dtime, end: dtime) -> bool:
     return start <= t <= end
 
 
+def _us_weekend_closed(weekday: int, t: dtime, open_t: dtime, close_t: dtime) -> bool:
+    """미국장 주말 휴장 여부 (KST 기준). 미국 세션은 KST로 '월밤~토새벽'에 걸쳐 있다.
+
+    - 저녁(개장 22:30~자정): 미국 '당일' 세션 → 토(5)·일(6)이면 휴장
+    - 새벽(자정~폐장 05:00): 미국 '전날' 세션 → 일(6,=토US)·월(0,=일US)이면 휴장
+    → 금요일 미국장의 토요일 새벽분(00:00~05:00 KST)은 정상 거래로 허용(기존 버그 수정).
+    그 외 시간(장외)은 여기서 판단 안 함(대기/dead-zone 로직이 처리).
+    """
+    if t >= open_t:
+        return weekday >= 5            # 토·일 저녁 → 미국 당일 휴장
+    if t < close_t:
+        return weekday in (6, 0)       # 일·월 새벽 → 미국 전날(토·일) 휴장
+    return False
+
+
 def run_once(dry_run: bool) -> None:
     """미국장 1회 체크: 리스크 + 전략."""
     cfg = load_us_config()
@@ -158,8 +173,8 @@ def run_loop(dry_run: bool) -> None:
                   f"— 정상 종료(핸드오프). 다음 run이 이어받음.")
             break
 
-        # ── 주말 체크 (토·일 = 5, 6) ──
-        if now.weekday() >= 5:
+        # ── 주말 휴장 체크 (미국 세션은 KST 월밤~토새벽 — 금요일장 토요일 새벽분 허용) ──
+        if _us_weekend_closed(now.weekday(), t, open_t, close_t):
             print(f"[{now:%H:%M:%S}] 주말 — 미국장 휴장. 종료.")
             break
 
