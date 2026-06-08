@@ -1413,9 +1413,10 @@ def run_once(dry_run: bool) -> None:
 
     if bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
         print(f"  [레짐] {regime_result.regime} — 하락장 전략 진입")
-        # 방어는 저확신일수록 더 필요 — 급락일(gap_skip)엔 방어/인버스 예산에 바닥(50%)을 깐다.
-        # (공격용 size_factor 축소가 방어 회전까지 무력화하던 문제 보완)
-        defense_factor = max(size_factor, 0.5) if gap_skip else size_factor
+        # 방어는 저확신일수록 더 필요 — 급락일(gap_skip)엔 현금 전체를 배분 기준으로.
+        # (배분이 어차피 현금 60%+ 유지하므로 과투자 아님. 채권 1주 ~11만원이라
+        #  슬라이스가 1주 값을 넘도록 기준을 키운다. 공격 축소가 방어를 무력화하던 문제 보완)
+        defense_factor = 1.0 if gap_skip else size_factor
         total_budget = int(cash * defense_factor)
 
         if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
@@ -1834,8 +1835,9 @@ def run_loop(dry_run: bool) -> None:
                       f"(보유분 리스크관리는 계속). {regime_result.detail}")
             elif bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
                 print(f"  [레짐] {regime_result.regime} — 하락장 전략")
-                # 급락일(gap_skip)엔 방어/인버스 예산에 바닥(현금 50%)을 깐다(방어 무력화 방지).
-                total_budget = (int(cash * max(size_factor, 0.5)) if gap_skip
+                # 급락일(gap_skip)엔 현금 전체를 배분 기준으로(채권 1주 ~11만원 확보).
+                # 배분이 현금 60%+ 유지하므로 과투자 아님.
+                total_budget = (int(cash) if gap_skip
                                 else int(etf_budget_cap * size_factor))
 
                 if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
