@@ -183,6 +183,27 @@ def test_adopt_carried_positions(tmp_path, monkeypatch):
     assert pos["091160"]["qty"] == 1
 
 
+def test_adopt_out_of_universe_but_traded(tmp_path, monkeypatch):
+    """유니버스에서 빠진 레거시도 봇 거래이력이 있으면 흡수해 손절 관리(6-08 091160).
+
+    유니버스 개편으로 091160이 유니버스 밖이 됐지만, 봇이 과거 거래했고 아직
+    보유 중이면 청산까지 봇이 관리해야 한다(방치 손실 방지).
+    """
+    import src.risk_manager as rm
+    monkeypatch.setattr(rm, "POSITIONS_PATH", tmp_path / "positions.json")
+    broker = {
+        "091160": {"qty": 1, "buy_price": 166100, "current_price": 142000},  # 유니버스 밖
+        "005930": {"qty": 10, "buy_price": 70000, "current_price": 71000},   # 수동(미거래)
+    }
+    # universe엔 091160 없음, 하지만 traded엔 있음 → 흡수돼야
+    n = rm.adopt_carried_positions(broker, universe_symbols=set(),
+                                   traded_symbols={"091160"})
+    assert n == 1
+    pos = rm.load_positions()
+    assert "091160" in pos and pos["091160"]["adopted"] is True
+    assert "005930" not in pos  # 거래이력 없는 수동분 → 보호
+
+
 def test_adopt_skips_already_tracked(tmp_path, monkeypatch):
     """이미 positions에 있으면 흡수 안 함(덮어쓰기 방지)."""
     import src.risk_manager as rm

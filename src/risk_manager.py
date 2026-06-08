@@ -112,8 +112,10 @@ def adopt_carried_positions(broker_holdings: dict, universe_symbols: set,
     for sym, info in (broker_holdings or {}).items():
         if sym in positions:
             continue
-        if sym not in universe_symbols or sym not in traded_symbols:
-            continue  # 진짜 수동 보유분 → 보호(흡수 안 함)
+        # 봇이 거래한 종목이면 현재 유니버스에서 빠졌어도 청산까지 관리(6-08 091160 사례).
+        # 봇 거래이력 없는 종목 = 진짜 수동 보유분 → 보호(흡수 안 함). universe는 참고용.
+        if sym not in traded_symbols:
+            continue
         try:
             buy_p = int(float(info.get("buy_price", 0) or 0))
             qty = int(float(info.get("qty", 0) or 0))

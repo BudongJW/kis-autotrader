@@ -1149,6 +1149,49 @@ def evaluate_regime(client: KISClient) -> tuple:
     return regime_result, allocation, True
 
 
+def adopt_carry_and_verify(client: KISClient, universe: list) -> None:
+    """이전 run에서 산 보유분을 손절 관리 대상으로 흡수 + 미체결 매도(phantom) 감지.
+
+    positions.json이 매 run 리셋되어(아티팩트 미복원) 봇이 자기 보유분을 잊고
+    손절을 안 거는 문제 보완. run_loop·run_once 공용. 봇 거래이력(traded) 보유분만
+    흡수하고 진짜 수동분은 보호한다. 유니버스에서 빠진 레거시도 청산까지 관리.
+    """
+    try:
+        from src.risk_manager import adopt_carried_positions
+        from src.merge_trades import traded_symbols, net_position, find_unfilled_sells, _read
+        bal = client.get_balance()
+        broker_holdings = {}
+        if bal.get("rt_cd") == "0":
+            for it in bal.get("output1", []):
+                sym = it.get("pdno", "")
+                q = int(float(it.get("hldg_qty", 0) or 0))
+                if sym and q > 0:
+                    broker_holdings[sym] = {
+                        "qty": q,
+                        "buy_price": float(it.get("pchs_avg_pric", 0) or 0),
+                        "current_price": float(it.get("prpr", 0) or 0),
+                    }
+        # 체결 미확인 매도(phantom): 기록상 순포지션<=0인데 broker엔 실제 보유(091160 사례).
+        net = net_position(_read("logs/trades.csv"))
+        broker_qty = {s: info["qty"] for s, info in broker_holdings.items()}
+        phantom = find_unfilled_sells(net, broker_qty)
+        if phantom:
+            print(f"⚠️ [체결검증] 미체결 매도 감지 {len(phantom)}건 — "
+                  f"기록상 청산됐으나 실제 보유 중: "
+                  + ", ".join(f"{s}×{q}주" for s, q in phantom.items())
+                  + " → 포지션 복구·손절 관리")
+            log.warning("unfilled_sell_detected", symbols=list(phantom.keys()))
+        uni_syms = {s["symbol"] for s in universe}
+        uni_syms |= {s["symbol"] for s in load_inverse_universe()}
+        traded = traded_symbols("logs/trades.csv")
+        n = adopt_carried_positions(broker_holdings, uni_syms, traded)
+        if n:
+            print(f"[캐리 흡수] 이전 매수분 {n}개를 손절 관리 대상으로 흡수 "
+                  f"(positions 미복원 보완)")
+    except Exception as e:
+        log.warning("adopt_carried_skipped", error=str(e))
+
+
 # ──────────────────────────────────────────────────────────
 # 1회 실행 (기존 5분 cron 호환)
 # ──────────────────────────────────────────────────────────
@@ -1174,6 +1217,10 @@ def run_once(dry_run: bool) -> None:
         print("  ⚠️ 잔고 조회 실패(재시도 후도) — 이번 사이클 매매 전면 보류"
               "(보유 없음 오인 방지). 다음 실행에서 재시도.")
         return
+
+    # 캐리 포지션 흡수: 봇이 산 보유분(유니버스 밖 레거시 포함)을 손절 관리 대상화.
+    adopt_carry_and_verify(client, universe)
+
     cash = get_available_cash(client)
 
     print(f"  예수금: {cash:,}원 | 보유: {holdings if holdings else '없음'}")
@@ -1408,44 +1455,8 @@ def run_loop(dry_run: bool) -> None:
     except Exception as e:
         log.warning("position_sync_skipped", error=str(e))
 
-    # ── 캐리 포지션 흡수: 이전 run에서 산 보유분을 손절 관리 대상으로 ──
-    # positions.json이 매 run 리셋되어 봇이 자기 보유분을 잊고 손절을 안 거는 문제 방지.
-    # (봇 유니버스 ∩ 봇 거래이력)인 broker 보유분만 흡수, 진짜 수동분은 보호.
-    try:
-        from src.risk_manager import adopt_carried_positions
-        from src.merge_trades import traded_symbols, net_position, find_unfilled_sells, _read
-        bal = client.get_balance()
-        broker_holdings = {}
-        if bal.get("rt_cd") == "0":
-            for it in bal.get("output1", []):
-                sym = it.get("pdno", "")
-                q = int(float(it.get("hldg_qty", 0) or 0))
-                if sym and q > 0:
-                    broker_holdings[sym] = {
-                        "qty": q,
-                        "buy_price": float(it.get("pchs_avg_pric", 0) or 0),
-                        "current_price": float(it.get("prpr", 0) or 0),
-                    }
-        # 체결 미확인 매도(phantom) 감지: 기록상 순포지션<=0인데 broker엔 실제 보유.
-        # 봇이 "팔았다"고 기록했지만 동시호가 미체결 등으로 실제 잔고에 남은 경우(091160 사례).
-        net = net_position(_read("logs/trades.csv"))
-        broker_qty = {s: info["qty"] for s, info in broker_holdings.items()}
-        phantom = find_unfilled_sells(net, broker_qty)
-        if phantom:
-            print(f"⚠️ [체결검증] 미체결 매도 감지 {len(phantom)}건 — "
-                  f"기록상 청산됐으나 실제 보유 중: "
-                  + ", ".join(f"{s}×{q}주" for s, q in phantom.items())
-                  + " → 포지션 복구·손절 관리")
-            log.warning("unfilled_sell_detected", symbols=list(phantom.keys()))
-        uni_syms = {s["symbol"] for s in universe}
-        uni_syms |= {s["symbol"] for s in load_inverse_universe()}
-        traded = traded_symbols("logs/trades.csv")
-        n = adopt_carried_positions(broker_holdings, uni_syms, traded)
-        if n:
-            print(f"[캐리 흡수] 이전 매수분 {n}개를 손절 관리 대상으로 흡수 "
-                  f"(positions 미복원 보완)")
-    except Exception as e:
-        log.warning("adopt_carried_skipped", error=str(e))
+    # ── 캐리 포지션 흡수 + 미체결 매도 감지 (positions.json 미복원 보완) ──
+    adopt_carry_and_verify(client, universe)
 
     while True:
         now = _now()
