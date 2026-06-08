@@ -44,6 +44,7 @@ class MarketRegimeResult:
     canary_score: int               # 카나리아 음전환 수 (0~2)
     momentum_scores: dict = field(default_factory=dict)
     detail: str = ""
+    blind: bool = False             # 시장데이터 조회 실패(API 불통 등)로 판단 불가
 
 
 @dataclass
@@ -342,6 +343,17 @@ def detect_market_regime(
             regime = escalated
             confidence = max(confidence, 0.6)  # 급락은 확신 있는 방어 신호
 
+    # ── 블라인드 fail-safe ──
+    # 시장 데이터를 못 읽으면(API 불통·과부하 등) sma_ratio=0·카나리아=0이 되어
+    # 위 로직이 BULL(강세)로 오판한다. 폭락 때 API가 과부하로 죽는 바로 그 순간이
+    # 가장 위험하므로, 데이터가 없으면 강세 폴백을 금지하고 방어로 강등 + blind 표시.
+    # blind면 신규매수를 (롱·인버스 모두) 차단해야 한다 — "못 보면 베팅 안 한다".
+    blind = (kospi_history is None) or (len(kospi_history) < 20)
+    if blind:
+        if regime == "BULL":
+            regime = "CAUTION"
+        details.append("⚠️ 시장데이터 불가(블라인드) — 강세 폴백 차단, 신규매수 보류")
+
     result = MarketRegimeResult(
         regime=regime,
         confidence=min(1.0, confidence),
@@ -349,16 +361,18 @@ def detect_market_regime(
         canary_score=canary_bad,
         momentum_scores=canary_scores,
         detail=" | ".join(details),
+        blind=blind,
     )
 
-    # 상태 저장
-    _save_bear_state({
-        "regime": regime,
-        "confidence": round(result.confidence, 3),
-        "sma_ratio": round(sma_ratio, 4),
-        "canary_bad": canary_bad,
-        "canary_scores": canary_scores,
-    })
+    # 상태 저장 (블라인드면 낡은 상태 오염 방지를 위해 저장 안 함)
+    if not blind:
+        _save_bear_state({
+            "regime": regime,
+            "confidence": round(result.confidence, 3),
+            "sma_ratio": round(sma_ratio, 4),
+            "canary_bad": canary_bad,
+            "canary_scores": canary_scores,
+        })
 
     return result
 

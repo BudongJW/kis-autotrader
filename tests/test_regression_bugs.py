@@ -341,3 +341,26 @@ def test_strategy_yaml_has_no_leverage_inverse():
     bad = [s for s in inv if _is_leveraged_type(s.get("type"))]
     assert not bad, f"레버리지 인버스가 유니버스에 남아있음: {[s.get('symbol') for s in bad]}"
     assert "252670" not in {s.get("symbol") for s in inv}, "곱버스(252670) 제거돼야 함"
+
+
+def test_regime_blind_failsafe_not_bull():
+    """시장데이터 조회 실패(API 불통) 시 강세(BULL)로 오판하지 않아야 한다.
+
+    검은 월요일 회귀: KIS API 과부하로 KOSPI를 못 읽으면 sma_ratio=0이 되어
+    BULL로 폴백 → 폭락에 롱 매수하는 치명적 버그. blind=True + 비-BULL 이어야 함.
+    """
+    from src.strategies.bear_strategy import detect_market_regime
+    r = detect_market_regime(None, {}, hmm_state="unknown", hmm_confidence=0.5, cfg={})
+    assert r.blind is True, "데이터 불가 시 blind=True"
+    assert r.regime != "BULL", f"블라인드인데 BULL로 오판: {r.regime}"
+
+
+def test_regime_not_blind_with_data():
+    """충분한 데이터가 있으면 blind=False."""
+    import pandas as pd
+    idx = pd.date_range("2025-01-01", periods=250, freq="D", name="date")
+    df = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0,
+                       "close": 100.0, "volume": 1000}, index=idx)
+    from src.strategies.bear_strategy import detect_market_regime
+    r = detect_market_regime(df, {}, hmm_state="unknown", hmm_confidence=0.5, cfg={})
+    assert r.blind is False

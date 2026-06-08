@@ -1698,7 +1698,12 @@ def run_loop(dry_run: bool) -> None:
             # 모든 분기에서 참조되므로 분기 전에 한 번만 계산 (BEAR/CRISIS 분기에서 미정의되는 버그 방지)
             etf_held = any(s in universe_syms for s in holdings)
 
-            if bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
+            # ── 블라인드 가드: 시장 데이터를 못 읽으면 신규매수 전면 보류 ──
+            # (롱·인버스·레버리지 모두). 보유분 리스크관리(매도)는 위에서 이미 수행됨.
+            if regime_result is not None and getattr(regime_result, "blind", False):
+                print(f"  🛑 [블라인드] 시장데이터 조회 실패 — 신규매수 전면 보류"
+                      f"(보유분 리스크관리는 계속). {regime_result.detail}")
+            elif bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
                 print(f"  [레짐] {regime_result.regime} — 하락장 전략")
                 total_budget = int(etf_budget_cap * size_factor)
 
