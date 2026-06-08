@@ -121,6 +121,16 @@ jobs:
             && echo "canonical trades.csv 복원" || echo "canonical 없음 — 빈 상태로 시작"
         continue-on-error: true
 
+      # positions.json git 영속화: 아티팩트는 이전 run을 못 봐서 매 run 리셋 →
+      # 봇이 자기 포지션을 잊고 손절을 안 거는 문제(6-08 091160 -14% 방치)의 뿌리.
+      # trades.csv처럼 journal repo의 canonical에서 복원(아티팩트 미복원 우회).
+      - name: Restore positions.json
+        run: |
+          mkdir -p logs
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/positions.json" -o logs/positions.json \
+            && echo "positions.json 복원(git canonical)" || echo "positions.json 없음 — 캐리 흡수로 보완"
+        continue-on-error: true
+
       # 학습 상태 복원: market-learn이 repo state/learning에 커밋한 LGBM 모델·경험·정확도를
       # logs로 복원 → 봇이 LGBM 융합·자기학습에 사용(아티팩트 미복원 우회).
       - name: Restore learning state
@@ -174,6 +184,9 @@ jobs:
             git -C journal fetch origin main && git -C journal reset --hard origin/main
             python -m src.merge_trades journal/state/trades.csv logs/trades.csv || true
             cp journal/state/trades.csv logs/trades.csv 2>/dev/null || true
+            # positions.json도 canonical로 영속화(봇이 다음 run에 자기 포지션 기억 → 손절 유지)
+            mkdir -p journal/state
+            [ -s logs/positions.json ] && cp logs/positions.json journal/state/positions.json || true
             python -m src.journal_quick || true
             git -C journal add -A
             if git -C journal diff --cached --quiet; then echo "변경 없음"; break; fi
