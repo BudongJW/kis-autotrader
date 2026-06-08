@@ -177,18 +177,33 @@ def load_ta_weights() -> dict | None:
     return None
 
 
-def get_all_holdings(client: KISClient) -> dict[str, int]:
-    result = {}
+def get_all_holdings(client: KISClient) -> dict[str, int] | None:
+    """보유 종목 조회. 성공 시 dict(빈 dict=진짜 보유없음), **조회 실패 시 None**.
+
+    실패를 빈 dict로 반환하면 '보유 없음'으로 오인되어 (1) 손절을 못 하고
+    (2) 중복 매수 위험이 생긴다. 호출부가 실패를 구분할 수 있도록 None을 반환한다.
+    HTTP 계층(_get)이 이미 재시도하므로 여기서는 rt_cd 실패까지 한 번 더 감싼다.
+    """
     try:
         resp = client.get_balance()
         if resp.get("rt_cd") == "0":
+            result: dict[str, int] = {}
             for item in resp.get("output1", []):
                 qty = int(item.get("hldg_qty", 0))
                 if qty > 0:
                     result[item.get("pdno", "")] = qty
+            return result
+        log.error("get_all_holdings_rt_cd", rt_cd=resp.get("rt_cd"),
+                  msg=resp.get("msg1", "")[:120])
     except Exception as e:
         log.error("get_all_holdings_failed", error=str(e))
-    return result
+    return None  # 조회 실패 — 빈 dict와 구분
+
+
+def _refresh_holdings(client: KISClient, prev: dict[str, int]) -> dict[str, int]:
+    """보유 재조회 — 실패(None) 시 직전 보유를 유지(보유없음 오인 방지)."""
+    h = get_all_holdings(client)
+    return h if h is not None else prev
 
 
 def get_available_cash(client: KISClient) -> int:
@@ -1141,6 +1156,10 @@ def run_once(dry_run: bool) -> None:
     universe_syms = {s["symbol"] for s in universe}
     client = KISClient()
     holdings = get_all_holdings(client)
+    if holdings is None:
+        print("  ⚠️ 잔고 조회 실패(재시도 후도) — 이번 사이클 매매 전면 보류"
+              "(보유 없음 오인 방지). 다음 실행에서 재시도.")
+        return
     cash = get_available_cash(client)
 
     print(f"  예수금: {cash:,}원 | 보유: {holdings if holdings else '없음'}")
@@ -1451,6 +1470,11 @@ def run_loop(dry_run: bool) -> None:
 
         # ── 보유 현황 조회 ──
         holdings = get_all_holdings(client)
+        if holdings is None:
+            # 조회 실패(재시도 후도) — '보유 없음' 오인 방지. 이번 루프 매매 보류 후 재시도.
+            print(f"[{now:%H:%M:%S}] ⚠️ 잔고 조회 실패 — 이번 루프 매매 보류, 다음 주기 재시도")
+            time_mod.sleep(RISK_CHECK_INTERVAL)
+            continue
 
         # ── 09:00~09:10 시가 평가 → 조건부 매도/보유 ──
         if MARKET_OPEN <= t <= SELL_WINDOW_END and not sold_at_open:
@@ -1476,7 +1500,7 @@ def run_loop(dry_run: bool) -> None:
                         to_sell[symbol] = qty
                 if to_sell:
                     sell_holdings(client, to_sell, universe_syms, "시가매도", dry_run)
-                holdings = get_all_holdings(client)
+                holdings = _refresh_holdings(client, holdings)
             sold_at_open = True
             time_mod.sleep(RISK_CHECK_INTERVAL)
             continue
@@ -1488,7 +1512,7 @@ def run_loop(dry_run: bool) -> None:
                 for tr in twap_results:
                     if tr["side"] == "buy":
                         bought_today = True
-                holdings = get_all_holdings(client)
+                holdings = _refresh_holdings(client, holdings)
 
         # ── 리스크 체크 (매 1분) — 보유 종목 가격 확인 ──
         if holdings:
@@ -1532,7 +1556,7 @@ def run_loop(dry_run: bool) -> None:
                         risk_sold = True
 
             if risk_sold:
-                holdings = get_all_holdings(client)
+                holdings = _refresh_holdings(client, holdings)
 
         # ── 15:20 이후 미매도 청산 (봇 포지션만, 수동 보유분은 유지) ──
         if t > MARKET_CLOSE and holdings:

@@ -202,7 +202,7 @@ def build_portfolio_json(client: KISClient) -> dict:
     """포트폴리오 상태 + 시장 컨텍스트를 JSON으로 생성."""
     universe = load_universe()
     universe_syms = {s["symbol"] for s in universe}
-    holdings_raw = get_all_holdings(client)
+    holdings_raw = get_all_holdings(client) or {}  # 조회 실패(None)는 빈 표시로 처리
     cash = get_available_cash(client)
     params = load_strategy_params()
     summary = get_summary()

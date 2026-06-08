@@ -343,6 +343,52 @@ def test_strategy_yaml_has_no_leverage_inverse():
     assert "252670" not in {s.get("symbol") for s in inv}, "곱버스(252670) 제거돼야 함"
 
 
+def test_get_all_holdings_returns_none_on_failure():
+    """잔고 조회 실패는 빈 dict가 아니라 None을 반환해야 한다.
+
+    검은 월요일 회귀: get_balance가 타임아웃/실패하면 {}('보유 없음')로 오인되어
+    손절 누락 + 중복 매수 위험. 실패는 None으로 구분해야 호출부가 매매를 보류한다.
+    """
+    from src.bot.single_run import get_all_holdings
+
+    class _RaisingClient:
+        def get_balance(self):
+            raise RuntimeError("timed out")
+
+    class _BadRtClient:
+        def get_balance(self):
+            return {"rt_cd": "1", "msg1": "오류"}
+
+    class _OkEmptyClient:
+        def get_balance(self):
+            return {"rt_cd": "0", "output1": []}
+
+    assert get_all_holdings(_RaisingClient()) is None, "예외 시 None"
+    assert get_all_holdings(_BadRtClient()) is None, "rt_cd!=0 시 None"
+    assert get_all_holdings(_OkEmptyClient()) == {}, "정상·보유없음은 빈 dict"
+
+
+def test_http_retry_recovers_from_transient_error(monkeypatch):
+    """_request_with_retry: 일시적 연결오류 후 성공하면 재시도로 복구."""
+    import requests
+    import src.kis_client as kc
+    monkeypatch.setattr(kc.time, "sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 200
+
+    def _flaky(method, url, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise requests.exceptions.ConnectionError("transient")
+        return _Resp()
+
+    monkeypatch.setattr(requests, "request", _flaky)
+    resp = kc._request_with_retry("GET", "http://x")
+    assert resp.status_code == 200 and calls["n"] == 3
+
+
 def test_regime_blind_failsafe_not_bull():
     """시장데이터 조회 실패(API 불통) 시 강세(BULL)로 오판하지 않아야 한다.
 

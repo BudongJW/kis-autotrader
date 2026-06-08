@@ -50,7 +50,7 @@ def main() -> None:
 
     # 계좌 상태
     cash = get_available_cash(client)
-    holdings = get_all_holdings(client)
+    holdings = get_all_holdings(client) or {}  # 조회 실패(None)는 빈 표시로 처리
 
     holdings_value = 0
     for sym, qty in holdings.items():

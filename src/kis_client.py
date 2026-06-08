@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -12,6 +13,38 @@ import requests
 from src.config import settings
 from src.kis_auth import auth_headers
 from src.utils.rate_limit import rate_limiter
+
+# 일시적 네트워크 장애(타임아웃·연결오류·5xx) 재시도 정책.
+# 검은 월요일처럼 KIS 서버가 과부하로 타임아웃될 때, 한 번 실패로 봇이
+# 시장을 못 보는(=잔고 0 오인) 사태를 막는다. 4xx(클라이언트 오류)는 재시도 안 함.
+_HTTP_TIMEOUT = 15
+_HTTP_RETRIES = 3
+_HTTP_BACKOFF = 1.5  # 초; 시도마다 ×2 (1.5 → 3.0 → 6.0)
+
+
+def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
+    """타임아웃/연결오류/5xx에 한해 지수 백오프 재시도. 마지막 실패는 그대로 raise."""
+    kwargs.setdefault("timeout", _HTTP_TIMEOUT)
+    last_exc: Exception | None = None
+    for attempt in range(_HTTP_RETRIES):
+        try:
+            resp = requests.request(method, url, **kwargs)
+            # 5xx(서버측)는 재시도, 4xx(클라이언트)는 즉시 반환(재시도 무의미)
+            if resp.status_code >= 500 and attempt < _HTTP_RETRIES - 1:
+                last_exc = requests.exceptions.HTTPError(f"{resp.status_code} 서버오류")
+                time.sleep(_HTTP_BACKOFF * (2 ** attempt))
+                continue
+            return resp
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            if attempt < _HTTP_RETRIES - 1:
+                time.sleep(_HTTP_BACKOFF * (2 ** attempt))
+            else:
+                raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("unreachable")
 
 # 모의/실전 공통 TR_ID. 모의는 V로 시작하는 경우가 많아 분기 필요.
 TR_INQUIRE_PRICE = "FHKST01010100"  # 현재가 시세 (공통)
@@ -80,14 +113,16 @@ class KISClient:
     def _get(self, path: str, *, tr_id: str, params: dict[str, Any]) -> dict:
         rate_limiter.acquire()
         url = f"{self.base_url}{path}"
-        resp = requests.get(url, headers=auth_headers(tr_id), params=params, timeout=10)
+        resp = _request_with_retry("GET", url, headers=auth_headers(tr_id),
+                                   params=params)
         resp.raise_for_status()
         return resp.json()
 
     def _post(self, path: str, *, tr_id: str, body: dict[str, Any]) -> dict:
         rate_limiter.acquire()
         url = f"{self.base_url}{path}"
-        resp = requests.post(url, headers=auth_headers(tr_id), json=body, timeout=10)
+        resp = _request_with_retry("POST", url, headers=auth_headers(tr_id),
+                                   json=body)
         resp.raise_for_status()
         return resp.json()
 

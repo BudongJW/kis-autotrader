@@ -833,7 +833,7 @@ def post_market(client: KISClient) -> None:
         holdings_pnl: dict[str, float] = {}
         try:
             from src.bot.single_run import get_all_holdings, get_price
-            holdings = get_all_holdings(client)
+            holdings = get_all_holdings(client) or {}  # 조회 실패(None) 방어
             from src.risk_manager import load_positions
             positions = load_positions()
             for sym, qty in holdings.items():

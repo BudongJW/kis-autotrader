@@ -157,7 +157,19 @@ def _request_new_token() -> TokenBundle:
     }
     headers = {"Content-Type": "application/json"}
 
-    resp = requests.post(url, json=body, headers=headers, timeout=15)
+    # 일시적 타임아웃·연결오류(서버 과부하 등) 재시도 — 폭락일 토큰 발급 실패로
+    # 봇이 통째로 멈추는 사태 방지. 마지막 시도 실패는 그대로 raise.
+    resp = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, json=body, headers=headers, timeout=15)
+            break
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError):
+            if attempt < 2:
+                time.sleep(1.5 * (2 ** attempt))
+            else:
+                raise
     if resp.status_code != 200:
         raise RuntimeError(
             f"KIS 토큰 발급 실패 (status={resp.status_code}): {resp.text}"
