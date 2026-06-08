@@ -979,10 +979,17 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                 except Exception:
                     pass
 
+            if not best_sym:
+                print(f"    [방어] 후보 채권 데이터 없음 — 매수 불가")
             if best_sym:
                 cur_price = get_price(client, best_sym)
+                if cur_price <= 0:
+                    print(f"    [방어] {best_name} 가격 조회 실패 — 스킵")
                 if cur_price > 0:
                     qty = int(def_budget * 0.999 // cur_price)
+                    if qty <= 0:
+                        print(f"    [방어] 예산 부족 — {best_name} 1주({cur_price:,}원) "
+                              f"> 배정 {def_budget:,}원. 매수 불가")
                     if qty > 0:
                         total = qty * cur_price
                         print(f"    [방어 BUY] {best_name} {qty}주 @ {cur_price:,}원 "
