@@ -500,6 +500,35 @@ def main() -> None:
     except Exception:
         pass
 
+    # 레버리지 자율 게이트 현황 (dry-run 검증용) — 오늘 AI가 레버리지를 켤지/끌지와 이유.
+    # 읽기전용 산출(매매 코드 비변경). CLAUDE.md #6 가드를 그대로 평가해 표시한다.
+    leverage = {}
+    try:
+        from src.strategies.bear_strategy import leveraged_entry_allowed
+        lc = cfg.get("leveraged", {}) or {}
+        _rapid = regime_info.get("rapid_level") or overnight_signal.get("rapid_level") or "NONE"
+        _hmm = regime_info.get("hmm_state", "unknown")
+        _hmmc = float(regime_info.get("hmm_confidence", 0.5) or 0.5)
+        _allowed, _reason = leveraged_entry_allowed(
+            _regime, _rapid, _hmm, _hmmc, {"leveraged": lc})
+        leverage = {
+            "enabled": bool(lc.get("enabled", False)),
+            "dry_run": bool(lc.get("dry_run", True)),
+            "gate_allowed": bool(_allowed),
+            "gate_reason": _reason,
+            "hard_stop_pct": lc.get("hard_stop_pct", 0.04),
+            "max_weight": lc.get("max_weight", 0.15),
+            "regime": _regime,
+            "hmm_state": _hmm,
+            "hmm_confidence": round(_hmmc, 3),
+            "universe": [
+                {"symbol": u.get("symbol"), "name": u.get("name")}
+                for u in (lc.get("universe") or []) if u.get("market", "KR") == "KR"
+            ],
+        }
+    except Exception:
+        pass
+
     # 진짜 PnL 계산 — 자금 흐름(입금·이체·계좌변경) 분리
     # day_pnl = 오늘 실현 손익 + 미실현 평가 변화 (잔고 차이 X)
     # cumul_pnl = 전체 실현 손익 + 현재 미실현 손익
@@ -906,6 +935,9 @@ def main() -> None:
 
         # 당일 전략 플랜 (장전 신호 종합 → 오늘 스탠스)
         "day_plan": day_plan,
+
+        # 레버리지 자율 게이트 현황 (dry-run 검증)
+        "leverage": leverage,
     }
 
     PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
