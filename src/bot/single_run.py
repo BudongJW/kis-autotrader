@@ -911,6 +911,22 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                         continue
 
                     cur_price = int(sig["price"])
+
+                    # 수수료 인지 게이트: 기대변동(ATR%)이 한국 왕복비용을 못 넘으면 스킵
+                    try:
+                        from src.strategies.cost_gate import edge_clears_cost, atr_pct
+                        _h = history.tail(15)
+                        _em = atr_pct(float((_h["high"] - _h["low"]).mean()), cur_price)
+                        _ok, _reason = edge_clears_cost(_em, "KR")
+                        if not _ok:
+                            print(f"    [수수료게이트] {_reason}")
+                            log_decision(symbol, name, "skip",
+                                         f"수수료게이트: {_reason}", cur_price,
+                                         strategy="bear_inverse")
+                            continue
+                    except Exception:
+                        pass
+
                     qty = int(inv_budget * 0.999 // cur_price)
                     if qty <= 0:
                         continue

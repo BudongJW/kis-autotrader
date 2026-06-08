@@ -478,6 +478,22 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             except Exception:
                 pass
 
+            # ── 수수료 인지 게이트: 기대변동(ATR%)이 미국 왕복수수료(~0.5%)를
+            #    못 넘으면 진입 스킵. 데이트레이딩에서 수수료에 먹히는 얕은 거래 차단.
+            try:
+                from src.strategies.cost_gate import edge_clears_cost, atr_pct
+                _h = history.tail(15)
+                _avg_range = float((_h["high"] - _h["low"]).mean())
+                _em = atr_pct(_avg_range, cur_price)
+                _ok, _reason = edge_clears_cost(_em, "US")
+                if not _ok:
+                    print(f"    [수수료게이트] {_reason}")
+                    log_decision(symbol, name, "skip", f"수수료게이트: {_reason}",
+                                 cur_price, strategy="us_etf")
+                    continue
+            except Exception:
+                pass
+
             # 매수 수량 계산
             qty = int(budget // cur_price)
             if qty <= 0:

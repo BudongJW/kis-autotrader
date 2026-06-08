@@ -27,6 +27,13 @@ strategies:
     atr: 0.06
 day_plan:
   force_stance: null
+# 거래비용(편도) + 수수료 인지 진입 게이트. 기대변동(ATR%)이 왕복비용×버퍼를
+# 못 넘으면 진입 스킵(수수료에 먹히는 얕은 거래 차단). 미국 데이트레이딩에 특히 중요.
+costs:
+  kr_fee_pct: 0.00015
+  kr_tax_pct: 0.0023
+  us_fee_pct: 0.0025
+  min_edge_buffer: 1.5
 universe:
   default:
   - symbol: '395160'
