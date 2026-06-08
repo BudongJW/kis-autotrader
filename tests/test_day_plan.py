@@ -10,10 +10,21 @@ def _on(direction="neutral", nasdaq=0.0, rec="normal"):
 
 # ── 스탠스 결정 ──────────────────────────────────────────────
 
-def test_us_crash_is_risk_off():
-    """美 폭락(-4%↓)은 레짐 무관 RISK_OFF (검은 월요일)."""
+def test_us_crash_is_active_inverse():
+    """美 폭락(-4%↓)은 현금이 아니라 능동 인버스(DEFENSIVE) — 하락에서 수익 추구."""
     s = decide_stance("CAUTION", 0.27, _on("bearish", -5.11, "reduce_size"), "high", 82)
-    assert s == "RISK_OFF"
+    assert s == "DEFENSIVE"
+
+
+def test_blind_is_risk_off():
+    """시장을 못 읽으면(blind) 유일하게 RISK_OFF(관망) — '못 보면 베팅 안 함'."""
+    assert decide_stance("BULL", 0.7, _on("bullish", 1.0), "normal", 30, blind=True) == "RISK_OFF"
+    assert decide_stance("CRISIS", 0.2, _on("bearish", -6), "high", 90, blind=True) == "RISK_OFF"
+
+
+def test_crisis_is_active_inverse():
+    """위기 레짐도 (데이터가 보이면) 능동 인버스 — 현금 관망이 아니라."""
+    assert decide_stance("CRISIS", 0.2, _on("bearish", -6), "high", 90) == "DEFENSIVE"
 
 
 def test_bear_regime_defensive():
@@ -44,11 +55,19 @@ def test_bull_but_high_vol_not_risk_on():
 
 # ── 플랜 프리셋 ──────────────────────────────────────────────
 
-def test_risk_off_blocks_everything():
-    p = build_day_plan("CRISIS", 0.2, _on("bearish", -6), "high", 90)
+def test_blind_risk_off_blocks_everything():
+    """blind → RISK_OFF → 모든 신규매수 차단(현금 관망)."""
+    p = build_day_plan("CRISIS", 0.2, _on("bearish", -6), "high", 90, blind=True)
     assert p["stance"] == "RISK_OFF"
     assert p["budget_pct"] == 0.0 and p["max_new_positions"] == 0
     assert not p["allow_long"] and not p["allow_inverse"] and not p["allow_leverage"]
+
+
+def test_crisis_with_data_allows_inverse():
+    """위기라도 데이터가 보이면 DEFENSIVE → 인버스 허용(롱·레버리지는 차단)."""
+    p = build_day_plan("CRISIS", 0.2, _on("bearish", -6), "high", 90)
+    assert p["stance"] == "DEFENSIVE"
+    assert p["allow_inverse"] and not p["allow_long"] and not p["allow_leverage"]
 
 
 def test_defensive_allows_inverse_not_long():
@@ -78,9 +97,9 @@ def test_briefing_present():
 # ── 매매 연동 게이트 (escalate-only) ─────────────────────────
 
 def test_gate_blocks_buy_on_risk_off():
-    """RISK_OFF 플랜은 신규 매수를 차단한다."""
+    """RISK_OFF 플랜(=blind 관망)은 신규 매수를 차단한다."""
     from src.bot.single_run import day_plan_blocks_buy
-    p = build_day_plan("CRISIS", 0.2, _on("bearish", -6), "high", 90)
+    p = build_day_plan("CRISIS", 0.2, _on("bearish", -6), "high", 90, blind=True)
     assert p["stance"] == "RISK_OFF"
     assert day_plan_blocks_buy(p) is True
 

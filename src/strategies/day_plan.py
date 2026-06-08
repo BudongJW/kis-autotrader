@@ -31,8 +31,12 @@ _STANCE_KR = {
 
 def decide_stance(regime: str, confidence: float, overnight: dict,
                   volatility: str, vol_percentile: float,
-                  rapid_level: str = "NONE") -> str:
-    """장전 신호 → 당일 스탠스. 방어 우선 순서로 평가."""
+                  rapid_level: str = "NONE", blind: bool = False) -> str:
+    """장전 신호 → 당일 스탠스. 철학: **보이면 추세를 타고, 못 보면 관망.**
+
+    상승 추세면 롱(고확신 시 레버리지·dry-run), 하락 추세면 능동적으로 인버스로
+    수익을 노린다. 시장을 못 읽는 경우(blind)에만 현금 관망(RISK_OFF)한다.
+    """
     og = overnight or {}
     direction = og.get("direction", "neutral")
     nasdaq = og.get("nasdaq_change") or 0
@@ -40,33 +44,37 @@ def decide_stance(regime: str, confidence: float, overnight: dict,
     conf = confidence if confidence is not None else 0.5
     high_vol = (volatility == "high") or ((vol_percentile or 0) >= 75)
 
-    # 1) 위험회피: 위기 레짐 / 급락 위기 / 美 폭락(-4%↓)
-    if regime in ("CRISIS",) or rapid_level == "CRISIS" or nasdaq <= -4:
+    # 0) 블라인드: 시장 데이터를 못 읽으면 관망(유일한 RISK_OFF 트리거).
+    #    "못 보면 베팅 안 한다" — 폭락 때 API 과부하로 데이터가 빠지는 상황 방어.
+    if blind:
         return "RISK_OFF"
-    # 2) 방어: 하락장 / 지속급락 / (고변동 + 약세 오버나이트)
-    if regime == "BEAR" or rapid_level == "BEAR" or (high_vol and direction == "bearish"):
+    # 1) 하락 추세 → 능동 인버스(DEFENSIVE): 위기/하락장/지속급락/美 폭락(-4%↓)/
+    #    (고변동+약세). 현금이 아니라 인버스로 하락에서 수익을 노린다.
+    if (regime in ("CRISIS", "BEAR") or rapid_level in ("CRISIS", "BEAR")
+            or nasdaq <= -4 or (high_vol and direction == "bearish")):
         return "DEFENSIVE"
-    # 3) 신중: 경고 레짐 / 낮은 신뢰도 / reduce_size / 단발 급락경고
+    # 2) 신중: 경고 레짐 / 낮은 신뢰도 / reduce_size / 단발 급락경고
     if regime == "CAUTION" or conf < 0.4 or rec == "reduce_size" or rapid_level == "CAUTION":
         return "CAUTIOUS"
-    # 4) 공격: 강세 + 높은 신뢰도 + 약세 아님 + 정상 변동성
+    # 3) 공격: 강세 + 높은 신뢰도 + 약세 아님 + 정상 변동성 (롱·레버리지 허용)
     if regime == "BULL" and conf >= 0.6 and direction != "bearish" and not high_vol:
         return "RISK_ON"
-    # 5) 그 외 중립
+    # 4) 그 외 중립
     return "NEUTRAL"
 
 
 def build_day_plan(regime: str, confidence: float, overnight: dict,
                    volatility: str, vol_percentile: float,
                    rapid_level: str = "NONE", base_k: float = 0.5,
-                   force_stance: str | None = None) -> dict:
+                   force_stance: str | None = None, blind: bool = False) -> dict:
     """장전 신호 종합 → 당일 전략 플랜(스탠스·예산·허용전략·브리핑).
 
-    force_stance: 자동 산출을 무시하고 수동으로 스탠스를 강제(운영자 개입용).
-    단 escalate-only 원칙은 유지 — 강제 스탠스도 프리셋의 보수적 캡을 그대로 따른다.
+    기본은 **자율** — decide_stance가 신호를 보고 스탠스를 정한다.
+    force_stance: 비상 수동 브레이크(운영자 개입). 평상시엔 None(자율).
+    단 escalate-only 원칙 유지 — 강제 스탠스도 프리셋의 보수적 캡을 그대로 따른다.
     """
     auto_stance = decide_stance(regime, confidence, overnight, volatility,
-                                vol_percentile, rapid_level)
+                                vol_percentile, rapid_level, blind=blind)
     if force_stance and force_stance in _PRESETS:
         stance = force_stance
         forced = (force_stance != auto_stance)

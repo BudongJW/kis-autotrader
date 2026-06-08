@@ -25,12 +25,12 @@ strategies:
     obv: 0.06
     mfi: 0.06
     atr: 0.06
-# ── 당일 전략 수동 오버라이드 ──
-# force_stance: 자동 산출(오늘 RISK_OFF=현금)을 무시하고 스탠스를 강제.
-# 2026-06-08 운영자 결정: 검은 월요일 폭락에 1x 인버스(114800) 진입 허용 →
-#   DEFENSIVE(인버스 허용·롱/레버리지 차단·소액 캡). ★장 마감 후 제거(또는 null)★
+# ── 당일 전략 (자율) ──
+# 기본은 AI 자율 판단: 하락 추세면 능동 인버스(DEFENSIVE), 상승이면 롱/레버리지,
+# 시장을 못 읽으면(blind) 관망(RISK_OFF). 수동으로 풀고 잠글 필요 없음.
+# force_stance: 비상 수동 브레이크. 평상시 null(자율). 예) 강제 현금화: RISK_OFF
 day_plan:
-  force_stance: DEFENSIVE
+  force_stance: null
 universe:
   default:
   - symbol: '395160'
