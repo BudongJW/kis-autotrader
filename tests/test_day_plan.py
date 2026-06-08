@@ -73,3 +73,43 @@ def test_k_raised_in_high_vol():
 def test_briefing_present():
     p = build_day_plan("CAUTION", 0.27, _on("bearish", -5.11, "reduce_size"), "high", 82)
     assert "스탠스" in p["briefing"] and p["stance"] in p["briefing"]
+
+
+# ── 매매 연동 게이트 (escalate-only) ─────────────────────────
+
+def test_gate_blocks_buy_on_risk_off():
+    """RISK_OFF 플랜은 신규 매수를 차단한다."""
+    from src.bot.single_run import day_plan_blocks_buy
+    p = build_day_plan("CRISIS", 0.2, _on("bearish", -6), "high", 90)
+    assert p["stance"] == "RISK_OFF"
+    assert day_plan_blocks_buy(p) is True
+
+
+def test_gate_blocks_buy_on_zero_budget():
+    """예산 0%면(스탠스 무관) 매수 차단."""
+    from src.bot.single_run import day_plan_blocks_buy
+    assert day_plan_blocks_buy({"stance": "NEUTRAL", "budget_pct": 0.0}) is True
+
+
+def test_gate_allows_buy_on_defensive_and_above():
+    """방어 이상(예산>0) 스탠스는 매수 허용 — 사이즈 캡만 적용(escalate-only)."""
+    from src.bot.single_run import day_plan_blocks_buy
+    for regime, conf, on, vol, vp in [
+        ("BEAR", 0.5, _on("bearish", -1), "high", 80),     # DEFENSIVE
+        ("CAUTION", 0.5, _on(), "normal", 50),              # CAUTIOUS
+        ("BULL", 0.75, _on("bullish", 1.0), "normal", 35),  # RISK_ON
+    ]:
+        p = build_day_plan(regime, conf, on, vol, vp)
+        assert day_plan_blocks_buy(p) is False, p["stance"]
+
+
+def test_gate_handles_none_plan():
+    """플랜 산출 실패(None)면 차단하지 않는다(기존 동작 보존)."""
+    from src.bot.single_run import day_plan_blocks_buy
+    assert day_plan_blocks_buy(None) is False
+
+
+def test_gate_size_mult_is_escalate_only():
+    """모든 스탠스의 size_mult ≤ 1.0 — 게이트는 축소만(증폭 불가)."""
+    from src.strategies.day_plan import _PRESETS
+    assert all(0.0 <= p["size_mult"] <= 1.0 for p in _PRESETS.values())

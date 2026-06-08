@@ -67,6 +67,24 @@ def _safe_order_cash(client, symbol: str, qty: int, price: float, side: str) -> 
     """
     from src.safety.ledger import record_order_attempt
 
+    # ── 당일 전략 플랜 escalate-only 게이트 (매수만 차단, 매도=손절은 통과) ──
+    if side == "buy":
+        plan = _cached_day_plan()
+        if day_plan_blocks_buy(plan):
+            stance = (plan or {}).get("stance", "RISK_OFF")
+            reason = f"당일전략 {stance} — 신규 매수 차단(방어)"
+            if not _DAY_PLAN_MEMO.get("logged"):
+                print(f"    🛑 [당일전략] {reason}")
+                brief = (plan or {}).get("briefing")
+                if brief:
+                    print(f"       └ {brief}")
+                print(f"       └ 보유분 손절·청산은 정상 작동(매도 비차단)")
+                _DAY_PLAN_MEMO["logged"] = True
+            record_order_attempt(side, symbol, qty, price, "blocked",
+                                 gate_reason=reason)
+            return {"rt_cd": "G", "msg1": f"당일전략 차단: {reason}",
+                    "msg_cd": "DAYPLAN_BLOCK"}
+
     ok, reason = check_order(symbol, qty, price, side)
     if not ok:
         print(f"    ⚠️ 주문 차단: {reason}")
@@ -662,6 +680,68 @@ def load_canary_universe() -> list[dict]:
 
 def load_leveraged_config() -> dict:
     return load_config().get("leveraged", {}) or {}
+
+
+def compute_current_day_plan() -> dict | None:
+    """현재 config + bear_state로 '오늘의 전략 플랜'을 산출. 실패 시 None.
+
+    매수 게이트·로깅에서 공용으로 쓰는 단일 산출점. journal_quick과 동일한
+    신호 소스(market_regime / market_confidence / overnight_signal)를 사용한다.
+    """
+    try:
+        from src.strategies.day_plan import build_day_plan
+        cfg = load_config()
+        mr = cfg.get("market_regime", {}) or {}
+        og = cfg.get("overnight_signal", {}) or {}
+        # 레짐: bear_state.json(실시간 레짐) 우선, 없으면 config의 추세 매핑
+        regime = "BULL"
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            bsp = _Path("logs/bear_state.json")
+            if bsp.exists():
+                bs = _json.loads(bsp.read_text(encoding="utf-8"))
+                regime = bs.get("regime") or regime
+        except Exception:
+            pass
+        rapid_level = (mr.get("rapid_level") or og.get("rapid_level") or "NONE")
+        return build_day_plan(
+            regime,
+            float(cfg.get("market_confidence", 0.5) or 0.5),
+            og,
+            mr.get("volatility", "normal"),
+            float(mr.get("vol_percentile", 50) or 50),
+            rapid_level=rapid_level,
+        )
+    except Exception:
+        return None
+
+
+# 프로세스 단위 day_plan 메모 (cron run/loop 내 안정적 — 반복 산출·로그 스팸 방지)
+_DAY_PLAN_MEMO: dict = {"plan": None, "computed": False, "logged": False}
+
+
+def _cached_day_plan() -> dict | None:
+    """프로세스당 1회만 day_plan을 산출해 캐시(매수마다 config I/O 방지)."""
+    if not _DAY_PLAN_MEMO.get("computed"):
+        _DAY_PLAN_MEMO["plan"] = compute_current_day_plan()
+        _DAY_PLAN_MEMO["computed"] = True
+    return _DAY_PLAN_MEMO["plan"]
+
+
+def day_plan_blocks_buy(day_plan: dict | None) -> bool:
+    """당일 전략 플랜이 신규 매수를 전면 차단하는지(escalate-only 방어).
+
+    순수 함수 — RISK_OFF(또는 예산 0%)면 True. 그 외는 사이즈 캡만 적용하고
+    매수 자체는 허용하므로 False. 매도(손절·청산)에는 영향 없음.
+    """
+    if not day_plan:
+        return False
+    if day_plan.get("stance") == "RISK_OFF":
+        return True
+    if (day_plan.get("budget_pct") or 0) <= 0:
+        return True
+    return False
 
 
 def run_leveraged_strategy(client: KISClient, budget: int, holdings: dict,
@@ -1596,6 +1676,20 @@ def run_loop(dry_run: bool) -> None:
             print(f"\n[{now:%H:%M:%S}] === 전략 체크 ===")
             print(f"  예수금: {cash:,}원 | Kelly={kelly_f:.0%} "
                   f"| 신뢰도: {confidence:.0%} | {intraday['reason']}")
+
+            # ── 당일 전략 플랜 escalate-only 적용 (더 방어적으로만) ──
+            # RISK_OFF → size_factor 0(=예산 0, 모든 매수 분기 자동 스킵) + 매수는
+            # _safe_order_cash에서도 이중 차단. 그 외 스탠스는 size_mult로 축소만 한다.
+            _dplan = _cached_day_plan()
+            if _dplan:
+                _sm = _dplan.get("size_mult", 1.0)
+                print(f"  [당일전략] {_dplan.get('stance')}"
+                      f"({_dplan.get('stance_kr')}) — 사이즈 x{_sm:.0%}, "
+                      f"예산 {round((_dplan.get('budget_pct') or 0) * 100)}%")
+                if day_plan_blocks_buy(_dplan):
+                    print(f"  🛑 RISK_OFF — 신규 매수 차단(방어). 보유분 손절·청산은 계속.")
+                if _sm < 1.0:
+                    size_factor *= _sm  # escalate-only (≤1, 축소만)
 
             # ── 레짐 판단 + 전략 분기 ──
             regime_result, allocation, bear_enabled = evaluate_regime(client)
