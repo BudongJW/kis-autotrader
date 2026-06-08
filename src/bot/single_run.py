@@ -705,6 +705,7 @@ def compute_current_day_plan() -> dict | None:
         except Exception:
             pass
         rapid_level = (mr.get("rapid_level") or og.get("rapid_level") or "NONE")
+        force_stance = (cfg.get("day_plan", {}) or {}).get("force_stance") or None
         return build_day_plan(
             regime,
             float(cfg.get("market_confidence", 0.5) or 0.5),
@@ -712,6 +713,7 @@ def compute_current_day_plan() -> dict | None:
             mr.get("volatility", "normal"),
             float(mr.get("vol_percentile", 50) or 50),
             rapid_level=rapid_level,
+            force_stance=force_stance,
         )
     except Exception:
         return None

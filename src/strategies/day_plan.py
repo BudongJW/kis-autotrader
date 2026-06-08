@@ -58,10 +58,21 @@ def decide_stance(regime: str, confidence: float, overnight: dict,
 
 def build_day_plan(regime: str, confidence: float, overnight: dict,
                    volatility: str, vol_percentile: float,
-                   rapid_level: str = "NONE", base_k: float = 0.5) -> dict:
-    """장전 신호 종합 → 당일 전략 플랜(스탠스·예산·허용전략·브리핑)."""
-    stance = decide_stance(regime, confidence, overnight, volatility,
-                           vol_percentile, rapid_level)
+                   rapid_level: str = "NONE", base_k: float = 0.5,
+                   force_stance: str | None = None) -> dict:
+    """장전 신호 종합 → 당일 전략 플랜(스탠스·예산·허용전략·브리핑).
+
+    force_stance: 자동 산출을 무시하고 수동으로 스탠스를 강제(운영자 개입용).
+    단 escalate-only 원칙은 유지 — 강제 스탠스도 프리셋의 보수적 캡을 그대로 따른다.
+    """
+    auto_stance = decide_stance(regime, confidence, overnight, volatility,
+                                vol_percentile, rapid_level)
+    if force_stance and force_stance in _PRESETS:
+        stance = force_stance
+        forced = (force_stance != auto_stance)
+    else:
+        stance = auto_stance
+        forced = False
     p = dict(_PRESETS[stance])
     og = overnight or {}
     nasdaq = og.get("nasdaq_change")
@@ -81,7 +92,8 @@ def build_day_plan(regime: str, confidence: float, overnight: dict,
         allow.append("현금/방어자산만")
 
     # 한글 브리핑
-    parts = [f"오늘 스탠스 {_STANCE_KR[stance]}({stance})"]
+    _tag = "수동강제 " if forced else ""
+    parts = [f"오늘 스탠스 {_tag}{_STANCE_KR[stance]}({stance})"]
     parts.append(f"레짐 {regime}·신뢰도 {round(conf * 100)}%")
     if nasdaq is not None:
         parts.append(f"美 오버나이트 {direction}({nasdaq:+.1f}%)")
@@ -92,6 +104,8 @@ def build_day_plan(regime: str, confidence: float, overnight: dict,
 
     return {
         "stance": stance,
+        "forced": forced,
+        "auto_stance": auto_stance,
         "stance_kr": _STANCE_KR[stance],
         "budget_pct": p["budget_pct"],
         "max_new_positions": p["max_new_positions"],
