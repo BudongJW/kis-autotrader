@@ -1,0 +1,4 @@
+# 셸 스크립트·systemd 유닛은 반드시 LF (Linux VPS에서 CRLF면 bash/systemd 깨짐)
+*.sh            text eol=lf
+deploy/*.service text eol=lf
+deploy/*.timer   text eol=lf
