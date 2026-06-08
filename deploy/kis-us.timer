@@ -1,0 +1,13 @@
+[Unit]
+Description=KIS AutoTrader 미국장 야간 타이머 (평일 저녁 KST 개장 직전 시작)
+
+[Timer]
+# 서머타임(3~11월): 미국장 22:30 KST 개장 → 22:25 시작.
+# 윈터타임(11~3월): 23:30 KST 개장 → 23:25 시작도 함께 등록(이른 쪽은 개장대기
+#   한도 초과로 night_run이 자체 종료, 맞는 쪽만 실행됨).
+OnCalendar=Mon..Fri 22:25 Asia/Seoul
+OnCalendar=Mon..Fri 23:25 Asia/Seoul
+Persistent=false
+
+[Install]
+WantedBy=timers.target

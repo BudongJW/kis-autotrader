@@ -1,0 +1,16 @@
+[Unit]
+Description=KIS AutoTrader — 미국장 야간 세션 (loop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/env bash __REPO__/deploy/run_session.sh us
+# 미국장은 새벽까지 → 7.5시간 하드 한도 안전망
+TimeoutStartSec=27000
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

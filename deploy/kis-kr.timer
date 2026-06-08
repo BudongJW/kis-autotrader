@@ -1,0 +1,11 @@
+[Unit]
+Description=KIS AutoTrader 한국장 타이머 (평일 08:55 KST 개장 직전 시작)
+
+[Timer]
+# VPS 타임존이 Asia/Seoul이라는 전제(setup.sh가 설정). 평일 08:55 시작 →
+# run_loop의 개장대기 로직이 09:00 개장까지 대기. 봇은 마감 후 자체 종료.
+OnCalendar=Mon..Fri 08:55 Asia/Seoul
+Persistent=false
+
+[Install]
+WantedBy=timers.target

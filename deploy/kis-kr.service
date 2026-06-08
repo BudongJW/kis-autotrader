@@ -1,0 +1,18 @@
+[Unit]
+Description=KIS AutoTrader — 한국장 세션 (loop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# setup.sh가 User/WorkingDirectory를 실제 값으로 치환하거나, 아래를 직접 수정.
+User=__USER__
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/env bash __REPO__/deploy/run_session.sh kr
+# 봇은 자체적으로 ~340분 후 graceful 종료. 안전망으로 6.5시간 하드 한도.
+TimeoutStartSec=23400
+# 실패해도 다음 타이머까지 대기 (재시작 폭주 방지)
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
