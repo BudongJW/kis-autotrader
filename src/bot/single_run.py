@@ -1149,6 +1149,62 @@ def evaluate_regime(client: KISClient) -> tuple:
     return regime_result, allocation, True
 
 
+def run_defensive_rotation(client: KISClient, budget: int, holdings: dict,
+                           dry_run: bool, twap_engine: "TWAPEngine | None" = None) -> int:
+    """방어자산(채권)으로 능동 회전 — 급락일 롱 차단 시 '현금'이 아니라 안전자산 매수.
+
+    인버스 없이 채권만(레짐 BULL/모순 상황용). 모멘텀 1위 방어자산 1종 매수.
+    위기 시 안전자산 선호로 채권이 오르는 경우가 많아 현금 관망보다 능동적.
+    """
+    if budget < 10000:
+        return 0
+    try:
+        def_universe = load_defensive_universe()
+    except Exception:
+        return 0
+    def_syms = {s["symbol"] for s in def_universe}
+    if any(s in def_syms for s in holdings):
+        print("  [능동방어] 방어자산 이미 보유 — 추가 매수 스킵")
+        return 0
+    best_sym, best_name, best_score = None, None, -999.0
+    for stock in def_universe:
+        try:
+            history = fetch_recent_history(client, stock["symbol"], days=70)
+            if history is not None and len(history) >= 22:
+                from src.strategies.bear_strategy import weighted_momentum
+                score = weighted_momentum(history["close"])
+                if score > best_score:
+                    best_sym, best_name, best_score = stock["symbol"], stock["name"], score
+        except Exception:
+            continue
+    if not best_sym:
+        return 0
+    cur_price = get_price(client, best_sym)
+    if cur_price <= 0:
+        return 0
+    qty = int(budget * 0.999 // cur_price)
+    if qty <= 0:
+        return 0
+    total = qty * cur_price
+    reason = f"능동방어: 급락일 채권 회전 (모멘텀 {best_score:.4f})"
+    print(f"  [능동방어] 방어자산 매수: {best_name} {qty}주 @ {cur_price:,}원 "
+          f"(모멘텀 {best_score:.4f})")
+    if twap_engine:
+        twap_engine.submit(best_sym, qty, "buy", best_name, cur_price, reason=reason)
+        record_buy(best_sym, cur_price, qty, asset_type="defensive")
+        return total
+    if not dry_run:
+        resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")
+        if resp.get("rt_cd") == "0":
+            log_trade(best_sym, best_name, "buy", qty, cur_price, reason=reason)
+            record_buy(best_sym, cur_price, qty, asset_type="defensive")
+            return total
+        print(f"    주문 실패: {resp.get('msg1', '')}")
+        return 0
+    print("    (dry-run)")
+    return total
+
+
 def adopt_carry_and_verify(client: KISClient, universe: list) -> None:
     """이전 run에서 산 보유분을 손절 관리 대상으로 흡수 + 미체결 매도(phantom) 감지.
 
@@ -1313,9 +1369,12 @@ def run_once(dry_run: bool) -> None:
     cfg = load_config()
     gap = cfg.get("overnight_signal", {})
     gap_action = gap.get("recommended_action", "normal")
-    if gap_action == "skip":
-        print(f"  [오버나이트] 미국 급락 → 매수 스킵 (NASDAQ {gap.get('nasdaq_change', 0):+.1f}%)")
-        return
+    # 능동 방어: 美 급락(skip)이어도 '전체 매수 스킵(=현금)'이 아니라 롱·레버리지만
+    # 차단하고 방어자산(채권)·신호확인 인버스로는 회전한다. (현금 관망 → 능동 방어 전환)
+    gap_skip = (gap_action == "skip")
+    if gap_skip:
+        print(f"  [오버나이트] 미국 급락 (NASDAQ {gap.get('nasdaq_change', 0):+.1f}%) "
+              f"→ 롱/레버리지 차단, 방어자산·인버스로 회전")
 
     # 신뢰도가 낮으면 투자 비율 축소
     size_factor = max(0.3, confidence)  # 최소 30%, 최대 100%
@@ -1350,20 +1409,26 @@ def run_once(dry_run: bool) -> None:
         total_budget = int(cash * size_factor)
 
         if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
-            # CAUTION: 롱 비중만큼 기존 전략, 나머지 방어
+            # CAUTION: 롱 비중만큼 기존 전략, 나머지 방어 (급락일엔 롱 차단)
             long_budget = int(total_budget * allocation.long_pct)
             etf_held = any(s in universe_syms for s in holdings)
-            if not etf_held and long_budget >= 10000:
+            if not gap_skip and not etf_held and long_budget >= 10000:
                 print(f"  [CAUTION] 롱 배정: {long_budget:,}원 ({allocation.long_pct:.0%})")
                 run_etf_strategy(client, long_budget, holdings, universe, dry_run)
-            bear_budget = total_budget - long_budget
+            # 급락일엔 롱 예산도 방어로 회전
+            bear_budget = total_budget if gap_skip else total_budget - long_budget
             if bear_budget >= 10000:
                 run_bear_strategy(client, bear_budget, holdings, regime_result,
                                   allocation, dry_run)
         else:
-            # BEAR / CRISIS: 전체 하락장 전략
+            # BEAR / CRISIS: 전체 하락장 전략 (채권 회전 + 신호확인 인버스)
             run_bear_strategy(client, total_budget, holdings, regime_result,
                               allocation, dry_run)
+    elif gap_skip:
+        # 급락인데 레짐이 BULL/비하락(모순 상황): 롱 금지, 방어자산으로 회전.
+        used_def = run_defensive_rotation(client, int(cash * size_factor), holdings, dry_run)
+        if not used_def:
+            print("  [능동방어] 방어자산 매수 조건 미충족 → 현금 보유")
     else:
         # BULL 또는 하락장 전략 비활성: 기존 ETF 전략
         etf_held = any(s in universe_syms for s in holdings)
@@ -1684,10 +1749,12 @@ def run_loop(dry_run: bool) -> None:
                 cfg = load_config()
                 gap = cfg.get("overnight_signal", {})
                 gap_action = gap.get("recommended_action", "normal")
-                if gap_action == "skip":
-                    print(f"\n[{now:%H:%M:%S}] [오버나이트] 미국 급락 → 매수 스킵")
-                    time_mod.sleep(RISK_CHECK_INTERVAL)
-                    continue
+                # 능동 방어: 급락(skip)이어도 전체 스킵(현금)이 아니라 롱/레버리지만
+                # 차단하고 방어자산·인버스로 회전한다.
+                gap_skip = (gap_action == "skip")
+                if gap_skip:
+                    print(f"\n[{now:%H:%M:%S}] [오버나이트] 미국 급락 → 롱/레버리지 차단, "
+                          f"방어자산·인버스로 회전")
                 elif gap_action == "aggressive_buy":
                     size_factor = min(1.0, size_factor * 1.2)
                 elif gap_action == "reduce_size":
@@ -1695,6 +1762,7 @@ def run_loop(dry_run: bool) -> None:
             except Exception:
                 cfg = load_config()
                 gap = {}
+                gap_skip = False
 
             # 경험 기반 레짐 추천 반영
             try:
@@ -1760,12 +1828,13 @@ def run_loop(dry_run: bool) -> None:
 
                 if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
                     long_budget = int(total_budget * allocation.long_pct)
-                    if not etf_held and long_budget >= 10000:
+                    if not gap_skip and not etf_held and long_budget >= 10000:
                         etf_used = run_etf_strategy(client, long_budget, holdings,
                                                      universe, dry_run, twap_engine=twap)
                         if etf_used > 0:
                             bought_today = True
-                    bear_budget = total_budget - long_budget
+                    # 급락일엔 롱 예산도 방어로 회전
+                    bear_budget = total_budget if gap_skip else total_budget - long_budget
                     if bear_budget >= 10000:
                         bear_used = run_bear_strategy(client, bear_budget, holdings,
                                                        regime_result, allocation,
@@ -1778,6 +1847,12 @@ def run_loop(dry_run: bool) -> None:
                                                    dry_run, twap_engine=twap)
                     if bear_used > 0:
                         bought_today = True
+            elif gap_skip:
+                # 급락인데 레짐 BULL/비하락(모순): 롱 금지, 방어자산으로 능동 회전.
+                def_used = run_defensive_rotation(client, int(etf_budget_cap * size_factor),
+                                                  holdings, dry_run, twap_engine=twap)
+                if def_used > 0:
+                    bought_today = True
             else:
                 etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
 
@@ -1787,7 +1862,7 @@ def run_loop(dry_run: bool) -> None:
                 if etf_used > 0:
                     bought_today = True
 
-            if not bought_today and not etf_held:
+            if not bought_today and not etf_held and not gap_skip:
                 loop_hmm = cfg.get("market_regime", {}).get("hmm_state", "unknown")
                 if loop_hmm in ("sideways", "low_vol"):
                     income_budget = int(etf_budget_cap * size_factor * 0.5)
