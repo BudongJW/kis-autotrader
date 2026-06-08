@@ -258,6 +258,31 @@ def test_total_pnl_zero():
     assert pnl == 0 and pct == 0.0
 
 
+# ── 시장별 거래비용(수수료) — 미국을 한국요율로 과소표시하던 버그 ──
+
+def test_fee_us_vs_kr_rate():
+    """미국 거래는 ~0.25%, 한국은 0.015%(+매도세). 시장 자동 판별."""
+    from src.journal_quick import _trade_cost, _is_us_symbol
+    assert _is_us_symbol("PSQ") and _is_us_symbol("SPLG")
+    assert not _is_us_symbol("214980") and not _is_us_symbol("091160")
+    # 미국 매수 $181.44(=18144 cents) → 0.25% = 45 cents
+    assert _trade_cost({"symbol": "PSQ", "side": "buy", "amount": 18144}) == 45
+    # 한국 매수 100만원 → 0.015% = 150원
+    assert _trade_cost({"symbol": "214980", "side": "buy", "amount": 1_000_000}) == 150
+    # 한국 매도 100만원 → 수수료 150 + 거래세 2300 = 2450
+    assert _trade_cost({"symbol": "214980", "side": "sell", "amount": 1_000_000}) == 2450
+
+
+def test_fee_us_round_trip_exceeds_thin_profit():
+    """검은월요일 PSQ 사례: +0.54% 스캘핑은 미국 왕복수수료(~0.5%)에 거의 다 먹힘."""
+    from src.journal_quick import _trade_cost
+    gross = 7 * (2606 - 2592)  # +98 cents
+    cost = (_trade_cost({"symbol": "PSQ", "side": "buy", "amount": 7 * 2592})
+            + _trade_cost({"symbol": "PSQ", "side": "sell", "amount": 7 * 2606}))
+    assert cost >= 90            # 왕복 ~91 cents
+    assert gross - cost <= 10    # 실제 net은 거의 0 (본전)
+
+
 # ── 체결 미확인 매도(phantom) 감지 ───────────────────────────
 
 def test_net_position():

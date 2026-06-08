@@ -37,6 +37,31 @@ PORTFOLIO_PATH = JOURNAL_DIR / "_data" / "portfolio.json"
 CONFIG_PATH = Path("configs/strategy.yaml")
 
 
+# ── 시장별 거래비용(편도) ──
+# 한국: 위탁수수료 0.015% + 매도 증권거래세 0.23%
+# 미국: 온라인 위탁수수료 ~0.25%(거래세 없음). 한국 요율로 계산하면 16배 과소표시!
+KR_FEE_RATE = 0.00015
+KR_TAX_RATE = 0.0023
+US_FEE_RATE = 0.0025
+
+
+def _is_us_symbol(symbol: str) -> bool:
+    """미국 종목 판별 — 한국은 6자리 숫자, 미국은 알파벳 티커(PSQ, SPLG…)."""
+    s = str(symbol or "").strip()
+    return bool(s) and not s.isdigit()
+
+
+def _trade_cost(t: dict) -> int:
+    """거래 1건의 비용(수수료+세금). 시장 자동 판별로 정확히 계산."""
+    amount = abs(int(t.get("amount", 0) or 0))
+    if _is_us_symbol(t.get("symbol", "")):
+        return round(amount * US_FEE_RATE)            # 미국: 편도 0.25%
+    cost = round(amount * KR_FEE_RATE)                 # 한국: 수수료 0.015%
+    if t.get("side") == "sell":
+        cost += round(amount * KR_TAX_RATE)           # + 매도 증권거래세 0.23%
+    return cost
+
+
 def _compute_today_summary(trades: list[dict], realized: list[dict]) -> dict:
     """오늘 매매 요약. 일일 PnL·수수료·세금·최고/최악 거래 등."""
     today = datetime.now().strftime("%Y-%m-%d")
@@ -47,17 +72,14 @@ def _compute_today_summary(trades: list[dict], realized: list[dict]) -> dict:
     buys = [t for t in today_trades if t.get("side") == "buy"]
     sells = [t for t in today_trades if t.get("side") == "sell"]
 
-    # 수수료·세금 (한국 주식 기준)
-    # 매수: 0.015% 수수료
-    # 매도: 0.015% 수수료 + 0.20% 거래세
-    fee_rate = 0.00015
-    tax_rate = 0.0023  # 매도 시 (증권거래세 0.20% + 농어촌특별세 0.15% 일부 등)
-
+    # 수수료·세금 — 시장별(한국 0.015%+세 / 미국 0.25%) 정확 계산
     buy_notional = sum(t.get("amount", 0) for t in buys)
     sell_notional = sum(t.get("amount", 0) for t in sells)
-    buy_fees = round(buy_notional * fee_rate)
-    sell_fees = round(sell_notional * fee_rate)
-    sell_taxes = round(sell_notional * tax_rate)
+    buy_fees = sum(_trade_cost(t) for t in buys)
+    # 매도 비용 = 수수료(+한국 거래세). 표시용으로 수수료/세금 분리.
+    sell_taxes = sum(round(abs(int(t.get("amount", 0) or 0)) * KR_TAX_RATE)
+                     for t in sells if not _is_us_symbol(t.get("symbol", "")))
+    sell_fees = sum(_trade_cost(t) for t in sells) - sell_taxes
 
     today_realized_pnl = sum(r.get("pnl", 0) for r in today_realized)
     today_realized_pnl_net = today_realized_pnl - buy_fees - sell_fees - sell_taxes
@@ -725,12 +747,13 @@ def main() -> None:
     # 오늘 요약 (A2: 일일 자동 요약)
     today_summary = _compute_today_summary(all_trades, realized)
 
-    # 누적 비용·세금 (B1+B2)
-    fee_rate, tax_rate = 0.00015, 0.0023
+    # 누적 비용·세금 (B1+B2) — 시장별(한국/미국) 정확 계산
     total_buy_notional = sum(t["amount"] for t in all_trades if t["side"] == "buy")
     total_sell_notional = sum(t["amount"] for t in all_trades if t["side"] == "sell")
-    total_fees = round((total_buy_notional + total_sell_notional) * fee_rate)
-    total_taxes = round(total_sell_notional * tax_rate)
+    total_taxes = sum(round(abs(int(t.get("amount", 0) or 0)) * KR_TAX_RATE)
+                      for t in all_trades
+                      if t.get("side") == "sell" and not _is_us_symbol(t.get("symbol", "")))
+    total_fees = sum(_trade_cost(t) for t in all_trades) - total_taxes
     costs_summary = {
         "total_fees": total_fees,
         "total_taxes": total_taxes,
