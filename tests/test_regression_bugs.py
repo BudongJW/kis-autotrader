@@ -364,3 +364,18 @@ def test_regime_not_blind_with_data():
     from src.strategies.bear_strategy import detect_market_regime
     r = detect_market_regime(df, {}, hmm_state="unknown", hmm_confidence=0.5, cfg={})
     assert r.blind is False
+
+
+def test_crisis_allocation_has_small_inverse():
+    """사용자 방향: CRISIS도 현금 100%가 아니라 소액 인버스로 하락 수익 추구.
+
+    단 BEAR보다 작은 캡 + 현금/단기채 비중이 높아야 한다(휘둘림 방어).
+    실제 진입은 run_bear_strategy의 돌파 신호 게이트를 통과해야만 발생.
+    """
+    from src.strategies.bear_strategy import compute_bear_allocation, MarketRegimeResult
+    crisis = compute_bear_allocation(
+        MarketRegimeResult(regime="CRISIS", confidence=0.65, sma_ratio=-0.09, canary_score=1),
+        current_vol=0.45, cfg={})
+    assert crisis.inverse_pct > 0, "CRISIS도 소액 인버스 배분이 있어야 함"
+    assert crisis.inverse_pct <= 0.15, "CRISIS 인버스는 소액 캡(<=15%) 이내"
+    assert crisis.cash_pct + crisis.defensive_pct >= 0.7, "CRISIS는 방어/현금 70%+ 유지"

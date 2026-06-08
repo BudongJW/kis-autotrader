@@ -411,11 +411,18 @@ def compute_bear_allocation(
     r = regime.regime
 
     if r == "CRISIS":
-        # 위기: 현금 + 단기채 100%. 인버스도 위험할 수 있음.
+        # 위기: 강한 하락 신호 → 소액 인버스로 하락에서 수익 추구(사용자 방향).
+        # 단 변동성·휘둘림이 가장 큰 구간이므로 BEAR보다 작은 캡 + 현금/단기채를 두텁게.
+        # 진입은 인버스 돌파 신호 게이트(run_bear_strategy)라 바닥 추격(반등)은 자동 회피.
+        crisis_inv_max = alloc_cfg.get("crisis_inverse_max_pct", 0.15)
+        inv_pct = min(crisis_inv_max, crisis_inv_max * regime.confidence)
+        def_pct = 0.30
+        cash_pct = max(0.0, round(1.0 - inv_pct - def_pct, 2))
         return BearAllocation(
-            regime=r, inverse_pct=0.0, defensive_pct=0.30,
-            long_pct=0.0, cash_pct=0.70, vol_scale=vol_scale,
-            detail="CRISIS: 현금 70% + 단기채 30%. 모든 위험자산 회피.",
+            regime=r, inverse_pct=round(inv_pct, 2), defensive_pct=def_pct,
+            long_pct=0.0, cash_pct=cash_pct, vol_scale=vol_scale,
+            detail=(f"CRISIS: 인버스 {inv_pct:.0%}(소액·돌파신호 게이트) + "
+                    f"단기채 30% + 현금 {cash_pct:.0%}"),
         )
 
     if r == "BEAR":

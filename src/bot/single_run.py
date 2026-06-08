@@ -833,8 +833,9 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
     print(f"  [배분] {allocation.detail}")
 
     if r == "CRISIS":
-        print("  [하락장] CRISIS — 모든 위험자산 회피. 현금 보유.")
-        return 0
+        # CRISIS도 소액 인버스로 하락 수익을 노린다(사용자 방향). 단 진입은 아래
+        # 인버스 돌파 신호 게이트를 반드시 통과해야 하므로 바닥 추격은 자동 회피.
+        print("  [하락장] CRISIS — 소액 인버스(돌파 확인 시)로 하락 대응, 나머지 방어/현금.")
 
     used = 0
     params = load_strategy_params()
@@ -846,8 +847,8 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
     if adaptive["reason"] != "기본 파라미터":
         print(f"  [학습] {adaptive['reason']}")
 
-    # ── 인버스 ETF 매수 (BEAR 모드) ──
-    if r == "BEAR" and allocation.inverse_pct > 0:
+    # ── 인버스 ETF 매수 (BEAR·CRISIS 모드, 돌파 신호 게이트) ──
+    if r in ("BEAR", "CRISIS") and allocation.inverse_pct > 0:
         inv_budget = int(budget * allocation.inverse_pct * adaptive.get("inverse_scale", 1.0))
         inv_universe = load_inverse_universe()
         inv_syms = {s["symbol"] for s in inv_universe}
