@@ -495,7 +495,9 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
                 rt = resp.get("rt_cd")
                 print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, name, "buy", qty, int(cur_price * 100))  # cents로 기록
+                    log_trade(symbol, name, "buy", qty, int(cur_price * 100),  # cents로 기록
+                              market="US",
+                              reason=f"US 매수: 변동성 돌파 + TA {ta.total:+.0f}")
                     record_us_buy(symbol, cur_price, qty, exchange, asset_type)
                     log_decision(symbol, name, "buy",
                                  f"US 매수 (TA={ta.total:+.0f})",
@@ -543,7 +545,8 @@ def check_us_risk(client: KISClient, dry_run: bool) -> None:
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100))
+                    log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100),
+                              market="US", reason=f"매도: {reason}")
                     remove_us_position(symbol)
             else:
                 print("    (dry-run)")
@@ -573,7 +576,8 @@ def close_us_positions(client: KISClient, dry_run: bool) -> None:
             rt = resp.get("rt_cd")
             print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
-                log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100))
+                log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100),
+                          market="US", reason="매도: 미국장 마감 청산")
                 remove_us_position(symbol)
         else:
             print("      (dry-run)")

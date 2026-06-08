@@ -243,7 +243,7 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
 
         if twap_engine and label not in ("시가매도", "장마감청산"):
             # 일반 매도만 TWAP 분할. 시가매도/장마감청산은 즉시 전량.
-            twap_engine.submit(symbol, qty, "sell", tag, price)
+            twap_engine.submit(symbol, qty, "sell", tag, price, reason=f"매도: {label}")
             continue
 
         if not dry_run:
@@ -610,7 +610,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                            + (" [피라미딩]" if pyramid_mode else ""))
 
             if twap_engine:
-                twap_engine.submit(symbol, qty, "buy", name, cur_price)
+                twap_engine.submit(symbol, qty, "buy", name, cur_price, reason=_buy_reason)
                 if pyramid_mode:
                     _record_fn(symbol, cur_price, qty, atr=atr_value)
                 else:
@@ -921,7 +921,9 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                           f"(TA={ta.total:+.0f})")
 
                     if twap_engine:
-                        twap_engine.submit(symbol, qty, "buy", name, cur_price)
+                        twap_engine.submit(symbol, qty, "buy", name, cur_price,
+                                           reason=(f"인버스 매수: {r} 레짐 하락대응 — "
+                                                   f"인버스 돌파(K={k}) + TA {ta.total:+.0f}"))
                         record_buy(symbol, cur_price, qty, atr=atr_value,
                                    asset_type=asset_type)
                     elif not dry_run:
@@ -987,7 +989,9 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                               f"(모멘텀={best_score:.4f})")
 
                         if twap_engine:
-                            twap_engine.submit(best_sym, qty, "buy", best_name, cur_price)
+                            twap_engine.submit(best_sym, qty, "buy", best_name, cur_price,
+                                               reason=(f"방어자산 매수: {r} 레짐 — "
+                                                       f"모멘텀 {best_score:.4f}"))
                             record_buy(best_sym, cur_price, qty, asset_type="defensive")
                         elif not dry_run:
                             resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")
@@ -1070,7 +1074,8 @@ def run_income_strategy(client: KISClient, budget: int, holdings: dict,
     print(f"    [인컴 BUY] {best_name} {qty}주 @ {cur_price:,}원 (모멘텀={best_score:.4f})")
 
     if twap_engine:
-        twap_engine.submit(best_sym, qty, "buy", best_name, cur_price)
+        twap_engine.submit(best_sym, qty, "buy", best_name, cur_price,
+                           reason=f"인컴(커버드콜) 매수 — 모멘텀 {best_score:.4f}")
         record_buy(best_sym, cur_price, qty, asset_type="income")
     elif not dry_run:
         resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")

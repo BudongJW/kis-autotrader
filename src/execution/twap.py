@@ -51,6 +51,7 @@ class TWAPOrder:
     name: str
     total_qty: int
     signal_price: int      # 주문 시점 시그널 가격 (슬리피지 추적용)
+    reason: str = ""       # AI 판단 근거 (왜 샀나/팔았나) — 거래기록에 전달
     tranches: list[Tranche] = field(default_factory=list)
     created_at: str = ""
     last_tranche_time: float = 0.0  # epoch
@@ -151,6 +152,7 @@ class TWAPEngine:
                 "name": o.name,
                 "total_qty": o.total_qty,
                 "signal_price": o.signal_price,
+                "reason": o.reason,
                 "created_at": o.created_at,
                 "last_tranche_time": o.last_tranche_time,
                 "tranches": [asdict(t) for t in o.tranches],
@@ -166,7 +168,7 @@ class TWAPEngine:
         return any(not o.is_complete for o in self.orders)
 
     def submit(self, symbol: str, total_qty: int, side: str,
-               name: str, signal_price: int) -> TWAPOrder:
+               name: str, signal_price: int, reason: str = "") -> TWAPOrder:
         """TWAP 주문 등록."""
         # 동일 종목 기존 주문 제거
         self.orders = [o for o in self.orders if not (o.symbol == symbol and o.side == side)]
@@ -181,6 +183,7 @@ class TWAPEngine:
             name=name,
             total_qty=total_qty,
             signal_price=signal_price,
+            reason=reason,
             tranches=tranches,
             created_at=datetime.now().isoformat(timespec="seconds"),
             last_tranche_time=0.0,
@@ -280,7 +283,8 @@ class TWAPEngine:
                     order.last_tranche_time = now
 
                     log_trade(order.symbol, order.name, order.side,
-                              tranche.qty, current_price)
+                              tranche.qty, current_price,
+                              reason=order.reason or f"{order.side} (TWAP 분할체결)")
 
                     if order.side == "buy":
                         record_buy(order.symbol, current_price, tranche.qty)
