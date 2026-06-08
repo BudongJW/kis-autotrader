@@ -174,12 +174,13 @@ market_confidence: 0.12
 strong_sectors:
 - IT
 overnight_signal:
-  nasdaq_change: -4.18
-  sp500_change: 0
-  direction: bearish
-  strength: 0.84
-  confidence_boost: -0.15
-  recommended_action: skip
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: 1.34
+  sp500_change: 0.13
+  strength: 0.25
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
