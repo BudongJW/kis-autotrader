@@ -251,7 +251,7 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
             rt = resp.get("rt_cd")
             print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
-                log_trade(symbol, tag, "sell", qty, price)
+                log_trade(symbol, tag, "sell", qty, price, reason=f"매도: {label}")
                 # 보유 기간 결과 기록 (적응 학습용)
                 positions = load_positions()
                 pos = positions.get(symbol, {})
@@ -295,7 +295,8 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, tag, "sell", sell_qty, price)
+                    log_trade(symbol, tag, "sell", sell_qty, price,
+                              reason=f"{'분할매도' if is_partial else '매도'}: {reason}")
                     if is_partial:
                         remaining[symbol] = qty - sell_qty
                         positions = load_positions()
@@ -604,6 +605,9 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                        "sizing_ratio": round(sizing_ratio, 2)}
 
             _record_fn = record_pyramid if pyramid_mode else record_buy
+            _buy_reason = (f"매수: 융합 {buy_label} (확률 {fusion.final_prob:.0%}, "
+                           f"TA {ta.total:+.0f}, 돌파 {'O' if breakout_passed else 'X'})"
+                           + (" [피라미딩]" if pyramid_mode else ""))
 
             if twap_engine:
                 twap_engine.submit(symbol, qty, "buy", name, cur_price)
@@ -623,7 +627,7 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                 rt = resp.get("rt_cd")
                 print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, name, "buy", qty, cur_price)
+                    log_trade(symbol, name, "buy", qty, cur_price, reason=_buy_reason)
                     if pyramid_mode:
                         _record_fn(symbol, cur_price, qty, atr=atr_value)
                     else:
@@ -925,7 +929,9 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                         rt = resp.get("rt_cd")
                         print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                         if rt == "0":
-                            log_trade(symbol, name, "buy", qty, cur_price)
+                            log_trade(symbol, name, "buy", qty, cur_price,
+                                      reason=(f"인버스 매수: {r} 레짐 하락대응 — "
+                                              f"인버스 돌파(K={k}) + TA {ta.total:+.0f}"))
                             record_buy(symbol, cur_price, qty, atr=atr_value,
                                        asset_type=asset_type)
                             log_bear_trade(r, "inverse", symbol, cur_price, today_str)
@@ -987,7 +993,9 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                             resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")
                             rt = resp.get("rt_cd")
                             if rt == "0":
-                                log_trade(best_sym, best_name, "buy", qty, cur_price)
+                                log_trade(best_sym, best_name, "buy", qty, cur_price,
+                                          reason=(f"방어자산 매수: {r} 레짐 — "
+                                                  f"모멘텀 {best_score:.4f}"))
                                 record_buy(best_sym, cur_price, qty, asset_type="defensive")
                                 log_bear_trade(r, "defensive", best_sym, cur_price, today_str)
                                 used += total
@@ -1067,7 +1075,8 @@ def run_income_strategy(client: KISClient, budget: int, holdings: dict,
     elif not dry_run:
         resp = _safe_order_cash(client, best_sym, qty, cur_price, "buy")
         if resp.get("rt_cd") == "0":
-            log_trade(best_sym, best_name, "buy", qty, cur_price)
+            log_trade(best_sym, best_name, "buy", qty, cur_price,
+                      reason=f"인컴(커버드콜) 매수 — 모멘텀 {best_score:.4f}")
             record_buy(best_sym, cur_price, qty, asset_type="income")
         else:
             print(f"    주문 실패: {resp.get('msg1', '')}")
@@ -1535,7 +1544,8 @@ def run_loop(dry_run: bool) -> None:
                         rt = resp.get("rt_cd")
                         print(f"  응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                         if rt == "0":
-                            log_trade(symbol, tag, "sell", sell_qty, price)
+                            log_trade(symbol, tag, "sell", sell_qty, price,
+                                      reason=f"{'분할매도' if is_partial else '매도'}: {reason}")
                             if is_partial:
                                 holdings[symbol] = qty - sell_qty
                                 positions = load_positions()

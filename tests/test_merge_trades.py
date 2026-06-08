@@ -72,6 +72,54 @@ def test_merge_files_round_trip(tmp_path):
     assert rows[0]["timestamp"] == "2026-06-04T09:13:38"  # 정렬 유지
 
 
+def test_reason_preserved_through_merge(tmp_path):
+    """AI 판단 근거(reason)가 머지 후에도 보존돼야 한다 (왜 샀나/팔았나)."""
+    base = tmp_path / "trades.csv"
+    inc = tmp_path / "inc.csv"
+    with base.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=HEADER, extrasaction="ignore")
+        w.writeheader()
+        r = _row("2026-06-08T09:40:00", "114800", "buy")
+        r["reason"] = "인버스 매수: CRISIS 레짐 하락대응 — 돌파(K=0.6) + TA +20"
+        w.writerow(r)
+    with inc.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=HEADER, extrasaction="ignore")
+        w.writeheader()
+        r = _row("2026-06-08T13:00:00", "114800", "sell")
+        r["reason"] = "매도: [손절] -4%"
+        w.writerow(r)
+    merge_files(base, inc)
+    rows = list(csv.DictReader(base.open(encoding="utf-8")))
+    assert "reason" in HEADER
+    by_side = {r["side"]: r["reason"] for r in rows}
+    assert by_side["buy"].startswith("인버스 매수")
+    assert by_side["sell"] == "매도: [손절] -4%"
+
+
+def test_old_8col_row_migrates_safely(tmp_path):
+    """reason 컬럼 없는 기존(8컬럼) trades.csv도 머지 시 빈 reason으로 안전 승격."""
+    base = tmp_path / "trades.csv"
+    inc = tmp_path / "inc.csv"
+    # 구 스키마(8컬럼, reason 없음)
+    with base.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "symbol", "name", "side", "qty", "price",
+                    "amount", "balance_after"])
+        w.writerow(["2026-06-01T09:00:00", "114800", "KODEX인버스", "buy",
+                    "3", "5000", "15000", "0"])
+    with inc.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=HEADER, extrasaction="ignore")
+        w.writeheader()
+        r = _row("2026-06-08T09:40:00", "114800", "buy", price=5100)
+        r["reason"] = "인버스 매수: 돌파"
+        w.writerow(r)
+    total, added = merge_files(base, inc)
+    assert total == 2 and added == 1
+    rows = list(csv.DictReader(base.open(encoding="utf-8")))
+    old = [r for r in rows if r["timestamp"].startswith("2026-06-01")][0]
+    assert old["reason"] == ""  # 구행은 빈 reason으로 안전 승격
+
+
 def test_merge_files_missing_base(tmp_path):
     """canonical이 아직 없으면 incoming 그대로 생성."""
     base = tmp_path / "state" / "trades.csv"

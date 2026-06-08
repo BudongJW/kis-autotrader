@@ -115,6 +115,7 @@ def _load_trades() -> list[dict]:
                 "qty": qty,
                 "price": price,
                 "amount": amount,
+                "reason": (row.get("reason", "") or "").strip(),
             })
     return out
 

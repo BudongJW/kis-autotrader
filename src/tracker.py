@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 
 TRADE_LOG_PATH = Path("logs/trades.csv")
-FIELDS = ["timestamp", "symbol", "name", "side", "qty", "price", "amount", "balance_after"]
+FIELDS = ["timestamp", "symbol", "name", "side", "qty", "price", "amount",
+          "balance_after", "reason"]
 
 
 def _ensure_file() -> None:
@@ -19,6 +20,22 @@ def _ensure_file() -> None:
     if not TRADE_LOG_PATH.exists():
         with TRADE_LOG_PATH.open("w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(FIELDS)
+        return
+    # 구 스키마(reason 컬럼 없음) 복원분이면 신 스키마로 마이그레이션.
+    # (append는 위치 기반이라 헤더가 9컬럼이어야 reason이 올바르게 읽힘)
+    try:
+        with TRADE_LOG_PATH.open("r", encoding="utf-8", newline="") as f:
+            header = next(csv.reader(f), [])
+        if header and "reason" not in header:
+            with TRADE_LOG_PATH.open("r", encoding="utf-8", newline="") as f:
+                rows = list(csv.DictReader(f))
+            with TRADE_LOG_PATH.open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
+                w.writeheader()
+                for r in rows:
+                    w.writerow(r)
+    except Exception:
+        pass
 
 
 def log_trade(
@@ -37,7 +54,7 @@ def log_trade(
         csv.writer(f).writerow([
             datetime.now().isoformat(timespec="seconds"),
             symbol, name, side, qty, int(price),
-            int(qty * price), int(balance_after),
+            int(qty * price), int(balance_after), reason,
         ])
     # SQLite 원장에도 체결 기록 (CSV와 병행)
     try:

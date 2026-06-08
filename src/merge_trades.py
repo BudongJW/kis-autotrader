@@ -14,7 +14,8 @@ import csv
 import sys
 from pathlib import Path
 
-HEADER = ["timestamp", "symbol", "name", "side", "qty", "price", "amount", "balance_after"]
+HEADER = ["timestamp", "symbol", "name", "side", "qty", "price", "amount",
+          "balance_after", "reason"]
 # 같은 거래로 간주하는 키 (동일 초·종목·방향·수량·가격이면 중복 체결로 판단)
 KEY = ("timestamp", "symbol", "side", "qty", "price")
 
