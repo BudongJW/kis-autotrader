@@ -65,16 +65,25 @@ def find_unfilled_sells(net_pos: dict[str, int], broker_qty: dict[str, int]) -> 
 
 
 def merge_rows(*row_lists: list[dict]) -> list[dict]:
-    """여러 row dict 리스트를 union·dedup·timestamp 오름차순 정렬."""
-    seen: set[tuple] = set()
-    out: list[dict] = []
+    """여러 row dict 리스트를 union·dedup·timestamp 오름차순 정렬.
+
+    같은 거래(KEY 동일)가 중복 등장하면 첫 등장을 유지하되, **비어있는 reason은
+    다른 복사본의 reason으로 채운다**(근거 유실 방지 — 옛 코드가 reason 없이 기록한
+    뒤 새 코드가 reason과 함께 다시 봐도 근거가 보존되도록).
+    """
+    by_key: dict[tuple, dict] = {}
+    order: list[tuple] = []
     for rows in row_lists:
         for r in rows:
             k = tuple(str(r.get(c, "")) for c in KEY)
-            if k in seen:
-                continue
-            seen.add(k)
-            out.append(r)
+            if k not in by_key:
+                by_key[k] = dict(r)
+                order.append(k)
+            else:
+                existing = by_key[k]
+                if not (existing.get("reason") or "").strip() and (r.get("reason") or "").strip():
+                    existing["reason"] = r["reason"]
+    out = [by_key[k] for k in order]
     out.sort(key=lambda r: r.get("timestamp", ""))
     return out
 

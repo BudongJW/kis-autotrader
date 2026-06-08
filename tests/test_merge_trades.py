@@ -72,6 +72,16 @@ def test_merge_files_round_trip(tmp_path):
     assert rows[0]["timestamp"] == "2026-06-04T09:13:38"  # 정렬 유지
 
 
+def test_merge_backfills_empty_reason():
+    """같은 거래가 reason 없이 먼저, reason과 함께 나중에 등장하면 근거를 채운다."""
+    no_reason = dict(_row("2026-06-08T12:50:18", "091160", "sell"), reason="")
+    with_reason = dict(_row("2026-06-08T12:50:18", "091160", "sell"),
+                       reason="매도: 손절매 (-12.4% ≤ -3%)")
+    merged = merge_rows([no_reason], [with_reason])
+    assert len(merged) == 1
+    assert merged[0]["reason"] == "매도: 손절매 (-12.4% ≤ -3%)"
+
+
 def test_reason_preserved_through_merge(tmp_path):
     """AI 판단 근거(reason)가 머지 후에도 보존돼야 한다 (왜 샀나/팔았나)."""
     base = tmp_path / "trades.csv"
