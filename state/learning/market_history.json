@@ -1,0 +1,19 @@
+[
+  {
+    "date": "2026-06-08",
+    "regime_trend": "up",
+    "regime_volatility": "high",
+    "trend_score": 0.611,
+    "vol_percentile": 80.0,
+    "hmm_state": "bear",
+    "hmm_confidence": 0.9992446244287664,
+    "breadth": "weak",
+    "kospi_5d": -15.04,
+    "kosdaq_5d": -12.14,
+    "confidence": 0.07,
+    "strong_sectors": [
+      "IT"
+    ],
+    "k_value": 0.7
+  }
+]

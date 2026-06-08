@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.6000000000000001
+    k: 0.7
     trend_ma: 20
     optimized_at: '2026-06-07'
     train_sharpe: 0.8
@@ -25,10 +25,6 @@ strategies:
     obv: 0.06
     mfi: 0.06
     atr: 0.06
-# ── 당일 전략 (자율) ──
-# 기본은 AI 자율 판단: 하락 추세면 능동 인버스(DEFENSIVE), 상승이면 롱/레버리지,
-# 시장을 못 읽으면(blind) 관망(RISK_OFF). 수동으로 풀고 잠글 필요 없음.
-# force_stance: 비상 수동 브레이크. 평상시 null(자율). 예) 강제 현금화: RISK_OFF
 day_plan:
   force_stance: null
 universe:
@@ -165,20 +161,25 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.748
-  vol_percentile: 82.0
-  analyzed_at: '2026-06-07'
-market_confidence: 0.27
+  trend_score: 0.611
+  vol_percentile: 80.0
+  analyzed_at: 2026-06-08 10:39
+  hmm_state: bear
+  hmm_confidence: 0.9992446244287664
+  hmm_transition:
+    sideways: 0.9355097961020367
+    bear: 1.008031718888816e-10
+    bull: 0.06449020379716017
+market_confidence: 0.07
 strong_sectors:
 - IT
 overnight_signal:
+  nasdaq_change: -4.18
+  sp500_change: -2.64
   direction: bearish
-  recommended_action: reduce_size
-  nasdaq_change: -5.11
-  sp500_change: -2.81
-  strength: 1.32
-  confidence_boost: -0.15
-  source: us_post_learning
+  strength: 1.0
+  confidence_boost: -0.2
+  recommended_action: skip
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
