@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.65
     trend_ma: 20
     optimized_at: '2026-06-07'
     train_sharpe: 0.8
@@ -27,8 +27,6 @@ strategies:
     atr: 0.06
 day_plan:
   force_stance: null
-# 거래비용(편도) + 수수료 인지 진입 게이트. 기대변동(ATR%)이 왕복비용×버퍼를
-# 못 넘으면 진입 스킵(수수료에 먹히는 얕은 거래 차단). 미국 데이트레이딩에 특히 중요.
 costs:
   kr_fee_pct: 0.00015
   kr_tax_pct: 0.0023
@@ -168,26 +166,25 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.611
+  trend_score: 0.61
   vol_percentile: 86.0
-  analyzed_at: 2026-06-08 21:06
-  hmm_state: bear
-  hmm_confidence: 0.9995386556794283
+  analyzed_at: 2026-06-09 10:26
+  hmm_state: sideways
+  hmm_confidence: 0.9488375061096869
   hmm_transition:
-    sideways: 0.935499709574442
-    bear: 6.316568090636071e-11
-    bull: 0.06450029036239228
-market_confidence: 0.12
+    sideways: 0.009222538033942851
+    bear: 0.9907774619660572
+    bull: 3.484744433534816e-23
+market_confidence: 0.295
 strong_sectors:
 - IT
 overnight_signal:
-  direction: neutral
+  nasdaq_change: 0.86
+  sp500_change: 0.3
+  direction: bullish
+  strength: 0.21
+  confidence_boost: 0.025
   recommended_action: normal
-  nasdaq_change: 1.34
-  sp500_change: 0.13
-  strength: 0.25
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
