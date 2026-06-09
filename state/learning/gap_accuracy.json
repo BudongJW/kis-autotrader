@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-06-09",
+    "nasdaq_change": 0.86,
+    "sp500_change": 0.3,
+    "direction": "bullish",
+    "action": "normal",
+    "kospi_gap": 8.84,
+    "correct": true
+  }
+]
