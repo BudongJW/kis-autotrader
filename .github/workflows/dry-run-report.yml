@@ -4,6 +4,10 @@ name: Dry-Run Report
 # 매매 변경 전후로 수동 실행해 행동 차이를 검증한다. 주문 함수는 호출하지 않음.
 on:
   workflow_dispatch:
+  schedule:
+    # 세션 직전 자동 프리뷰(대시보드용). UTC 기준.
+    - cron: '50 23 * * 0-4'   # KR 개장 전 08:50 KST (월~금)
+    - cron: '20 13 * * 1-5'   # US 개장 전 22:20 KST (월~금)
 
 # autotrader/us-night과 별도 그룹 — 매매 워크플로를 방해하지 않음
 concurrency:
@@ -57,4 +61,31 @@ jobs:
           name: dry-run-report
           path: logs/dry_run_report.json
           retention-days: 30
+        continue-on-error: true
+
+      # 대시보드 노출: 리포트를 journal _data로 커밋 → 사이트에서 '봇이 뭘 할지' 표시
+      - name: Publish report to dashboard
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          repository: BudongJW/kis-trading-journal
+          token: ${{ secrets.JOURNAL_PAT }}
+          path: journal
+        continue-on-error: true
+
+      - name: Commit report to journal
+        if: always()
+        run: |
+          [ -s logs/dry_run_report.json ] || { echo "리포트 없음, 스킵"; exit 0; }
+          git -C journal config user.name "kis-autotrader-bot"
+          git -C journal config user.email "bot@kis-autotrader"
+          for i in 1 2 3; do
+            git -C journal fetch origin main && git -C journal reset --hard origin/main
+            mkdir -p journal/_data
+            cp logs/dry_run_report.json journal/_data/dry_run.json
+            git -C journal add -A
+            git -C journal diff --cached --quiet && { echo "변경 없음"; break; }
+            git -C journal commit -m "auto: dry-run preview $(date -u +'%m-%d %H:%MZ')"
+            git -C journal push && { echo "푸시 완료"; break; } || echo "재시도 $i"
+          done
         continue-on-error: true

@@ -89,26 +89,34 @@ def build_report() -> dict:
         sym = stock.get("symbol")
         is_inv = "inverse" in str(stock.get("type", ""))
         def _eval(sym=sym, is_inv=is_inv):
-            hist = fetch_recent_history(client, sym, days=70)
-            sig = inverse_breakout_signal(hist, k=k, trend_ma=ma)
-            ta = compute_ta_score(hist)
-            price = int(sig.get("price", 0) or 0)
-            h = hist.tail(15)
-            em = atr_pct(float((h["high"] - h["low"]).mean()), price)
-            fee_ok, fee_reason = edge_clears_cost(em, "KR")
-            decision = "진입가능" if (sig.get("breakout") and ta.total >= (10 if is_inv else 0) and fee_ok) else "스킵"
-            why = []
-            if not sig.get("breakout"):
-                why.append(f"미돌파({sig.get('reason','')[:30]})")
-            if ta.total < (10 if is_inv else 0):
-                why.append(f"TA부족({ta.total:+.0f})")
-            if not fee_ok:
-                why.append("수수료게이트")
-            return {"symbol": sym, "type": "인버스" if is_inv else "롱",
-                    "decision": decision, "breakout": bool(sig.get("breakout")),
-                    "ta": round(ta.total, 1), "atr_pct": round(em * 100, 2),
-                    "fee_gate_ok": fee_ok, "why_skip": " · ".join(why) or "-"}
-        candidates.append(_safe(_eval, {"symbol": sym, "decision": "평가실패"}))
+            base = {"symbol": sym, "type": "인버스" if is_inv else "롱"}
+            try:
+                hist = fetch_recent_history(client, sym, days=70)
+                if hist is None or len(hist) < 22:
+                    n = 0 if hist is None else len(hist)
+                    return {**base, "decision": "스킵",
+                            "why_skip": f"데이터 부족({n}봉<22) — 평가 불가"}
+                sig = inverse_breakout_signal(hist, k=k, trend_ma=ma)
+                ta = compute_ta_score(hist)
+                price = int(sig.get("price", 0) or 0)
+                h = hist.tail(15)
+                em = atr_pct(float((h["high"] - h["low"]).mean()), price)
+                fee_ok, _ = edge_clears_cost(em, "KR")
+                ta_floor = 10 if is_inv else 0
+                decision = "진입가능" if (sig.get("breakout") and ta.total >= ta_floor and fee_ok) else "스킵"
+                why = []
+                if not sig.get("breakout"):
+                    why.append("미돌파")
+                if ta.total < ta_floor:
+                    why.append(f"TA부족({ta.total:+.0f})")
+                if not fee_ok:
+                    why.append("수수료게이트")
+                return {**base, "decision": decision, "breakout": bool(sig.get("breakout")),
+                        "ta": round(ta.total, 1), "atr_pct": round(em * 100, 2),
+                        "fee_gate_ok": fee_ok, "why_skip": " · ".join(why) or "-"}
+            except Exception as e:
+                return {**base, "decision": "평가실패", "why_skip": f"오류: {e}"}
+        candidates.append(_eval())
     rep["entry_candidates"] = candidates
 
     # ── 요약 ──
