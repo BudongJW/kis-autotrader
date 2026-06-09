@@ -1,0 +1,60 @@
+name: Dry-Run Report
+
+# 라이브 주문 없이 '봇이 지금 무엇을, 왜 할지'를 보여주는 검증 리포트.
+# 매매 변경 전후로 수동 실행해 행동 차이를 검증한다. 주문 함수는 호출하지 않음.
+on:
+  workflow_dispatch:
+
+# autotrader/us-night과 별도 그룹 — 매매 워크플로를 방해하지 않음
+concurrency:
+  group: dry-run-report
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pykrx hmmlearn lightgbm scikit-learn yfinance
+
+      - name: Create .env (read-only 사용)
+        run: |
+          cat > .env <<'ENVEOF'
+          MODE=live
+          KIS_APPKEY=${{ secrets.KIS_APPKEY }}
+          KIS_APPSECRET=${{ secrets.KIS_APPSECRET }}
+          KIS_HTSID=${{ secrets.KIS_HTSID }}
+          KIS_ACCOUNT_NO=${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE=01
+          ENVEOF
+          sed -i 's/^[[:space:]]*//' .env
+
+      # 정확한 판단을 위해 canonical 상태 복원 (trades/positions/learning)
+      - name: Restore state
+        run: |
+          mkdir -p logs
+          JRAW="https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state"
+          curl -fsSL "$JRAW/trades.csv"     -o logs/trades.csv     || true
+          curl -fsSL "$JRAW/positions.json" -o logs/positions.json || true
+          [ -d state/learning ] && cp -f state/learning/* logs/ 2>/dev/null || true
+        continue-on-error: true
+
+      - name: Run dry-run report (주문 없음, 읽기 전용)
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: python scripts/dry_run_report.py
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-report
+          path: logs/dry_run_report.json
+          retention-days: 30
+        continue-on-error: true
