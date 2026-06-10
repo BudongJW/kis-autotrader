@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.7
     trend_ma: 20
     optimized_at: '2026-06-07'
     train_sharpe: 0.8
@@ -166,26 +166,25 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.61
-  vol_percentile: 86.0
-  analyzed_at: 2026-06-09 10:26
-  hmm_state: sideways
-  hmm_confidence: 0.9488375061096869
+  trend_score: 0.615
+  vol_percentile: 100.0
+  analyzed_at: 2026-06-10 10:35
+  hmm_state: bear
+  hmm_confidence: 0.9942072975479415
   hmm_transition:
-    sideways: 0.009222538033942851
-    bear: 0.9907774619660572
-    bull: 3.484744433534816e-23
-market_confidence: 0.215
+    bear: 0.005641075805210463
+    bull: 0.9943589241947894
+    sideways: 0.0
+market_confidence: 0.243
 strong_sectors:
 - IT
 overnight_signal:
+  nasdaq_change: -0.97
+  sp500_change: -0.26
   direction: bearish
+  strength: 0.23
+  confidence_boost: -0.027
   recommended_action: reduce_size
-  nasdaq_change: -1.47
-  sp500_change: -0.6
-  strength: 0.35
-  confidence_boost: -0.08
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
