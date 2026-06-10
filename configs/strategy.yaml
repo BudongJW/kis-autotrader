@@ -166,25 +166,25 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.615
+  trend_score: 0.613
   vol_percentile: 100.0
-  analyzed_at: 2026-06-10 10:35
+  analyzed_at: 2026-06-10 20:02
   hmm_state: bear
-  hmm_confidence: 0.9942072975479415
+  hmm_confidence: 0.9985364783861725
   hmm_transition:
-    bear: 0.005641075805210463
-    bull: 0.9943589241947894
+    bear: 0.004753381005151803
+    bull: 0.9952466189948482
     sideways: 0.0
-market_confidence: 0.243
+market_confidence: 0.291
 strong_sectors:
 - IT
 overnight_signal:
-  nasdaq_change: -0.97
-  sp500_change: -0.26
-  direction: bearish
-  strength: 0.23
-  confidence_boost: -0.027
-  recommended_action: reduce_size
+  nasdaq_change: 0.86
+  sp500_change: 0
+  direction: bullish
+  strength: 0.17
+  confidence_boost: 0.021
+  recommended_action: normal
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
