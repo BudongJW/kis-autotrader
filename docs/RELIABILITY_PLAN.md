@@ -38,7 +38,7 @@
   3. GitHub Actions 유지 + 재시도/워치독 강화(현 상태, 한계 있음).
 - **추천:** ①. **배포 패키지 준비 완료** → `deploy/` (run_session.sh + systemd
   유닛 KR/US + setup.sh + README). 사용자는 서울 리전 VPS 생성 후 `.env` 채우고
-  `bash deploy/setup.sh` 한 줄이면 상시가동. ⚠️ VPS 가동 시 Actions 크론 비활성화로
+  `bash deploy/setup.sh` 한 줄이면 상시가동(setup이 preflight 검증 통과 시에만 타이머 켬). ⚠️ VPS 가동 시 Actions 크론 비활성화로
   중복매매 방지(deploy/README.md 참고).
 
 ## 2. 검증 프로세스 (라이브 즉석 수정 금지)

@@ -48,18 +48,25 @@ done
 sudo cp deploy/kis-kr.timer deploy/kis-us.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
-echo "== 7. 타이머 활성화 =="
-sudo systemctl enable --now kis-kr.timer kis-us.timer
-systemctl list-timers 'kis-*' --no-pager || true
+echo "== 7. Preflight 검증 (live 켜기 전 읽기 전용 점검) =="
+if PYTHONPATH="$REPO" python3 scripts/preflight.py; then
+  echo "== 8. 타이머 활성화 (preflight 통과) =="
+  sudo systemctl enable --now kis-kr.timer kis-us.timer
+  systemctl list-timers 'kis-*' --no-pager || true
+else
+  echo "⛔ Preflight 실패 — 타이머를 켜지 않았습니다. 위 FAIL 사유 해결 후:"
+  echo "     python3 scripts/preflight.py   # 다시 통과 확인"
+  echo "     sudo systemctl enable --now kis-kr.timer kis-us.timer"
+fi
 
 cat <<'DONE'
 
-== 8. 남은 수동 단계 ==
+== 남은 수동 단계 ==
   1) .env에 KIS 키·계좌번호·JOURNAL_PAT 채우기 (아직 안 했다면)
-  2) 즉시 테스트(장중 아니어도 복원/영속화는 동작):
-       bash deploy/run_session.sh kr   # 한국장 (또는 us)
-  3) 로그 확인:        journalctl -u kis-kr.service -f
-  4) 다음 타이머 확인: systemctl list-timers 'kis-*'
+  2) 검증:            python3 scripts/preflight.py   # ALL PASS면 live 준비됨
+  3) 수동 1회 테스트: bash deploy/run_session.sh kr
+  4) 로그 확인:       journalctl -u kis-kr.service -f
+  5) 다음 타이머:     systemctl list-timers 'kis-*'
 
   타이머는 평일 KR 08:55 / US 22:25(+23:25 윈터) KST 자동 실행됩니다.
   봇은 마감 후 자체 종료하고, 다음 개장에 다시 시작됩니다.

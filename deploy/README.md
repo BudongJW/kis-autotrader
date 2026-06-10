@@ -29,16 +29,28 @@ cd kis-autotrader
 cp .env.example .env
 nano .env       # MODE=live, APPKEY, APPSECRET, 계좌번호, JOURNAL_PAT 채우기
 
-# 4) 셋업 (의존성·타임존·journal 클론·타이머 설치)
+# 4) 셋업 (의존성·타임존·journal 클론 + preflight 검증 후 타이머 설치)
 bash deploy/setup.sh
+#    → setup.sh가 scripts/preflight.py를 돌려 ALL PASS일 때만 타이머를 켭니다.
 
-# 5) 즉시 1회 테스트 (장외여도 복원·영속화는 동작)
+# 5) (선택) 검증만 따로: live 켜기 전 read-only go/no-go 점검
+python3 scripts/preflight.py          # 6항목 PASS/FAIL — 주문 없음
+
+# 6) 즉시 1회 테스트 (장외여도 복원·영속화는 동작)
 bash deploy/run_session.sh kr
 
-# 6) 동작 확인
+# 7) 동작 확인
 journalctl -u kis-kr.service -f       # 실시간 로그
 systemctl list-timers 'kis-*'         # 다음 실행 시각
 ```
+
+## 안전 점검 (preflight)
+
+`python3 scripts/preflight.py` 는 **라이브 켜기 전** 다음을 읽기 전용으로 확인하고
+go/no-go를 줍니다 (주문 안 함):
+1. `.env`/인증정보 로드 · 2. KIS 토큰 발급 · 3. 잔고 조회(연결) ·
+4. 시세 조회 · 5. journal 영속화 경로 · 6. 결정 파이프라인.
+**ALL PASS여야 systemd 타이머를 켜세요.** (setup.sh가 자동으로 이 게이트를 적용)
 
 ## 운영
 
