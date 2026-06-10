@@ -175,16 +175,17 @@ market_regime:
     bear: 0.004753381005151803
     bull: 0.9952466189948482
     sideways: 0.0
-market_confidence: 0.291
+market_confidence: 0.141
 strong_sectors:
 - IT
 overnight_signal:
-  nasdaq_change: 0.86
-  sp500_change: 0
-  direction: bullish
-  strength: 0.17
-  confidence_boost: 0.021
-  recommended_action: normal
+  direction: bearish
+  recommended_action: reduce_size
+  nasdaq_change: -2.57
+  sp500_change: -1.94
+  strength: 0.75
+  confidence_boost: -0.15
+  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
