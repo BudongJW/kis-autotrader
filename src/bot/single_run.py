@@ -697,6 +697,38 @@ def load_canary_universe() -> list[dict]:
     return cfg.get("universe", {}).get("canary", [])
 
 
+def _all_etf_symbols() -> set[str]:
+    """봇이 다루는 모든 KR ETF 심볼(기본·인버스·방어·인컴·레버리지).
+    추세추종·방어 다일 보유 대상 — 장마감 청산에서 제외할 집합."""
+    syms: set[str] = set()
+    for loader in (load_universe, load_inverse_universe,
+                   load_defensive_universe, load_income_universe):
+        try:
+            syms |= {s["symbol"] for s in (loader() or [])}
+        except Exception:
+            pass
+    try:
+        lev = (load_leveraged_config().get("universe") or [])
+        syms |= {u["symbol"] for u in lev if u.get("market", "KR") == "KR"}
+    except Exception:
+        pass
+    return syms
+
+
+def eod_liquidation_targets(bot_holdings: dict, cfg: dict | None = None) -> dict:
+    """장마감 청산 대상 선별.
+
+    selective(기본): **유니버스 ETF(추세·방어·인버스·인컴)는 보유**(다일 추세추종
+      원칙), 유니버스 밖 종목(급등주 등 일중 데이트레이드)만 청산 → 수수료 churn↓.
+    all: 전량 청산(기존 동작). config `kr_eod_liquidation: all` 로 복원 가능.
+    """
+    mode = ((cfg or load_config()).get("kr_eod_liquidation") or "selective")
+    if mode == "all":
+        return dict(bot_holdings)
+    etf = _all_etf_symbols()
+    return {s: q for s, q in bot_holdings.items() if s not in etf}
+
+
 def load_leveraged_config() -> dict:
     return load_config().get("leveraged", {}) or {}
 
@@ -1333,12 +1365,16 @@ def run_once(dry_run: bool) -> None:
         print("  [리스크 체크]")
         holdings = check_risk_and_sell(client, holdings, universe_syms, dry_run)
 
-    # ── 15:20 이후 미매도 청산 (봇 포지션만, 수동 보유분은 유지) ──
+    # ── 15:20 이후 미매도 청산 (선별: ETF 추세·방어는 보유, 급등주 데이트레이드만) ──
     if t > MARKET_CLOSE and holdings:
         bot_positions = load_positions()
         bot_holdings = {s: q for s, q in holdings.items() if s in bot_positions}
-        if bot_holdings:
-            sell_holdings(client, bot_holdings, universe_syms, "장마감청산", dry_run)
+        liq = eod_liquidation_targets(bot_holdings)
+        kept = {s for s in bot_holdings if s not in liq}
+        if kept:
+            print(f"  [마감보유] ETF 추세·방어 {len(kept)}종목 다음날 보유: {sorted(kept)}")
+        if liq:
+            sell_holdings(client, liq, universe_syms, "장마감청산", dry_run)
         return
 
     # ── 장중: 두 전략 실행 ──
@@ -1676,13 +1712,17 @@ def run_loop(dry_run: bool) -> None:
             if risk_sold:
                 holdings = _refresh_holdings(client, holdings)
 
-        # ── 15:20 이후 미매도 청산 (봇 포지션만, 수동 보유분은 유지) ──
+        # ── 15:20 이후 미매도 청산 (선별: ETF 추세·방어 보유, 급등주만 청산) ──
         if t > MARKET_CLOSE and holdings:
             bot_positions = load_positions()
             bot_holdings = {s: q for s, q in holdings.items() if s in bot_positions}
-            if bot_holdings:
-                print(f"\n[{now:%H:%M:%S}] === 장마감 청산 ===")
-                sell_holdings(client, bot_holdings, universe_syms, "장마감청산", dry_run)
+            liq = eod_liquidation_targets(bot_holdings)
+            kept = {s for s in bot_holdings if s not in liq}
+            if kept:
+                print(f"\n[{now:%H:%M:%S}] [마감보유] ETF 추세·방어 {sorted(kept)} 다음날 보유")
+            if liq:
+                print(f"[{now:%H:%M:%S}] === 장마감 청산(급등주) {sorted(liq)} ===")
+                sell_holdings(client, liq, universe_syms, "장마감청산", dry_run)
             time_mod.sleep(RISK_CHECK_INTERVAL)
             continue
 

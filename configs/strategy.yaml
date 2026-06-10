@@ -32,6 +32,9 @@ costs:
   kr_tax_pct: 0.0023
   us_fee_pct: 0.0025
   min_edge_buffer: 1.5
+# 장마감 청산 정책: selective=ETF 추세·방어는 다음날 보유(수수료 churn↓, 추세추종),
+#                  급등주 일중 데이트레이드만 청산. all=전량 청산(기존). 즉시 복원 가능.
+kr_eod_liquidation: selective
 universe:
   default:
   - symbol: '395160'
