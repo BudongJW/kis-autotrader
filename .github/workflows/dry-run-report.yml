@@ -18,6 +18,8 @@ jobs:
   report:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TZ: Asia/Seoul   # 봇 워크플로와 동일 시계(쿨다운 날짜 계산 일치)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
