@@ -6,14 +6,16 @@
     "trend_score": 0.607,
     "vol_percentile": 98.0,
     "hmm_state": "sideways",
-    "hmm_confidence": 0.9371339104195245,
-    "breadth": "weak",
-    "kospi_5d": -5.76,
-    "kosdaq_5d": -2.59,
-    "confidence": 0.22248,
+    "hmm_confidence": 0.9448301521620828,
+    "breadth": "mixed",
+    "kospi_5d": -5.48,
+    "kosdaq_5d": 0.46,
+    "confidence": 0.29984,
     "strong_sectors": [
-      "IT"
+      "반도체",
+      "IT",
+      "KOSDAQ150"
     ],
-    "k_value": 0.65
+    "k_value": 0.6
   }
 ]
