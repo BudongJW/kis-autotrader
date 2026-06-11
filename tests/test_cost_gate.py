@@ -47,3 +47,30 @@ def test_config_override():
     cheap = {"us_fee_pct": 0.0007, "min_edge_buffer": 1.0}  # 이벤트 저수수료
     assert round_trip_cost("US", cheap) == 0.0014
     assert edge_clears_cost(0.002, "US", cheap)[0]  # 0.2% ≥ 0.14%
+
+
+# ── 재진입 쿨다운 (US 일일 churn 방지) ──
+
+def _sell(sym, date, reason="매도: 미국장 마감 청산"):
+    return {"symbol": sym, "side": "sell", "date": date, "reason": reason}
+
+
+def test_reentry_blocked_after_recent_force_close():
+    from src.strategies.cost_gate import recently_force_closed
+    sells = [_sell("SCHG", "2026-06-11"), _sell("XLF", "2026-06-08")]
+    # 6-12 기준 2일 쿨다운: SCHG(6-11) 차단, XLF(6-08)는 만료
+    assert recently_force_closed("SCHG", sells, "2026-06-12", 2)
+    assert not recently_force_closed("XLF", sells, "2026-06-12", 2)
+
+
+def test_reentry_allowed_if_not_force_close():
+    """일반 손절·익절 매도는 쿨다운 대상 아님(마감청산만)."""
+    from src.strategies.cost_gate import recently_force_closed
+    sells = [_sell("SCHG", "2026-06-12", reason="매도: 손절매 -2%")]
+    assert not recently_force_closed("SCHG", sells, "2026-06-12", 2)
+
+
+def test_reentry_cooldown_disabled():
+    from src.strategies.cost_gate import recently_force_closed
+    sells = [_sell("SCHG", "2026-06-12")]
+    assert not recently_force_closed("SCHG", sells, "2026-06-12", 0)  # 0=끄기

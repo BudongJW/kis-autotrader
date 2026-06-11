@@ -152,6 +152,7 @@ us_session:
     stop_loss_pct: 0.025
     trailing_activate_pct: 0.02
     trailing_stop_pct: 0.01
+    reentry_cooldown_days: 2   # 최근 마감청산된 종목 재진입 금지(US 일일 churn 방지). 0=끄기
   market_open_kst: '22:30'
   market_close_kst: 05:00
   summer_time: true

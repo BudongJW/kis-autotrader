@@ -401,6 +401,18 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
 
     print(f"  [US] 예산: ${budget:.2f} (총 ${cash_usd:.2f}) | K={k}, MA={ma}")
 
+    # 재진입 쿨다운: 최근 마감청산된 종목 재진입 금지(US 일일 churn 방지, 6-10~12 SCHG)
+    from datetime import datetime as _dt
+    cooldown_days = int(strat_cfg.get("reentry_cooldown_days", 2) or 0)
+    _recent_sells = []
+    if cooldown_days > 0:
+        try:
+            from src.merge_trades import _read
+            _recent_sells = [t for t in _read("logs/trades.csv") if t.get("side") == "sell"]
+        except Exception:
+            _recent_sells = []
+    _today = _dt.now().strftime("%Y-%m-%d")
+
     # 레짐 연동: 한국장 bear면 인버스 우선
     regime_linked = cfg.get("regime_linked", True)
     prefer_inverse = False
@@ -439,6 +451,15 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
         # 이미 보유 중이면 스킵
         if symbol in us_positions:
             continue
+
+        # 재진입 쿨다운: 최근 마감청산된 종목이면 churn 방지 위해 스킵
+        if cooldown_days > 0:
+            from src.strategies.cost_gate import recently_force_closed
+            if recently_force_closed(symbol, _recent_sells, _today, cooldown_days):
+                print(f"  [US] {symbol} 최근 {cooldown_days}일 내 마감청산 — 재진입 쿨다운(churn 방지)")
+                log_decision(symbol, name, "skip", f"재진입 쿨다운 {cooldown_days}일",
+                             0, strategy="us_etf")
+                continue
 
         try:
             history = fetch_us_history(client, symbol, exchange=exchange)

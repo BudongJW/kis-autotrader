@@ -53,3 +53,33 @@ def atr_pct(atr_value: float, price: float) -> float:
     if not price or price <= 0:
         return 0.0
     return max(0.0, float(atr_value or 0.0) / float(price))
+
+
+def recently_force_closed(symbol: str, sells: list[dict], today_str: str,
+                          cooldown_days: int = 2) -> bool:
+    """최근 cooldown_days 내 같은 심볼이 마감청산(force-close)됐는지.
+
+    US 야간은 매일 마감청산하므로 같은 종목을 매일 사고팔며 수수료를 흘리는 churn이
+    생긴다(6-10~12 SCHG 사례). 최근 마감청산된 종목의 재진입을 막아 churn을 끊는다.
+    sells: 매도 기록 [{symbol, date, reason}]. reason에 '마감'/'청산' 포함=force-close.
+    """
+    from datetime import datetime, timedelta
+    if cooldown_days <= 0:
+        return False
+    try:
+        cutoff = datetime.strptime(str(today_str)[:10], "%Y-%m-%d") - timedelta(days=cooldown_days)
+    except Exception:
+        return False
+    for t in sells or []:
+        if str(t.get("symbol")) != str(symbol):
+            continue
+        r = t.get("reason") or ""
+        if "마감" not in r and "청산" not in r:
+            continue
+        try:
+            d = datetime.strptime(str(t.get("date", ""))[:10], "%Y-%m-%d")
+        except Exception:
+            continue
+        if d >= cutoff:
+            return True
+    return False
