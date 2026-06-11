@@ -234,6 +234,46 @@ def test_adopt_requires_trade_history(tmp_path, monkeypatch):
     assert n == 0
 
 
+# ── US 캐리 포지션 흡수 (KR -14% 사태의 US판 방지) ────────────
+
+def _patch_us_positions(monkeypatch, tmp_path):
+    import src.bot.us_session as us
+    monkeypatch.setattr(us, "US_POSITIONS_PATH", tmp_path / "us_positions.json")
+    return us
+
+
+def test_adopt_us_carried_positions(tmp_path, monkeypatch):
+    """봇이 거래한 US 보유분만 흡수, 수동 보유분 보호 (KR adopt와 동일 정책)."""
+    us = _patch_us_positions(monkeypatch, tmp_path)
+    broker = {
+        "SCHG": {"qty": 7, "avg_price": 25.92, "current_price": 26.06, "exchange": "AMEX"},
+        "AAPL": {"qty": 1, "avg_price": 200.0, "current_price": 201.0, "exchange": "NASD"},
+    }
+    n = us.adopt_us_carried_positions(broker, {"SCHG"}, traded_symbols={"SCHG"})
+    assert n == 1
+    pos = us.load_us_positions()
+    assert "SCHG" in pos and pos["SCHG"]["adopted"] is True
+    assert pos["SCHG"]["qty"] == 7 and pos["SCHG"]["buy_price"] == 25.92
+    assert "AAPL" not in pos  # 거래이력 없는 수동 보유분 → 보호
+
+
+def test_adopt_us_skips_already_tracked(tmp_path, monkeypatch):
+    us = _patch_us_positions(monkeypatch, tmp_path)
+    us.save_us_positions({"SCHG": {"buy_price": 25.50, "qty": 7}})
+    broker = {"SCHG": {"qty": 7, "avg_price": 99.0, "current_price": 26.0}}
+    n = us.adopt_us_carried_positions(broker, {"SCHG"}, {"SCHG"})
+    assert n == 0
+    assert us.load_us_positions()["SCHG"]["buy_price"] == 25.50  # 원본 유지
+
+
+def test_adopt_us_out_of_universe_but_traded(tmp_path, monkeypatch):
+    """유니버스 개편으로 빠진 종목도 거래이력 있으면 청산까지 관리."""
+    us = _patch_us_positions(monkeypatch, tmp_path)
+    broker = {"XLF": {"qty": 3, "avg_price": 50.0, "current_price": 49.0, "exchange": "AMEX"}}
+    n = us.adopt_us_carried_positions(broker, universe_symbols=set(), traded_symbols={"XLF"})
+    assert n == 1
+
+
 # ── 누적 손익 계산 (자금흐름 혼입 버그 수정) ──────────────────
 
 def test_total_pnl_excludes_deposits():

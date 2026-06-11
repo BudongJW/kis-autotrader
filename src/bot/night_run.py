@@ -103,6 +103,10 @@ def run_once(dry_run: bool) -> None:
 
     client = KISClient()
 
+    # 캐리 흡수: 이전 세션이 중간에 죽어 남은 보유분을 손절·청산 관리 대상으로 복구
+    from src.bot.us_session import adopt_us_carry_and_verify
+    adopt_us_carry_and_verify(client)
+
     # 리스크 체크
     check_us_risk(client, dry_run)
 
@@ -139,6 +143,10 @@ def run_loop(dry_run: bool) -> None:
     print(f"{'=' * 60}")
 
     client = KISClient()
+
+    # 캐리 흡수: 이전 세션이 중간에 죽어 남은 보유분을 손절·청산 관리 대상으로 복구
+    from src.bot.us_session import adopt_us_carry_and_verify
+    adopt_us_carry_and_verify(client)
 
     last_strategy_check = 0.0
     bought_today = False

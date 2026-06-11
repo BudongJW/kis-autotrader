@@ -321,6 +321,70 @@ def remove_us_position(symbol: str) -> None:
     save_us_positions(positions)
 
 
+def adopt_us_carried_positions(broker_holdings: dict, universe_symbols: set,
+                               traded_symbols: set) -> int:
+    """이전 세션에서 산 US 캐리 포지션을 us_positions.json에 흡수(손절·청산 관리 대상화).
+
+    KR -14% 방치 사태(6-08)와 같은 버그 클래스의 US판 방지: 세션이 중간에 죽으면
+    (타임아웃·스케줄 공백·취소) 보유 포지션이 다음 run의 빈 us_positions에 안 잡혀
+    손절도 마감청산도 안 되는 유령이 된다. KR adopt_carried_positions와 동일 정책 —
+    **봇 거래이력(traded)** 보유분만 흡수, 거래이력 없는 수동 보유분은 보호.
+    universe_symbols는 참고용.
+
+    Args:
+        broker_holdings: get_us_holdings() 결과 {sym: {qty, avg_price, current_price, exchange}}
+        universe_symbols: US 유니버스 심볼 집합 (참고용)
+        traded_symbols: 봇이 거래한 심볼 집합 (canonical trades.csv 기준)
+    Returns: 흡수한 포지션 수
+    """
+    positions = load_us_positions()
+    adopted = 0
+    for sym, info in (broker_holdings or {}).items():
+        if sym in positions:
+            continue
+        if sym not in traded_symbols:
+            continue  # 봇 거래이력 없는 수동 보유분 → 보호
+        try:
+            buy_p = float(info.get("avg_price", 0) or 0)
+            qty = int(float(info.get("qty", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+        if buy_p <= 0 or qty <= 0:
+            continue
+        cur = float(info.get("current_price", buy_p) or buy_p)
+        positions[sym] = {
+            "buy_price": buy_p,
+            "buy_time": datetime.now(KST).isoformat(),
+            "qty": qty,
+            "exchange": info.get("exchange", "NASD"),
+            "asset_type": "us_long",
+            "peak_price": max(buy_p, cur),
+            "adopted": True,
+        }
+        adopted += 1
+    if adopted:
+        save_us_positions(positions)
+    return adopted
+
+
+def adopt_us_carry_and_verify(client: KISClient) -> None:
+    """US 세션 시작 시 캐리 포지션 흡수 — broker 잔고와 대조해 유령 포지션 복구."""
+    try:
+        from src.merge_trades import traded_symbols
+        broker = get_us_holdings(client)
+        if not broker:
+            return
+        cfg = load_us_config()
+        uni = {s["symbol"] for s in (cfg.get("universe") or [])}
+        traded = traded_symbols("logs/trades.csv")
+        n = adopt_us_carried_positions(broker, uni, traded)
+        if n:
+            print(f"  [US 캐리 흡수] 이전 세션 보유분 {n}개를 손절·청산 관리 대상으로 복구")
+            log.info("us_carry_adopted", count=n)
+    except Exception as e:
+        log.warning("us_carry_adopt_skipped", error=str(e))
+
+
 # ──────────────────────────────────────────────────────────
 # 미국장 리스크 관리
 # ──────────────────────────────────────────────────────────

@@ -25,8 +25,9 @@ echo "[$(date '+%F %T %Z')] === 세션 시작 (mode=$MODE) ==="
 git pull --rebase --autostash origin main || echo "git pull 스킵"
 
 # 2) 상태 복원 (positions/trades canonical from journal, learning from repo)
-curl -fsSL "$JRAW/trades.csv"      -o logs/trades.csv      && echo "trades.csv 복원"      || echo "trades.csv 없음"
-curl -fsSL "$JRAW/positions.json"  -o logs/positions.json  && echo "positions.json 복원"  || echo "positions.json 없음"
+curl -fsSL "$JRAW/trades.csv"        -o logs/trades.csv        && echo "trades.csv 복원"        || echo "trades.csv 없음"
+curl -fsSL "$JRAW/positions.json"    -o logs/positions.json    && echo "positions.json 복원"    || echo "positions.json 없음"
+curl -fsSL "$JRAW/us_positions.json" -o logs/us_positions.json && echo "us_positions.json 복원" || echo "us_positions 없음"
 [ -d state/learning ] && cp -f state/learning/* logs/ 2>/dev/null && echo "학습 상태 복원" || true
 
 # 3) 봇 실행 (장 시작~마감까지 --loop, 자체 종료)
@@ -46,6 +47,7 @@ if [ -d "$JDIR/.git" ]; then
     python -m src.merge_trades "$JDIR/state/trades.csv" logs/trades.csv || true
     cp "$JDIR/state/trades.csv" logs/trades.csv 2>/dev/null || true
     [ -s logs/positions.json ] && cp logs/positions.json "$JDIR/state/positions.json" || true
+    [ -s logs/us_positions.json ] && cp logs/us_positions.json "$JDIR/state/us_positions.json" || true
     python -m src.journal_quick || true   # journal/_data/portfolio.json 재생성
     git -C "$JDIR" add -A
     if git -C "$JDIR" diff --cached --quiet; then echo "영속화: 변경 없음"; break; fi

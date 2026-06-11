@@ -119,6 +119,15 @@ jobs:
             && echo "canonical trades.csv 복원" || echo "canonical 없음"
         continue-on-error: true
 
+      # us_positions.json git 영속화: artifact는 이전 run을 못 봐 매 run 리셋 →
+      # 세션이 중간에 죽으면 US 보유분이 유령이 되는 문제(KR -14% 사태의 US판) 방지.
+      - name: Restore us_positions.json
+        run: |
+          mkdir -p logs
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/us_positions.json" -o logs/us_positions.json \
+            && echo "us_positions.json 복원(git canonical)" || echo "us_positions 없음 — 캐리 흡수로 보완"
+        continue-on-error: true
+
       # 학습 상태 복원 (LGBM 모델·경험·정확도 — repo state/learning)
       - name: Restore learning state
         run: |
@@ -172,6 +181,9 @@ jobs:
             git -C journal fetch origin main && git -C journal reset --hard origin/main
             python -m src.merge_trades journal/state/trades.csv logs/trades.csv || true
             cp journal/state/trades.csv logs/trades.csv 2>/dev/null || true
+            # us_positions.json도 canonical로 영속화(세션 사망 시 다음 run이 기억)
+            mkdir -p journal/state
+            [ -s logs/us_positions.json ] && cp logs/us_positions.json journal/state/us_positions.json || true
             python -m src.journal_quick || true
             git -C journal add -A
             if git -C journal diff --cached --quiet; then echo "변경 없음"; break; fi
