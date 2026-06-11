@@ -74,3 +74,11 @@ def test_reentry_cooldown_disabled():
     from src.strategies.cost_gate import recently_force_closed
     sells = [_sell("SCHG", "2026-06-12")]
     assert not recently_force_closed("SCHG", sells, "2026-06-12", 0)  # 0=끄기
+
+
+def test_reentry_works_with_raw_timestamp_rows():
+    """trades.csv 원본 행(timestamp 키)도 인식 — 하니스가 잡은 inert 버그 회귀."""
+    from src.strategies.cost_gate import recently_force_closed
+    raw = [{"symbol": "SCHG", "side": "sell", "timestamp": "2026-06-12T04:45:21",
+            "reason": "매도: 미국장 마감 청산"}]
+    assert recently_force_closed("SCHG", raw, "2026-06-12", 2)

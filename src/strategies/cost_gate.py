@@ -76,8 +76,10 @@ def recently_force_closed(symbol: str, sells: list[dict], today_str: str,
         r = t.get("reason") or ""
         if "마감" not in r and "청산" not in r:
             continue
+        # trades.csv 원본 행은 'timestamp', 가공 행은 'date' — 둘 다 지원
+        raw_date = t.get("date") or t.get("timestamp") or ""
         try:
-            d = datetime.strptime(str(t.get("date", ""))[:10], "%Y-%m-%d")
+            d = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
         except Exception:
             continue
         if d >= cutoff:
