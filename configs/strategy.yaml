@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.65
     trend_ma: 20
     optimized_at: '2026-06-07'
     train_sharpe: 0.8
@@ -32,8 +32,6 @@ costs:
   kr_tax_pct: 0.0023
   us_fee_pct: 0.0025
   min_edge_buffer: 1.5
-# 장마감 청산 정책: selective=ETF 추세·방어는 다음날 보유(수수료 churn↓, 추세추종),
-#                  급등주 일중 데이트레이드만 청산. all=전량 청산(기존). 즉시 복원 가능.
 kr_eod_liquidation: selective
 universe:
   default:
@@ -169,26 +167,25 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.613
-  vol_percentile: 100.0
-  analyzed_at: 2026-06-10 20:02
-  hmm_state: bear
-  hmm_confidence: 0.9985364783861725
+  trend_score: 0.607
+  vol_percentile: 98.0
+  analyzed_at: 2026-06-11 10:45
+  hmm_state: sideways
+  hmm_confidence: 0.9371339104195245
   hmm_transition:
-    bear: 0.004753381005151803
-    bull: 0.9952466189948482
-    sideways: 0.0
-market_confidence: 0.141
+    sideways: 0.01213531127576145
+    bear: 0.9878646887241598
+    bull: 7.883860681733113e-14
+market_confidence: 0.222
 strong_sectors:
 - IT
 overnight_signal:
+  nasdaq_change: -1.98
+  sp500_change: 0
   direction: bearish
+  strength: 0.4
+  confidence_boost: -0.048
   recommended_action: reduce_size
-  nasdaq_change: -2.57
-  sp500_change: -1.94
-  strength: 0.75
-  confidence_boost: -0.15
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
