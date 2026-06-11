@@ -496,14 +496,24 @@ def pre_market(client: KISClient) -> None:
     if removed_sectors and not added_sectors:
         diary.record_change("섹터", "강세이탈", list(removed_sectors), "없음")
 
-    # 강세 섹터 ETF를 동적 유니버스에 추가
+    # 강세 섹터 ETF를 동적 유니버스에 추가 (일봉이 없는 죽은 심볼은 제외 —
+    # 098560이 매일 재추가돼 봇·하니스에서 평가실패 노이즈를 내던 문제)
     current_syms = {s["symbol"] for s in cfg.get("universe", {}).get("default", [])}
     dynamic_adds = []
     for name in strong_sectors:
         if name in SECTOR_ETFS:
             sym = SECTOR_ETFS[name]
-            if sym not in current_syms:
-                dynamic_adds.append({"symbol": sym, "name": f"KODEX {name}"})
+            if sym in current_syms:
+                continue
+            try:
+                hist = fetch_recent_history(client, sym, days=30)
+                if hist is None or len(hist) < 22:
+                    print(f"  [동적 유니버스] {name}({sym}) 일봉 부족/없음 — 제외(죽은 심볼)")
+                    continue
+            except Exception:
+                print(f"  [동적 유니버스] {name}({sym}) 일봉 조회 실패 — 제외")
+                continue
+            dynamic_adds.append({"symbol": sym, "name": f"KODEX {name}"})
     cfg["dynamic_universe"] = dynamic_adds
     if dynamic_adds:
         names = [d["name"] for d in dynamic_adds]

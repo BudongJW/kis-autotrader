@@ -119,9 +119,61 @@ def build_report() -> dict:
         candidates.append(_eval())
     rep["entry_candidates"] = candidates
 
+    # ── US 진입 후보 (돌파·TA·수수료게이트·재진입쿨다운) ──
+    us_candidates = []
+    try:
+        from src.bot.us_session import load_us_config, load_us_positions, fetch_us_history
+        from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
+        from src.strategies.cost_gate import recently_force_closed
+        from src.merge_trades import _read as _read_trades
+        from datetime import datetime as _dt
+        ucfg = load_us_config()
+        us_pos = load_us_positions()
+        sc = ucfg.get("strategy", {})
+        uk, uma = sc.get("k", 0.5), sc.get("trend_ma", 20)
+        ta_min = sc.get("ta_min_score", 15)
+        cooldown = int(sc.get("reentry_cooldown_days", 2) or 0)
+        sells = [t for t in _read_trades("logs/trades.csv") if t.get("side") == "sell"]
+        today = _dt.now().strftime("%Y-%m-%d")
+        ustrat = VolatilityBreakoutStrategy(k=uk, trend_ma=uma)
+        for stock in (ucfg.get("universe") or []):
+            sym = stock.get("symbol"); exch = stock.get("exchange", "NASD")
+            base = {"symbol": sym, "type": stock.get("type", "long")}
+            try:
+                if sym in us_pos:
+                    us_candidates.append({**base, "decision": "보유중", "why_skip": "-"})
+                    continue
+                if cooldown and recently_force_closed(sym, sells, today, cooldown):
+                    us_candidates.append({**base, "decision": "스킵",
+                                          "why_skip": f"재진입쿨다운({cooldown}일, churn방지)"})
+                    continue
+                hist = fetch_us_history(client, sym, exchange=exch)
+                sig = ustrat.generate_signal(sym, hist)
+                ta = compute_ta_score(hist)
+                price = float(sig.price)
+                h = hist.tail(15)
+                em = atr_pct(float((h["high"] - h["low"]).mean()), price)
+                fee_ok, _ = edge_clears_cost(em, "US")
+                bo = (sig.type.value == "BUY")
+                decision = "진입가능" if (bo and ta.total >= ta_min and fee_ok) else "스킵"
+                why = []
+                if not bo: why.append("미돌파")
+                if ta.total < ta_min: why.append(f"TA부족({ta.total:+.0f})")
+                if not fee_ok: why.append("수수료게이트")
+                us_candidates.append({**base, "decision": decision, "breakout": bo,
+                                      "ta": round(ta.total, 1), "atr_pct": round(em * 100, 2),
+                                      "why_skip": " · ".join(why) or "-"})
+            except Exception as e:
+                us_candidates.append({**base, "decision": "평가실패", "why_skip": f"오류: {e}"})
+    except Exception as e:
+        us_candidates = [{"symbol": "(US 평가 불가)", "decision": "평가실패", "why_skip": str(e)}]
+    rep["us_entry_candidates"] = us_candidates
+
     # ── 요약 ──
     would_buy = [c["symbol"] for c in candidates if c.get("decision") == "진입가능"]
     would_sell = [r["symbol"] for r in risk if r.get("would_sell")]
+    us_would_buy = [c["symbol"] for c in us_candidates if c.get("decision") == "진입가능"]
+    rep["us_summary"] = {"would_buy": us_would_buy}
     rep["summary"] = {
         "would_buy": would_buy,
         "would_sell": would_sell,
@@ -147,8 +199,14 @@ def print_report(rep: dict) -> None:
         if isinstance(r, dict):
             print(f"  {r['symbol']} {r.get('qty')}주 @{r.get('price'):,} → "
                   f"{'매도' if r.get('would_sell') else '보유'} ({r.get('reason')})")
-    print("\n[신규 진입 후보]")
+    print("\n[신규 진입 후보 — KR]")
     for c in rep.get("entry_candidates", []):
+        if isinstance(c, dict):
+            print(f"  {c.get('symbol')} [{c.get('type')}] {c.get('decision')} "
+                  f"(돌파={c.get('breakout')}, TA={c.get('ta')}, ATR%={c.get('atr_pct')}) "
+                  f"{c.get('why_skip')}")
+    print("\n[신규 진입 후보 — US (다음 야간 세션)]")
+    for c in rep.get("us_entry_candidates", []):
         if isinstance(c, dict):
             print(f"  {c.get('symbol')} [{c.get('type')}] {c.get('decision')} "
                   f"(돌파={c.get('breakout')}, TA={c.get('ta')}, ATR%={c.get('atr_pct')}) "
