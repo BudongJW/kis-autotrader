@@ -6,15 +6,14 @@
     "trend_score": 0.612,
     "vol_percentile": 100.0,
     "hmm_state": "bull",
-    "hmm_confidence": 0.9883841328879008,
+    "hmm_confidence": 0.986132689559673,
     "breadth": "moderate",
-    "kospi_5d": 5.16,
-    "kosdaq_5d": 8.47,
-    "confidence": 0.65,
+    "kospi_5d": 4.73,
+    "kosdaq_5d": 9.16,
+    "confidence": 0.63,
     "strong_sectors": [
       "반도체",
       "2차전지",
-      "바이오",
       "자동차",
       "금융",
       "IT",
@@ -23,6 +22,6 @@
       "KOSDAQ150",
       "미국나스닥"
     ],
-    "k_value": 0.54
+    "k_value": 0.46
   }
 ]
