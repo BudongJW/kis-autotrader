@@ -32,6 +32,22 @@ costs:
   kr_tax_pct: 0.0023
   us_fee_pct: 0.0025
   min_edge_buffer: 1.5
+# 갭업 회복 진입: 크래시 후 TA 마이너스로 정당한 V회복 갭을 전부 놓치는 사각지대 보완.
+# 개장 윈도 한정(오후 추격 불가). 모의계좌가 없어 검증은 '소액 실전'으로 한다 —
+# enabled=true로 봇이 스스로 진입하되, size_factor·하드손절·max_krw로 손실을 소액에 묶는다.
+# (자율 우선. 켜고 끄는 결정을 사람이 매번 하면 자동매매 의미가 없음.)
+gap_recovery:
+  enabled: true
+  window_start_kst: '09:00'
+  window_end_kst: '09:20'
+  gap_min_pct: 1.5
+  require_above_open: true
+  catalyst_action: aggressive_buy
+  exclude_regimes:
+  - CRISIS
+  size_factor: 0.4
+  hard_stop_pct: 0.03
+  max_krw: 300000   # 1회 진입 상한(소액 실전 검증). 손실은 이 금액의 하드손절폭으로 제한.
 kr_eod_liquidation: selective
 universe:
   default:

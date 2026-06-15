@@ -232,6 +232,30 @@ def get_price(client: KISClient, symbol: str) -> int:
     return 0
 
 
+def get_quote(client: KISClient, symbol: str) -> dict:
+    """현재가/시가/전일종가/고저를 한 번에 반환(갭 계산용). 실패 시 0으로 채운다."""
+    out = {"price": 0, "open": 0, "prev_close": 0, "high": 0, "low": 0}
+    try:
+        resp = client.get_price(symbol)
+        if resp.get("rt_cd") == "0":
+            o = resp["output"]
+            out["price"] = int(o.get("stck_prpr", 0) or 0)
+            out["open"] = int(o.get("stck_oprc", 0) or 0)
+            # stck_sdpr = 기준가(전일종가). 없으면 현재가-전일대비로 역산.
+            out["prev_close"] = int(o.get("stck_sdpr", 0) or 0)
+            out["high"] = int(o.get("stck_hgpr", 0) or 0)
+            out["low"] = int(o.get("stck_lwpr", 0) or 0)
+            if out["prev_close"] <= 0 and out["price"] > 0:
+                vrss = int(o.get("prdy_vrss", 0) or 0)
+                sign = o.get("prdy_vrss_sign", "3")  # 1·2 상승, 4·5 하락
+                if sign in ("4", "5"):
+                    vrss = -abs(vrss)
+                out["prev_close"] = out["price"] - vrss
+    except Exception:
+        pass
+    return out
+
+
 def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: set,
                   label: str, dry_run: bool,
                   twap_engine: TWAPEngine | None = None) -> None:
@@ -319,6 +343,75 @@ def check_risk_and_sell(client: KISClient, holdings: dict[str, int],
                     remaining[symbol] = qty - sell_qty
 
     return remaining
+
+
+def run_gap_recovery_strategy(client: KISClient, budget: int, holdings: dict,
+                              universe: list[dict], regime: str | None,
+                              blind: bool, dry_run: bool) -> int:
+    """개장 갭업 회복 진입 (롱 ETF 한정). 사용한 금액을 반환.
+
+    크래시 후 TA 합성점수가 마이너스에 갇혀 펀더멘털 V회복 갭상승을 변동성돌파/TA
+    게이트가 전부 veto하는 사각지대를 보완한다(2026-06-15 종전 랠리 누락 사례).
+    **개장 윈도(기본 09:00~09:20) 한정** — 오후 추격매수는 구조적으로 불가.
+    config `gap_recovery.enabled=false`면 즉시 no-op(검증 전 라이브 발주 금지).
+    """
+    cfg = load_config()
+    gr = cfg.get("gap_recovery", {}) or {}
+    if not gr.get("enabled", False):
+        return 0  # 검증 전 휴면 — dry-run 리포트에서만 평가 노출
+
+    from src.strategies.gap_recovery import gap_recovery_signal
+    universe_syms = {s["symbol"] for s in universe}
+    if any(s in holdings for s in universe_syms):
+        return 0  # 이미 유니버스 보유 — 중복 진입 방지
+
+    overnight = cfg.get("overnight_signal", {}) or {}
+    action = overnight.get("recommended_action", "normal")
+    now_hhmm = _now().strftime("%H:%M")
+    size_factor = float(gr.get("size_factor", 0.4))
+    hard_stop = float(gr.get("hard_stop_pct", 0.03))
+    max_krw = int(gr.get("max_krw", 0) or 0)  # 1회 진입 상한(소액 실전 검증). 0=무제한
+    alloc = max(0, int(budget * size_factor))
+    if max_krw > 0:
+        alloc = min(alloc, max_krw)
+    if alloc < 10000:
+        print(f"  [갭회복] 배정 {alloc:,}원 < 1만원 — 스킵")
+        return 0
+
+    for stock in universe:
+        symbol = stock["symbol"]
+        name = stock["name"]
+        q = get_quote(client, symbol)
+        sig = gap_recovery_signal(
+            prev_close=q["prev_close"], today_open=q["open"], cur_price=q["price"],
+            now_hhmm=now_hhmm, overnight_action=action, regime=regime or "?",
+            blind=bool(blind), cfg=gr)
+        if not sig.is_buy:
+            print(f"  [갭회복] {name}: 스킵 — {sig.reason}")
+            continue
+        cur_price = q["price"]
+        qty = int(alloc * 0.999 // cur_price)
+        if qty <= 0:
+            print(f"  [갭회복] {name}: 1주 예산 부족({alloc:,}원/{cur_price:,}원)")
+            continue
+        total = qty * cur_price
+        buy_reason = f"갭회복 진입: {sig.reason} (하드손절 -{hard_stop:.0%})"
+        print(f"  [갭회복 BUY] {name} {qty}주 @ {cur_price:,}원 = {total:,}원 — {sig.reason}")
+        if dry_run:
+            print("      (dry-run — 주문 미전송)")
+            return total
+        resp = _safe_order_cash(client, symbol, qty, cur_price, "buy")
+        print(f"      응답: rt_cd={resp.get('rt_cd')}, msg={resp.get('msg1', '')}")
+        if resp.get("rt_cd") == "0":
+            log_trade(symbol, name, "buy", qty, cur_price, reason=buy_reason)
+            record_buy(symbol, cur_price, qty, asset_type=stock.get("type", "etf"))
+            from src.risk_manager import save_positions
+            pos = load_positions()
+            if symbol in pos:
+                pos[symbol]["initial_risk"] = round(cur_price * hard_stop, 2)
+                save_positions(pos)
+            return total
+    return 0
 
 
 def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
@@ -1463,7 +1556,17 @@ def run_once(dry_run: bool) -> None:
     # ── 레짐 판단 + 전략 분기 ──
     regime_result, allocation, bear_enabled = evaluate_regime(client)
 
-    if bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
+    # ── 개장 갭업 회복 진입(휴면: gap_recovery.enabled=false면 no-op) ──
+    # 분기보다 먼저 평가 — 크래시 후 TA 마이너스로 V회복 갭을 놓치는 사각지대 보완.
+    # blind/CRISIS/촉발無/윈도경과 시 신호함수가 자체 차단.
+    gr_used = run_gap_recovery_strategy(
+        client, int(cash * size_factor), holdings, universe,
+        getattr(regime_result, "regime", None) if regime_result else None,
+        getattr(regime_result, "blind", False) if regime_result else False,
+        dry_run)
+    if gr_used > 0:
+        print("  [갭회복] 진입 완료 — 이후 분기 생략")
+    elif bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
         print(f"  [레짐] {regime_result.regime} — 하락장 전략 진입")
         # 방어는 저확신일수록 더 필요 — 급락일(gap_skip)엔 현금 전체를 배분 기준으로.
         # (배분이 어차피 현금 60%+ 유지하므로 과투자 아님. 채권 1주 ~11만원이라
@@ -1884,9 +1987,19 @@ def run_loop(dry_run: bool) -> None:
             # 모든 분기에서 참조되므로 분기 전에 한 번만 계산 (BEAR/CRISIS 분기에서 미정의되는 버그 방지)
             etf_held = any(s in universe_syms for s in holdings)
 
+            # ── 개장 갭업 회복 진입(휴면: gap_recovery.enabled=false면 no-op) ──
+            # 분기보다 먼저 평가 — 크래시 후 TA 마이너스로 V회복 갭을 전부 놓치는
+            # 사각지대 보완. blind/CRISIS/촉발無/윈도경과 시 신호함수가 자체 차단.
+            gr_used = run_gap_recovery_strategy(
+                client, int(etf_budget_cap * size_factor), holdings, universe,
+                getattr(regime_result, "regime", None) if regime_result else None,
+                getattr(regime_result, "blind", False) if regime_result else False,
+                dry_run)
+            if gr_used > 0:
+                bought_today = True
             # ── 블라인드 가드: 시장 데이터를 못 읽으면 신규매수 전면 보류 ──
             # (롱·인버스·레버리지 모두). 보유분 리스크관리(매도)는 위에서 이미 수행됨.
-            if regime_result is not None and getattr(regime_result, "blind", False):
+            elif regime_result is not None and getattr(regime_result, "blind", False):
                 print(f"  🛑 [블라인드] 시장데이터 조회 실패 — 신규매수 전면 보류"
                       f"(보유분 리스크관리는 계속). {regime_result.detail}")
             elif bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):

@@ -119,6 +119,40 @@ def build_report() -> dict:
         candidates.append(_eval())
     rep["entry_candidates"] = candidates
 
+    # ── 갭업 회복 진입 평가 (개장 윈도 한정, 라이브는 enabled 플래그로 통제) ──
+    from src.bot.single_run import get_quote, _now
+    from src.strategies.gap_recovery import gap_recovery_signal
+    gr_cfg = cfg.get("gap_recovery", {}) or {}
+    overnight = cfg.get("overnight_signal", {}) or {}
+    gr_action = overnight.get("recommended_action", "normal")
+    now_hhmm = _safe(lambda: _now().strftime("%H:%M"), "?")
+    gr_regime = getattr(rr, "regime", "?") if rr else "?"
+    gr_blind = bool(getattr(rr, "blind", False)) if rr else False
+    gr_eval = []
+    for stock in (load_universe() or []):
+        sym = stock.get("symbol"); nm = stock.get("name", sym)
+        q = _safe(lambda sym=sym: get_quote(client, sym), {}) or {}
+        sig = _safe(lambda q=q: gap_recovery_signal(
+            prev_close=q.get("prev_close", 0), today_open=q.get("open", 0),
+            cur_price=q.get("price", 0), now_hhmm=now_hhmm,
+            overnight_action=gr_action, regime=gr_regime, blind=gr_blind, cfg=gr_cfg))
+        if sig is None or isinstance(sig, dict):
+            gr_eval.append({"symbol": sym, "name": nm, "decision": "평가실패",
+                            "reason": (sig or {}).get("_error", "평가불가")})
+            continue
+        gr_eval.append({
+            "symbol": sym, "name": nm,
+            "decision": "진입가능" if sig.is_buy else "스킵",
+            "gap_open_pct": round(sig.gap_open_pct, 2),
+            "intraday_pct": round(sig.intraday_pct, 2),
+            "in_window": sig.in_window, "reason": sig.reason})
+    rep["gap_recovery"] = {
+        "enabled_live": bool(gr_cfg.get("enabled", False)),
+        "now_kst": now_hhmm,
+        "window": f"{gr_cfg.get('window_start_kst', '09:00')}~{gr_cfg.get('window_end_kst', '09:20')}",
+        "candidates": gr_eval,
+    }
+
     # ── US 진입 후보 (돌파·TA·수수료게이트·재진입쿨다운) ──
     us_candidates = []
     try:
@@ -211,6 +245,15 @@ def print_report(rep: dict) -> None:
             print(f"  {c.get('symbol')} [{c.get('type')}] {c.get('decision')} "
                   f"(돌파={c.get('breakout')}, TA={c.get('ta')}, ATR%={c.get('atr_pct')}) "
                   f"{c.get('why_skip')}")
+    gr = rep.get("gap_recovery", {})
+    if gr:
+        print(f"\n[갭업 회복 진입 — 개장윈도 {gr.get('window')} 한정 | "
+              f"라이브:{'ON' if gr.get('enabled_live') else 'OFF(검증중)'} | 현재 {gr.get('now_kst')}]")
+        for c in gr.get("candidates", []):
+            if isinstance(c, dict):
+                print(f"  {c.get('symbol')} {c.get('name','')} {c.get('decision')} "
+                      f"(시가갭={c.get('gap_open_pct')}%, 시가대비={c.get('intraday_pct')}%, "
+                      f"윈도내={c.get('in_window')}) {c.get('reason')}")
     print(f"\n▶ 판정: {s.get('verdict')}")
     print(f"  매수예정: {s.get('would_buy') or '없음'} | 매도예정: {s.get('would_sell') or '없음'}")
     print(f"{'='*60}\n")
