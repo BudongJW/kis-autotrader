@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.54
     trend_ma: 15
     optimized_at: '2026-06-14'
     train_sharpe: 1.26
@@ -32,14 +32,10 @@ costs:
   kr_tax_pct: 0.0023
   us_fee_pct: 0.0025
   min_edge_buffer: 1.5
-# 갭업 회복 진입: 크래시 후 TA 마이너스로 정당한 V회복 갭을 전부 놓치는 사각지대 보완.
-# 개장 윈도 한정(오후 추격 불가). 모의계좌가 없어 검증은 '소액 실전'으로 한다 —
-# enabled=true로 봇이 스스로 진입하되, size_factor·하드손절·max_krw로 손실을 소액에 묶는다.
-# (자율 우선. 켜고 끄는 결정을 사람이 매번 하면 자동매매 의미가 없음.)
 gap_recovery:
   enabled: true
-  window_start_kst: '09:00'
-  window_end_kst: '09:20'
+  window_start_kst: 09:00
+  window_end_kst: 09:20
   gap_min_pct: 1.5
   require_above_open: true
   catalyst_action: aggressive_buy
@@ -47,7 +43,7 @@ gap_recovery:
   - CRISIS
   size_factor: 0.4
   hard_stop_pct: 0.03
-  max_krw: 300000   # 1회 진입 상한(소액 실전 검증). 손실은 이 금액의 하드손절폭으로 제한.
+  max_krw: 300000
 kr_eod_liquidation: selective
 universe:
   default:
@@ -184,10 +180,16 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.796
-  vol_percentile: 92.0
-  analyzed_at: '2026-06-14'
-market_confidence: 0.741
+  trend_score: 0.612
+  vol_percentile: 100.0
+  analyzed_at: 2026-06-15 10:44
+  hmm_state: bull
+  hmm_confidence: 0.9883841328879008
+  hmm_transition:
+    bull: 6.17400233680033e-08
+    bear: 0.9582689720241696
+    sideways: 0.04173096623580695
+market_confidence: 0.65
 strong_sectors:
 - 반도체
 - 2차전지
@@ -200,12 +202,12 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 2.54
-  sp500_change: 0
-  direction: bullish
-  strength: 0.51
-  confidence_boost: 0.091
-  recommended_action: aggressive_buy
+  nasdaq_change: 0.31
+  sp500_change: 0.5
+  direction: neutral
+  strength: 0.1
+  confidence_boost: 0
+  recommended_action: normal
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
