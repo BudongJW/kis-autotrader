@@ -191,6 +191,9 @@ def test_adopt_carried_positions(tmp_path, monkeypatch):
     assert "005930" not in pos              # 진짜 수동분 → 보호
     assert pos["091160"]["adopted"] is True
     assert pos["091160"]["qty"] == 1
+    # self-heal 핵심: 흡수분에 손절 기준(initial_risk)이 세워져야 익일/장중 보호됨
+    assert pos["091160"]["initial_risk"] > 0
+    assert pos["091160"]["buy_price"] == 166100
 
 
 def test_adopt_out_of_universe_but_traded(tmp_path, monkeypatch):

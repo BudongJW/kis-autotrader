@@ -127,6 +127,7 @@ RISK_CHECK_INTERVAL = 60       # 리스크 체크: 1분
 STRATEGY_CHECK_INTERVAL = 300  # 전략 체크: 5분 (기본)
 STRATEGY_CHECK_EARLY = 120     # 장 초반(09:00~10:00) 전략 체크: 2분
 TURBULENCE_CHECK_INTERVAL = 180  # 터뷸런스 체크: 3분
+ADOPT_RECONCILE_INTERVAL = 600   # 보유분 흡수 재동기화: 10분 (positions.json self-heal)
 EARLY_SESSION_END = dtime(10, 0)  # 장 초반 종료 시각
 
 # 루프 자체 최대 실행시간(초). GitHub Actions 잡 하드 타임아웃(360분)에
@@ -1664,6 +1665,7 @@ def run_loop(dry_run: bool) -> None:
     loop_start_epoch = time_mod.time()  # 하드 타임아웃 전 자체 종료 기준
     last_strategy_check = 0.0     # epoch. 전략 체크 마지막 시각
     last_turbulence_check = 0.0   # epoch. 터뷸런스 체크 마지막 시각
+    last_adopt_check = 0.0        # epoch. 보유분 흡수 재동기화 마지막 시각
     sold_at_open = False          # 시가 매도 완료 여부
     is_turbulent = False          # 현재 터뷸런스 상태
     bought_today = False          # 오늘 매수 완료 여부
@@ -1839,6 +1841,13 @@ def run_loop(dry_run: bool) -> None:
         if t > MARKET_CLOSE:
             time_mod.sleep(RISK_CHECK_INTERVAL)
             continue
+
+        # ── 보유분 흡수 재동기화 (매 10분) — positions.json self-heal ──
+        # 장중에 positions.json 기록이 유실돼도(예: 6/16 229200) broker 보유분을
+        # 재흡수해 손절 추적을 복원한다. adopt는 누락분만 추가(이미 있으면 skip).
+        if epoch_now - last_adopt_check >= ADOPT_RECONCILE_INTERVAL:
+            adopt_carry_and_verify(client, universe)
+            last_adopt_check = epoch_now
 
         # ── 터뷸런스 체크 (매 3분) ──
         if epoch_now - last_turbulence_check >= TURBULENCE_CHECK_INTERVAL:
