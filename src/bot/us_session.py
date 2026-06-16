@@ -426,6 +426,30 @@ def check_us_stop_loss(symbol: str, current_price: float, cfg: dict) -> tuple[bo
     return False, ""
 
 
+def eod_us_hold_decision(buy_price: float, cur_price: float,
+                         cfg: dict) -> tuple[bool, str]:
+    """미국장 마감 시 오버나이트 보유 여부 (순수 함수).
+
+    매일 전량청산하면 왕복 0.5% 수수료가 매일 빠져 얕은 거래는 구조적 적자
+    (6-10~16 SCHG/XLF churn). 대신 **수익+추세가 살아있는 winner만 보유**하고,
+    손실·약세는 청산해 churn·오버나이트 갭리스크를 피한다.
+
+    보유 조건: 수익률 ≥ trailing_activate_pct (추세 winner). 그 외 청산.
+    cfg.eod_hold_winners=false면 구 동작(전량청산).
+
+    Returns: (keep_overnight, reason)
+    """
+    if not cfg.get("eod_hold_winners", True):
+        return False, "전량청산(eod_hold_winners=false)"
+    if not (buy_price and buy_price > 0) or not (cur_price and cur_price > 0):
+        return False, "가격 불명 → 청산"
+    pnl_pct = (cur_price - buy_price) / buy_price
+    activate = float(cfg.get("strategy", {}).get("trailing_activate_pct", 0.02))
+    if pnl_pct >= activate:
+        return True, f"수익 {pnl_pct:+.1%} ≥ +{activate:.0%} — 추세 winner 오버나이트 보유"
+    return False, f"수익 {pnl_pct:+.1%} < +{activate:.0%} — 청산(churn·갭리스크 회피)"
+
+
 # ──────────────────────────────────────────────────────────
 # 미국장 전략 실행
 # ──────────────────────────────────────────────────────────
@@ -543,9 +567,11 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
                 print(f"    TA={ta.total:+.0f} 강함, 추가 평가")
             else:
                 ta = compute_ta_score(history)
-                if ta.total < 0:
+                # 돌파라도 TA가 약하면 진입 금지(약한 TA+4 churn 차단, 6-16 SCHG).
+                bo_ta_min = strat_cfg.get("breakout_ta_min", 10)
+                if ta.total < bo_ta_min:
                     log_decision(symbol, name, "skip",
-                                 f"US 돌파했으나 TA 음수 ({ta.total:+.0f})",
+                                 f"US 돌파했으나 TA 약함 ({ta.total:+.0f} < {bo_ta_min})",
                                  cur_price, strategy="us_etf")
                     continue
 
@@ -655,12 +681,16 @@ def check_us_risk(client: KISClient, dry_run: bool) -> None:
 
 
 def close_us_positions(client: KISClient, dry_run: bool) -> None:
-    """미국장 마감 전 전체 청산."""
+    """미국장 마감 처리 — 선별청산: 수익+추세 winner는 오버나이트 보유, 나머지 청산.
+
+    매일 전량청산은 왕복 0.5% 수수료가 매일 빠져 얕은 거래가 구조적 적자.
+    winner만 보유해 수수료를 큰 추세에 분산하고 churn을 줄인다(eod_us_hold_decision).
+    """
+    cfg = load_us_config()
     positions = load_us_positions()
     if not positions:
         return
 
-    print(f"  [US 청산] {len(positions)}개 포지션 청산")
     for symbol, pos in list(positions.items()):
         exchange = pos.get("exchange", "NASD")
         qty = pos.get("qty", 0)
@@ -668,7 +698,12 @@ def close_us_positions(client: KISClient, dry_run: bool) -> None:
         if cur_price <= 0:
             cur_price = pos.get("buy_price", 0)
 
-        print(f"    {symbol} {qty}주 @ ${cur_price:.2f}")
+        keep, why = eod_us_hold_decision(pos.get("buy_price", 0), cur_price, cfg)
+        if keep:
+            print(f"  [US 마감보유] {symbol} {qty}주 @ ${cur_price:.2f} — {why}")
+            continue
+
+        print(f"  [US 마감청산] {symbol} {qty}주 @ ${cur_price:.2f} — {why}")
         if not dry_run:
             resp = client.order_overseas(
                 symbol, qty, price=cur_price,

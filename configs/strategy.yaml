@@ -161,10 +161,14 @@ us_session:
     k: 0.5
     trend_ma: 20
     ta_min_score: 15
+    breakout_ta_min: 10      # 돌파 진입도 최소 TA 요구(약한 TA+4 churn 차단, 6-16 SCHG)
     stop_loss_pct: 0.025
     trailing_activate_pct: 0.02
     trailing_stop_pct: 0.01
     reentry_cooldown_days: 2
+  # 마감 시 수익+추세 winner는 오버나이트 보유(매일 전량청산 churn·수수료 누수 차단).
+  # 손실·약세는 청산. false면 구 동작(전량청산).
+  eod_hold_winners: true
   market_open_kst: '22:30'
   market_close_kst: 05:00
   summer_time: true
