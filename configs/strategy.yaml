@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.46
+    k: 0.64
     trend_ma: 15
     optimized_at: '2026-06-14'
     train_sharpe: 1.26
@@ -177,26 +177,25 @@ risk:
   stop_loss_pct: 0.03
   take_profit_pct: 0.05
   daily_loss_limit_pct: 0.05
-  # 변동성 급등(터뷸런스/VIX 패닉) 시: 전면차단(block) 대신 소액 진입(size_down).
-  # 변동성 급등이 곧 큰 기회 구간 — 차단하면 기회마다 빠진다. 손실은 사이즈·손절·수수료게이트로 제한.
   high_vol_action: size_down
   high_vol_size_mult: 0.5
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.612
-  vol_percentile: 100.0
-  analyzed_at: 2026-06-15 22:23
-  hmm_state: bull
-  hmm_confidence: 0.986132689559673
+  trend_score: 0.622
+  vol_percentile: 96.0
+  analyzed_at: 2026-06-16 11:04
+  hmm_state: bear
+  hmm_confidence: 0.8672414882641074
   hmm_transition:
-    bull: 1.2597780461867032e-07
-    bear: 0.9583357453167403
-    sideways: 0.04166412870545521
-market_confidence: 0.73
+    sideways: 0.9587811242178588
+    bear: 0.04121887561510265
+    bull: 1.6703874400935254e-10
+market_confidence: 0.8
 strong_sectors:
 - 반도체
 - 2차전지
+- 바이오
 - 자동차
 - 금융
 - IT
@@ -205,18 +204,19 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
+  nasdaq_change: 3.07
+  sp500_change: 1.65
   direction: bullish
+  strength: 0.83
+  confidence_boost: 0.15
   recommended_action: aggressive_buy
-  nasdaq_change: 2.9
-  sp500_change: 1.57
-  strength: 0.74
-  confidence_boost: 0.1
-  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
 - symbol: '305720'
   name: KODEX 2차전지
+- symbol: '244580'
+  name: KODEX 바이오
 - symbol: 091180
   name: KODEX 자동차
 - symbol: '102110'
