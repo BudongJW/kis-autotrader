@@ -3,14 +3,14 @@
     "date": "2026-06-16",
     "regime_trend": "up",
     "regime_volatility": "high",
-    "trend_score": 0.622,
-    "vol_percentile": 96.0,
+    "trend_score": 0.623,
+    "vol_percentile": 94.0,
     "hmm_state": "bear",
-    "hmm_confidence": 0.8672414882641074,
+    "hmm_confidence": 0.8584582263260231,
     "breadth": "moderate",
-    "kospi_5d": 11.81,
-    "kosdaq_5d": 7.58,
-    "confidence": 0.8001199999999999,
+    "kospi_5d": 12.73,
+    "kosdaq_5d": 7.25,
+    "confidence": 0.65,
     "strong_sectors": [
       "반도체",
       "2차전지",
@@ -23,6 +23,6 @@
       "KOSDAQ150",
       "미국나스닥"
     ],
-    "k_value": 0.64
+    "k_value": 0.7
   }
 ]

@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.64
+    k: 0.7
     trend_ma: 15
     optimized_at: '2026-06-14'
     train_sharpe: 1.26
@@ -161,13 +161,11 @@ us_session:
     k: 0.5
     trend_ma: 20
     ta_min_score: 15
-    breakout_ta_min: 10      # 돌파 진입도 최소 TA 요구(약한 TA+4 churn 차단, 6-16 SCHG)
+    breakout_ta_min: 10
     stop_loss_pct: 0.025
     trailing_activate_pct: 0.02
     trailing_stop_pct: 0.01
     reentry_cooldown_days: 2
-  # 마감 시 수익+추세 winner는 오버나이트 보유(매일 전량청산 churn·수수료 누수 차단).
-  # 손실·약세는 청산. false면 구 동작(전량청산).
   eod_hold_winners: true
   market_open_kst: '22:30'
   market_close_kst: 05:00
@@ -186,16 +184,16 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.622
-  vol_percentile: 96.0
-  analyzed_at: 2026-06-16 11:04
+  trend_score: 0.623
+  vol_percentile: 94.0
+  analyzed_at: 2026-06-16 21:17
   hmm_state: bear
-  hmm_confidence: 0.8672414882641074
+  hmm_confidence: 0.8584582263260231
   hmm_transition:
-    sideways: 0.9587811242178588
-    bear: 0.04121887561510265
-    bull: 1.6703874400935254e-10
-market_confidence: 0.8
+    sideways: 0.9585081700687443
+    bear: 0.04149182971309753
+    bull: 2.1815812283235035e-10
+market_confidence: 0.65
 strong_sectors:
 - 반도체
 - 2차전지
@@ -208,12 +206,12 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 3.07
-  sp500_change: 1.65
-  direction: bullish
-  strength: 0.83
-  confidence_boost: 0.15
-  recommended_action: aggressive_buy
+  nasdaq_change: 0.31
+  sp500_change: 0.5
+  direction: neutral
+  strength: 0.1
+  confidence_boost: 0
+  recommended_action: normal
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
