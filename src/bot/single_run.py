@@ -39,7 +39,7 @@ from src.risk_manager import (
     remove_position,
     load_positions, save_positions, get_kelly_position_size, should_hold_overnight,
     check_daily_loss_limit, check_max_positions, compute_atr_for_position,
-    get_drawdown_scale, PARTIAL_SELL_RATIO,
+    get_drawdown_scale, high_vol_size_factor, PARTIAL_SELL_RATIO,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -1478,9 +1478,12 @@ def run_once(dry_run: bool) -> None:
     # ── 터뷸런스 필터: 변동성 급등 시 매수 차단 ──
     is_turbulent, turb_reason = check_turbulence(client)
     print(f"  [터뷸런스] {turb_reason}")
-    if is_turbulent:
-        print("  시장 변동성 급등. 신규 매수 차단. 현금 보유.")
+    _turb_blocked = is_turbulent and load_risk_params().get("high_vol_action", "size_down") == "block"
+    if _turb_blocked:
+        print("  시장 변동성 급등. 신규 매수 차단(block 모드). 현금 보유.")
         return
+    elif is_turbulent:
+        print("  시장 변동성 급등 — 소액 진입(사이즈 축소)으로 진행.")
 
     # ── 일일 손실 한도 체크 ──
     loss_exceeded, loss_reason = check_daily_loss_limit(client)
@@ -1532,6 +1535,9 @@ def run_once(dry_run: bool) -> None:
     size_factor = max(0.3, confidence)  # 최소 30%, 최대 100%
     if intraday.get("reduce_size"):
         size_factor *= 0.7  # 장중 급변 시 추가 30% 축소
+
+    # 터뷸런스(변동성 급등): 전면차단 대신 소액 진입 (block 모드는 위에서 이미 return)
+    size_factor, _ = high_vol_size_factor(size_factor, is_turbulent, load_risk_params())
 
     # 오버나이트 갭 신호로 사이즈 조정
     if gap_action == "aggressive_buy":
@@ -1850,7 +1856,6 @@ def run_loop(dry_run: bool) -> None:
             continue
         if (epoch_now - last_strategy_check >= strategy_interval
                 and not bought_today
-                and not is_turbulent
                 and t > SELL_WINDOW_END):
 
             last_strategy_check = epoch_now
@@ -1899,6 +1904,16 @@ def run_loop(dry_run: bool) -> None:
             if intraday.get("reduce_size"):
                 size_factor *= 0.7
 
+            # 터뷸런스(변동성 급등): 전면차단 대신 소액 진입 (risk.high_vol_action)
+            size_factor, _turb_blocked = high_vol_size_factor(
+                size_factor, is_turbulent, load_risk_params())
+            if _turb_blocked:
+                print(f"[{now:%H:%M:%S}] [터뷸런스] {turb_reason} — 매수 차단(block 모드)")
+                time_mod.sleep(RISK_CHECK_INTERVAL)
+                continue
+            if is_turbulent:
+                print(f"[{now:%H:%M:%S}] [터뷸런스] {turb_reason} — 소액 진입(사이즈 축소)")
+
             # C4: VIX 필터 반영 — 시카고 변동성지수 기반 시장 환경
             try:
                 from src.strategies.vix_filter import get_vix_filter
@@ -1906,11 +1921,18 @@ def run_loop(dry_run: bool) -> None:
                 if vix:
                     print(f"[{now:%H:%M:%S}] [VIX] {vix.detail}")
                     if vix.skip_buy:
-                        print(f"  VIX panic → 신규 매수 차단")
-                        time_mod.sleep(RISK_CHECK_INTERVAL)
-                        continue
-                    size_factor *= vix.size_multiplier
-                    confidence *= vix.confidence_multiplier
+                        # 전면차단 대신 소액 진입(risk.high_vol_action). block 모드면 구 동작.
+                        size_factor, _vix_blocked = high_vol_size_factor(
+                            size_factor, True, load_risk_params())
+                        if _vix_blocked:
+                            print(f"  VIX panic → 신규 매수 차단(block 모드)")
+                            time_mod.sleep(RISK_CHECK_INTERVAL)
+                            continue
+                        print(f"  VIX panic → 소액 진입(사이즈 축소)")
+                        confidence *= vix.confidence_multiplier
+                    else:
+                        size_factor *= vix.size_multiplier
+                        confidence *= vix.confidence_multiplier
             except Exception as _vix_e:
                 pass
 

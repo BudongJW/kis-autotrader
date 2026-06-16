@@ -496,6 +496,28 @@ def check_turbulence(client: KISClient) -> tuple[bool, str]:
         return False, f"확인 실패: {e}"
 
 
+def high_vol_size_factor(base_factor: float, is_high_vol: bool,
+                         cfg: dict | None = None) -> tuple[float, bool]:
+    """변동성 급등(터뷸런스/VIX 패닉) 시 사이즈 결정.
+
+    기존엔 변동성이 튀면 신규매수를 '전면 차단'했으나, 그게 곧 큰 기회(V회복·강돌파)가
+    나는 구간이라 봇이 기회마다 빠지는 문제가 있었다. 이제 차단 대신 **사이즈 축소**로
+    여전히 진입하게 한다(손실은 사이즈·손절·수수료게이트로 제한). config로 동작 선택:
+      risk.high_vol_action: "size_down"(기본, 축소 진입) | "block"(구 동작, 전면차단)
+      risk.high_vol_size_mult: 축소 배수(기본 0.5)
+
+    Returns:
+        (adjusted_factor, blocked) — blocked=True면 호출부가 매수 스킵(구 동작).
+    """
+    c = cfg or {}
+    if not is_high_vol:
+        return base_factor, False
+    if c.get("high_vol_action", "size_down") == "block":
+        return 0.0, True
+    mult = float(c.get("high_vol_size_mult", 0.5))
+    return base_factor * mult, False
+
+
 def kelly_fraction(win_rate: float, avg_win: float, avg_loss: float,
                    half: bool = True) -> float:
     """Kelly Criterion 최적 투입 비율.

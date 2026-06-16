@@ -177,6 +177,10 @@ risk:
   stop_loss_pct: 0.03
   take_profit_pct: 0.05
   daily_loss_limit_pct: 0.05
+  # 변동성 급등(터뷸런스/VIX 패닉) 시: 전면차단(block) 대신 소액 진입(size_down).
+  # 변동성 급등이 곧 큰 기회 구간 — 차단하면 기회마다 빠진다. 손실은 사이즈·손절·수수료게이트로 제한.
+  high_vol_action: size_down
+  high_vol_size_mult: 0.5
 market_regime:
   trend: up
   volatility: high
