@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.65
     trend_ma: 15
     optimized_at: '2026-06-14'
     train_sharpe: 1.26
@@ -184,16 +184,16 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.623
+  trend_score: 0.629
   vol_percentile: 94.0
-  analyzed_at: 2026-06-16 21:17
-  hmm_state: bear
-  hmm_confidence: 0.8584582263260231
+  analyzed_at: 2026-06-17 10:46
+  hmm_state: sideways
+  hmm_confidence: 0.9023719925884193
   hmm_transition:
-    sideways: 0.9585081700687443
-    bear: 0.04149182971309753
-    bull: 2.1815812283235035e-10
-market_confidence: 0.57
+    bear: 0.9544844245174399
+    sideways: 0.04551557542189848
+    bull: 6.066164425998418e-11
+market_confidence: 0.613
 strong_sectors:
 - 반도체
 - 2차전지
@@ -206,13 +206,12 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
+  nasdaq_change: -1.15
+  sp500_change: -0.57
   direction: bearish
+  strength: 0.31
+  confidence_boost: -0.037
   recommended_action: reduce_size
-  nasdaq_change: -1.67
-  sp500_change: -0.48
-  strength: 0.36
-  confidence_boost: -0.08
-  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
