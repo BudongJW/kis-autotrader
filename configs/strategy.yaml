@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.6
     trend_ma: 15
     optimized_at: '2026-06-14'
     train_sharpe: 1.26
@@ -184,15 +184,15 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.629
-  vol_percentile: 94.0
-  analyzed_at: 2026-06-17 10:46
+  trend_score: 0.632
+  vol_percentile: 96.0
+  analyzed_at: 2026-06-17 20:56
   hmm_state: sideways
-  hmm_confidence: 0.9023719925884193
+  hmm_confidence: 0.9086361449053225
   hmm_transition:
-    bear: 0.9544844245174399
-    sideways: 0.04551557542189848
-    bull: 6.066164425998418e-11
+    bear: 0.9541092552324868
+    sideways: 0.04589074472292892
+    bull: 4.458432113531866e-11
 market_confidence: 0.613
 strong_sectors:
 - 반도체

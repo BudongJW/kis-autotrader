@@ -3,13 +3,13 @@
     "date": "2026-06-17",
     "regime_trend": "up",
     "regime_volatility": "high",
-    "trend_score": 0.629,
-    "vol_percentile": 94.0,
+    "trend_score": 0.632,
+    "vol_percentile": 96.0,
     "hmm_state": "sideways",
-    "hmm_confidence": 0.9023719925884193,
+    "hmm_confidence": 0.9086361449053225,
     "breadth": "moderate",
-    "kospi_5d": 12.34,
-    "kosdaq_5d": 1.73,
+    "kospi_5d": 14.7,
+    "kosdaq_5d": 3.29,
     "confidence": 0.61328,
     "strong_sectors": [
       "반도체",
@@ -23,6 +23,6 @@
       "KOSDAQ150",
       "미국나스닥"
     ],
-    "k_value": 0.65
+    "k_value": 0.6
   }
 ]
