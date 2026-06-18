@@ -184,19 +184,18 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.639
-  vol_percentile: 90.0
-  analyzed_at: 2026-06-18 10:59
+  trend_score: 0.642
+  vol_percentile: 96.0
+  analyzed_at: 2026-06-18 20:14
   hmm_state: bear
-  hmm_confidence: 0.8110199053165084
+  hmm_confidence: 0.8554923795913189
   hmm_transition:
-    bear: 0.0027948430500549857
-    sideways: 0.9972051569499234
-    bull: 2.1673163906444453e-14
-market_confidence: 0.438
+    bear: 0.0025163425688946423
+    sideways: 0.9974836574310647
+    bull: 4.065872921092756e-14
+market_confidence: 0.418
 strong_sectors:
 - 반도체
-- 바이오
 - 금융
 - IT
 - 철강
@@ -212,8 +211,6 @@ overnight_signal:
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
-- symbol: '244580'
-  name: KODEX 바이오
 - symbol: '102110'
   name: KODEX 금융
 - symbol: 098560
