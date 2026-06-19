@@ -51,6 +51,125 @@ def _save_experience(records: list[dict]) -> None:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
 
+def _ta_from_reason(reason: str | None) -> dict | None:
+    """reason 문자열에서 TA 점수 파싱 (예: '... TA +23 ...' → {'total': 23.0})."""
+    import re
+    m = re.search(r"TA\s*([+-]?\d+(?:\.\d+)?)", reason or "")
+    return {"total": float(m.group(1))} if m else None
+
+
+def _strategy_from_reason(reason: str | None) -> str:
+    r = reason or ""
+    if "갭회복" in r:
+        return "gap_recovery"
+    if "US" in r:
+        return "us_etf"
+    if "인버스" in r or "하락장" in r or "방어" in r:
+        return "bear"
+    if "인컴" in r or "커버드콜" in r:
+        return "income"
+    if "레버리지" in r:
+        return "leverage"
+    return "etf"
+
+
+def rebuild_experience_from_trades(trades_path: str = "logs/trades.csv") -> list[dict]:
+    """canonical trades.csv 라운드트립에서 경험 레코드(매수+결과)를 재구성한다.
+
+    트레이딩 봇의 경험(log_decision)은 그 run의 휘발 logs에만 남아 유실되므로,
+    영속되는 trades.csv를 단일 진실원천으로 경험을 재구성한다. FIFO로 매수↔매도를
+    매칭해 실현 PnL%로 outcome(win/loss)을 라벨링하고, reason에서 TA를 파싱한다.
+    (레짐/스킵 경험은 trades.csv에 없어 누락 — win/loss 경험만 복원.)
+    """
+    from collections import defaultdict, deque
+    from src.merge_trades import _read
+
+    rows = _read(trades_path)
+    # 시간순 정렬(안정적 FIFO)
+    rows = sorted(rows, key=lambda r: r.get("timestamp", ""))
+    open_buys: dict[str, deque] = defaultdict(deque)
+    records: list[dict] = []
+
+    for row in rows:
+        sym = str(row.get("symbol", "")).replace("US_", "")
+        side = row.get("side")
+        try:
+            qty = int(float(row.get("qty", 0) or 0))
+            price = float(row.get("price", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if not sym or qty <= 0 or price <= 0:
+            continue
+
+        if side == "buy":
+            open_buys[sym].append({"row": row, "qty": qty, "price": price})
+        elif side == "sell":
+            remaining = qty
+            while remaining > 0 and open_buys[sym]:
+                lot = open_buys[sym][0]
+                matched = min(remaining, lot["qty"])
+                pnl_pct = (price - lot["price"]) / lot["price"] * 100 if lot["price"] else 0.0
+                br = lot["row"]
+                ts = br.get("timestamp", "")
+                records.append({
+                    "timestamp": ts,
+                    "date": ts[:10],
+                    "symbol": sym,
+                    "name": br.get("name", ""),
+                    "action": "buy",
+                    "reason": br.get("reason", ""),
+                    "price": int(lot["price"]),
+                    "qty": matched,
+                    "strategy": _strategy_from_reason(br.get("reason", "")),
+                    "regime": None,
+                    "hmm_state": None,
+                    "confidence": None,
+                    "kelly_f": None,
+                    "ta_scores": _ta_from_reason(br.get("reason", "")),
+                    "lgbm_prob": None,
+                    "market_context": None,
+                    "outcome": "win" if pnl_pct > 0 else "loss",
+                    "pnl_pct": round(pnl_pct, 2),
+                    "exit_price": int(price),
+                    "evaluated": True,
+                    "rebuilt": True,        # trades.csv 재구성 출처 표시
+                })
+                lot["qty"] -= matched
+                remaining -= matched
+                if lot["qty"] <= 0:
+                    open_buys[sym].popleft()
+    return records
+
+
+def merge_rebuilt_experience(trades_path: str = "logs/trades.csv") -> int:
+    """trades.csv에서 재구성한 경험을 experience.json에 병합(중복 제거). 추가 수 반환.
+
+    재구성은 trades.csv에 결정적이므로 매 학습 run에서 호출해도 idempotent
+    (동일 키는 한 번만). 경험이 영속 trades.csv를 따라 누적된다.
+    """
+    rebuilt = rebuild_experience_from_trades(trades_path)
+    if not rebuilt:
+        return 0
+    existing = _load_experience()
+
+    def _key(r: dict) -> tuple:
+        return (r.get("timestamp"), r.get("symbol"), r.get("action"),
+                r.get("exit_price"))
+
+    seen = {_key(r) for r in existing}
+    added = 0
+    for r in rebuilt:
+        k = _key(r)
+        if k not in seen:
+            existing.append(r)
+            seen.add(k)
+            added += 1
+    if added:
+        existing.sort(key=lambda r: r.get("timestamp") or "")
+        _save_experience(existing)
+    return added
+
+
 def log_decision(
     symbol: str,
     name: str,

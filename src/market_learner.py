@@ -1202,6 +1202,16 @@ def main() -> None:
 
     client = KISClient()
 
+    # 경험 영속화: 트레이딩 봇의 경험은 휘발 logs에만 남아 유실되므로, 영속되는
+    # canonical trades.csv에서 경험을 재구성·병합한다(단일 진실원천, idempotent).
+    try:
+        from src.experience import merge_rebuilt_experience
+        n = merge_rebuilt_experience("logs/trades.csv")
+        if n:
+            print(f"[경험 재구성] trades.csv에서 {n}건 경험 복원·병합")
+    except Exception as _e:
+        print(f"[경험 재구성] 스킵: {_e}")
+
     if args.phase == "pre":
         pre_market(client)
     elif args.phase == "post":

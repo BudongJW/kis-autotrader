@@ -86,6 +86,14 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      # 경험 재구성 입력원: 영속 canonical trades.csv (단일 진실원천)
+      - name: Restore canonical trades.csv
+        run: |
+          mkdir -p logs
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/trades.csv" \
+            -o logs/trades.csv && echo "trades.csv 복원($(wc -l < logs/trades.csv)줄)" || echo "trades.csv 없음"
+        continue-on-error: true
+
       - name: Run market learning
         env:
           PYTHONPATH: '.'
