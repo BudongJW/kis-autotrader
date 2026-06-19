@@ -1,7 +1,7 @@
 {
   "etf": {
-    "alpha": 2,
-    "beta": 2,
-    "trades": 0
+    "alpha": 6,
+    "beta": 5,
+    "trades": 7
   }
 }

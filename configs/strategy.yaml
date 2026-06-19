@@ -49,13 +49,12 @@ universe:
   default:
   - symbol: '395160'
     name: KODEX 미국나스닥100TR
-  - symbol: '005930'
+  - symbol: 005930
     name: 삼성전자
     type: stock
   - symbol: '000660'
     name: SK하이닉스
     type: stock
-  # 단타 프로파일 개별주(저가·고변동·고거래대금, 2026-06-19 pykrx 실측 선정).
   - symbol: '034220'
     name: LG디스플레이
     type: stock
@@ -191,8 +190,6 @@ us_session:
   budget_pct: 0.4
   regime_linked: true
 risk:
-  # 단타는 충분한 사이즈라야 %수익이 수수료를 넘어 이득. 1회 진입 최소 30만원,
-  # 단일종목 비중상한 45%(소액계좌 의미있는 사이즈 위해 상향). 손실은 손절로 제한.
   min_position_krw: 300000
   max_position_weight: 0.45
   max_concurrent_positions: 5

@@ -1,11 +1,11 @@
 [
   {
-    "date": "2026-06-09",
-    "nasdaq_change": 0.86,
-    "sp500_change": 0.3,
+    "date": "2026-06-19",
+    "nasdaq_change": 1.91,
+    "sp500_change": 1.08,
     "direction": "bullish",
-    "action": "normal",
-    "kospi_gap": 8.84,
-    "correct": true
+    "action": "aggressive_buy",
+    "kospi_gap": -0.02,
+    "correct": false
   }
 ]

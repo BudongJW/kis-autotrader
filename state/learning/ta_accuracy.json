@@ -1,0 +1,38 @@
+{
+  "rsi": {
+    "correct": 0,
+    "total": 1
+  },
+  "macd": {
+    "correct": 1,
+    "total": 1
+  },
+  "bb": {
+    "correct": 0,
+    "total": 1
+  },
+  "stoch": {
+    "correct": 0,
+    "total": 1
+  },
+  "adx": {
+    "correct": 0,
+    "total": 1
+  },
+  "ma": {
+    "correct": 1,
+    "total": 1
+  },
+  "obv": {
+    "correct": 1,
+    "total": 1
+  },
+  "mfi": {
+    "correct": 0,
+    "total": 1
+  },
+  "atr": {
+    "correct": 0,
+    "total": 1
+  }
+}

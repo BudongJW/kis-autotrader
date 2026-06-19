@@ -1,1 +1,22 @@
-{}
+{
+  "None/None": {
+    "buy": {
+      "count": 15,
+      "wins": 9,
+      "pnl_sum": -0.9400000000000054,
+      "win_rate": 0.6,
+      "avg_pnl": -0.0627
+    },
+    "skip": {
+      "count": 0,
+      "correct": 0
+    },
+    "sell": {
+      "count": 0,
+      "wins": 0,
+      "pnl_sum": 0.0
+    },
+    "recommended_confidence": 0.3,
+    "recommended_kelly_adj": 1.3
+  }
+}
