@@ -98,21 +98,31 @@ jobs:
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
+          SCHED: ${{ github.event.schedule }}
         run: |
+          # phase를 각 크론의 '의도'로 고정한다. GitHub이 스케줄을 수 시간 지연
+          # 발화시켜도(=벽시계 기반 자동판별이 post→pre로 오분류 → LGBM 재학습 영구
+          # 누락) 의도한 phase가 그대로 실행되도록 schedule 표현식으로 매핑.
           if [ -n "${{ github.event.inputs.phase }}" ]; then
             PHASE="${{ github.event.inputs.phase }}"
+          elif [ "$SCHED" = "0 7 * * 1-5" ]; then
+            PHASE="post"        # 16:00 KST 의도 (LGBM 재학습)
+          elif [ "$SCHED" = "30 21 * * 1-5" ]; then
+            PHASE="post_us"     # 06:30 KST 의도
+          elif [ "$SCHED" = "30 23 * * 0-4" ]; then
+            PHASE="pre"         # 08:30 KST 의도
           else
-            # 스케줄 시간에 따라 자동 판별 (KST 기준)
+            # 수동/알수없는 트리거: 시각 기반 폴백
             HOUR=$(TZ=Asia/Seoul date +%H)
             if [ "$HOUR" -ge 6 ] && [ "$HOUR" -lt 9 ]; then
               PHASE="post_us"
-            elif [ "$HOUR" -ge 15 ] && [ "$HOUR" -lt 20 ]; then
+            elif [ "$HOUR" -ge 14 ] && [ "$HOUR" -lt 21 ]; then
               PHASE="post"
             else
               PHASE="pre"
             fi
           fi
-          echo "Phase: $PHASE"
+          echo "Phase: $PHASE (schedule=$SCHED)"
           python -m src.market_learner --phase $PHASE
 
       - name: Commit config + learning state
