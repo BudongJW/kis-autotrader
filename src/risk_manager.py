@@ -518,6 +518,31 @@ def high_vol_size_factor(base_factor: float, is_high_vol: bool,
     return base_factor * mult, False
 
 
+def apply_min_position(qty: int, price: float, avail_cash: float,
+                       min_krw: float, max_weight: float = 0.0,
+                       equity: float = 0.0) -> int:
+    """진입 수량에 최소 포지션 금액 floor 적용 (소액 1주 회피).
+
+    단타는 포지션이 충분히 커야 %수익이 왕복수수료를 넘어 실이득이 남는다(작은
+    1주 거래는 수수료에 먹혀 적자). 진입이 게이트를 통과한 뒤, 투입액이 min_krw
+    미만이면 min_krw 수준으로 키운다. 단 가용현금(95%) + 비중상한으로 캡.
+
+    Args:
+        qty: 신호 기반 산정 수량, price: 현재가, avail_cash: 주문가능현금,
+        min_krw: 최소 투입 금액(0이면 비활성),
+        max_weight/equity: 단일종목 비중상한·총자본(둘 다>0이면 캡 적용).
+    Returns: 조정 수량(>= 기존 qty, 절대 줄이지 않음).
+    """
+    if min_krw <= 0 or price <= 0 or avail_cash <= 0:
+        return qty
+    desired = max(qty * price, min_krw)
+    cap = avail_cash * 0.95
+    if max_weight > 0 and equity > 0:
+        cap = min(cap, equity * max_weight)
+    bumped = int(min(desired, cap) // price)
+    return max(qty, bumped)
+
+
 def kelly_fraction(win_rate: float, avg_win: float, avg_loss: float,
                    half: bool = True) -> float:
     """Kelly Criterion 최적 투입 비율.

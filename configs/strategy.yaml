@@ -190,7 +190,10 @@ us_session:
   budget_pct: 0.4
   regime_linked: true
 risk:
-  max_position_weight: 0.2
+  # 단타는 충분한 사이즈라야 %수익이 수수료를 넘어 이득. 1회 진입 최소 30만원,
+  # 단일종목 비중상한 45%(소액계좌 의미있는 사이즈 위해 상향). 손실은 손절로 제한.
+  min_position_krw: 300000
+  max_position_weight: 0.45
   max_concurrent_positions: 5
   stop_loss_pct: 0.03
   take_profit_pct: 0.05

@@ -39,7 +39,7 @@ from src.risk_manager import (
     remove_position,
     load_positions, save_positions, get_kelly_position_size, should_hold_overnight,
     check_daily_loss_limit, check_max_positions, compute_atr_for_position,
-    get_drawdown_scale, high_vol_size_factor, PARTIAL_SELL_RATIO,
+    get_drawdown_scale, high_vol_size_factor, apply_min_position, PARTIAL_SELL_RATIO,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -684,6 +684,21 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                         print(f"    [호가 강세] 사이즈 ↑ ({sizing_ratio:.0%})")
             except Exception as _imb_e:
                 pass  # imbalance 실패는 무시 (기본 동작 유지)
+
+            # ── 최소 포지션 금액 floor (단타: 소액 1주 회피 → %수익이 수수료 넘게) ──
+            _rp = load_risk_params()
+            _min_krw = int(_rp.get("min_position_krw", 0) or 0)
+            if _min_krw > 0:
+                _avail = get_available_cash(client)
+                _equity = _avail + sum(
+                    get_price(client, s) * q for s, q in (holdings or {}).items())
+                _q2 = apply_min_position(qty, cur_price, _avail, _min_krw,
+                                         float(_rp.get("max_position_weight", 0) or 0),
+                                         _equity)
+                if _q2 > qty:
+                    print(f"    [최소포지션] {qty}주→{_q2}주 "
+                          f"(≥{_min_krw:,}원, 단타 수수료 대비 이득)")
+                    qty = _q2
 
             total = qty * cur_price
             buy_label = "STRONG_BUY" if fusion.signal == "STRONG_BUY" else "BUY"
