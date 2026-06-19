@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.59
     trend_ma: 15
     optimized_at: '2026-06-14'
     train_sharpe: 1.26
@@ -184,31 +184,29 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.642
-  vol_percentile: 96.0
-  analyzed_at: 2026-06-18 20:14
-  hmm_state: bear
-  hmm_confidence: 0.8554923795913189
+  trend_score: 0.648
+  vol_percentile: 84.0
+  analyzed_at: 2026-06-19 11:11
+  hmm_state: bull
+  hmm_confidence: 0.9690652787661403
   hmm_transition:
-    bear: 0.0025163425688946423
-    sideways: 0.9974836574310647
-    bull: 4.065872921092756e-14
-market_confidence: 0.468
+    sideways: 0.05063183624282473
+    bear: 0.02460874218380894
+    bull: 0.9247594215733662
+market_confidence: 0.545
 strong_sectors:
 - 반도체
 - 금융
 - IT
-- 철강
 - KOSPI200
 - 미국나스닥
 overnight_signal:
+  nasdaq_change: 1.91
+  sp500_change: 1.08
   direction: bullish
-  recommended_action: normal
-  nasdaq_change: 2.32
-  sp500_change: 1.02
-  strength: 0.56
-  confidence_boost: 0.05
-  source: us_post_learning
+  strength: 0.53
+  confidence_boost: 0.095
+  recommended_action: aggressive_buy
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
@@ -216,8 +214,6 @@ dynamic_universe:
   name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
-- symbol: '117700'
-  name: KODEX 철강
 - symbol: 069500
   name: KODEX KOSPI200
 adaptive_allocation:
