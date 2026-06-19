@@ -55,6 +55,16 @@ universe:
   - symbol: '000660'
     name: SK하이닉스
     type: stock
+  # 단타 프로파일 개별주(저가·고변동·고거래대금, 2026-06-19 pykrx 실측 선정).
+  - symbol: '034220'
+    name: LG디스플레이
+    type: stock
+  - symbol: '010140'
+    name: 삼성중공업
+    type: stock
+  - symbol: '011200'
+    name: HMM
+    type: stock
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
