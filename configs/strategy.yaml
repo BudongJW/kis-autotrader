@@ -210,7 +210,7 @@ market_regime:
     sideways: 0.05063183624282473
     bear: 0.02460874218380894
     bull: 0.9247594215733662
-market_confidence: 0.545
+market_confidence: 0.595
 strong_sectors:
 - 반도체
 - 금융
@@ -218,12 +218,13 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 1.91
-  sp500_change: 1.08
   direction: bullish
-  strength: 0.53
-  confidence_boost: 0.095
-  recommended_action: aggressive_buy
+  recommended_action: normal
+  nasdaq_change: 2.51
+  sp500_change: 1.04
+  strength: 0.59
+  confidence_boost: 0.05
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
