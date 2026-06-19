@@ -28,7 +28,8 @@ from src.config import settings
 from src.kis_client import KISClient
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
 from src.strategies.ta_composite import compute_ta_score
-from src.risk_manager import load_positions, save_positions, record_buy, remove_position
+from src.risk_manager import (load_positions, save_positions, record_buy,
+                              remove_position, apply_min_position)
 from src.tracker import log_trade
 from src.experience import log_decision
 from src.utils.logger import log
@@ -609,6 +610,15 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             qty = int(budget // cur_price)
             if qty <= 0:
                 continue
+
+            # 최소 포지션 금액 floor (단타: 소액 회피 → %수익이 수수료 넘게, KR과 동일 정책)
+            _min_usd = float(strat_cfg.get("min_position_usd", 0) or 0)
+            if _min_usd > 0:
+                _avail_usd = get_us_available_cash(client)
+                _q2 = apply_min_position(qty, cur_price, _avail_usd, _min_usd)
+                if _q2 > qty:
+                    print(f"    [최소포지션] {qty}주→{_q2}주 (≥${_min_usd:.0f}, 단타 수수료 대비 이득)")
+                    qty = _q2
 
             total_usd = qty * cur_price
             print(f"    [US BUY] {name} {qty}주 @ ${cur_price:.2f} = ${total_usd:.2f} "
