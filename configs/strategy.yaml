@@ -3,18 +3,18 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.59
+    k: 0.65
     trend_ma: 15
-    optimized_at: '2026-06-14'
-    train_sharpe: 1.26
-    train_return: 5.59
-    train_mdd: -6.95
-    val_sharpe: 3.28
-    val_return: 6.62
-    val_mdd: -3.49
-    backtest_sharpe: 1.26
-    backtest_return: 5.59
-    backtest_mdd: -6.95
+    optimized_at: '2026-06-21'
+    train_sharpe: 1.21
+    train_return: 5.22
+    train_mdd: -6.96
+    val_sharpe: 1.78
+    val_return: 2.4
+    val_mdd: -3.74
+    backtest_sharpe: 1.21
+    backtest_return: 5.22
+    backtest_mdd: -6.96
   ta_weights:
     rsi: 0.17
     macd: 0.17
@@ -49,21 +49,6 @@ universe:
   default:
   - symbol: '395160'
     name: KODEX 미국나스닥100TR
-  - symbol: 005930
-    name: 삼성전자
-    type: stock
-  - symbol: '000660'
-    name: SK하이닉스
-    type: stock
-  - symbol: '034220'
-    name: LG디스플레이
-    type: stock
-  - symbol: '010140'
-    name: 삼성중공업
-    type: stock
-  - symbol: '011200'
-    name: HMM
-    type: stock
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -201,15 +186,9 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.648
-  vol_percentile: 84.0
-  analyzed_at: 2026-06-19 11:11
-  hmm_state: bull
-  hmm_confidence: 0.9690652787661403
-  hmm_transition:
-    sideways: 0.05063183624282473
-    bear: 0.02460874218380894
-    bull: 0.9247594215733662
+  trend_score: 0.895
+  vol_percentile: 82.0
+  analyzed_at: '2026-06-21'
 market_confidence: 0.595
 strong_sectors:
 - 반도체
