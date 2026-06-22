@@ -1,16 +1,16 @@
 [
   {
-    "date": "2026-06-19",
+    "date": "2026-06-22",
     "regime_trend": "up",
-    "regime_volatility": "high",
-    "trend_score": 0.648,
-    "vol_percentile": 84.0,
-    "hmm_state": "bull",
-    "hmm_confidence": 0.9690652787661403,
+    "regime_volatility": "normal",
+    "trend_score": 0.651,
+    "vol_percentile": 50.0,
+    "hmm_state": "bear",
+    "hmm_confidence": 0.8207960016666775,
     "breadth": "mixed",
-    "kospi_5d": 10.63,
-    "kosdaq_5d": -5.85,
-    "confidence": 0.54468,
+    "kospi_5d": 7.43,
+    "kosdaq_5d": -3.89,
+    "confidence": 0.64584,
     "strong_sectors": [
       "반도체",
       "금융",
@@ -18,6 +18,6 @@
       "KOSPI200",
       "미국나스닥"
     ],
-    "k_value": 0.59
+    "k_value": 0.7
   }
 ]

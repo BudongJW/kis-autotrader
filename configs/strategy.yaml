@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.7
     trend_ma: 15
     optimized_at: '2026-06-21'
     train_sharpe: 1.21
@@ -185,11 +185,17 @@ risk:
   high_vol_size_mult: 0.5
 market_regime:
   trend: up
-  volatility: high
-  trend_score: 0.895
-  vol_percentile: 82.0
-  analyzed_at: '2026-06-21'
-market_confidence: 0.595
+  volatility: normal
+  trend_score: 0.651
+  vol_percentile: 50.0
+  analyzed_at: 2026-06-22 10:45
+  hmm_state: bear
+  hmm_confidence: 0.8207960016666775
+  hmm_transition:
+    bear: 0.0025204445965288868
+    sideways: 0.9974795554033785
+    bull: 9.2579035370553e-14
+market_confidence: 0.646
 strong_sectors:
 - 반도체
 - 금융
@@ -197,13 +203,12 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
+  nasdaq_change: 1.91
+  sp500_change: 0
   direction: bullish
+  strength: 0.38
+  confidence_boost: 0.046
   recommended_action: normal
-  nasdaq_change: 2.51
-  sp500_change: 1.04
-  strength: 0.59
-  confidence_boost: 0.05
-  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
@@ -215,5 +220,5 @@ dynamic_universe:
   name: KODEX KOSPI200
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.5
-  trades: 0
+  win_rate: 0.545
+  trades: 7
