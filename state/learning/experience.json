@@ -361,5 +361,30 @@
     "exit_price": 2513,
     "evaluated": true,
     "rebuilt": true
+  },
+  {
+    "timestamp": "2026-06-19T13:24:15",
+    "date": "2026-06-19",
+    "symbol": "069500",
+    "name": "KODEX KOSPI200",
+    "action": "buy",
+    "reason": "매수: 융합 STRONG_BUY (확률 64%, TA +19, 돌파 X)",
+    "price": 146520,
+    "qty": 1,
+    "strategy": "etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": {
+      "total": 19.0
+    },
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "loss",
+    "pnl_pct": -3.12,
+    "exit_price": 141950,
+    "evaluated": true,
+    "rebuilt": true
   }
 ]
