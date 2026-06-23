@@ -415,6 +415,21 @@ def run_gap_recovery_strategy(client: KISClient, budget: int, holdings: dict,
     return 0
 
 
+def etf_multi_position_skip(symbol: str, etf_held, pyramidable: set,
+                            open_slots: int) -> bool:
+    """다중 포지션 진입 필터 (순수 함수). True면 이 종목 스킵.
+
+    보유 중(피라미딩 불가)인 종목은 스킵(중복 진입 방지), 미보유여도 신규 슬롯이
+    없으면 스킵. 한 종목 보유했다고 다른 종목 진입을 막던 단일포지션 가정 제거 —
+    max_concurrent_positions 한도 내에서 여러 종목 동시 보유 허용.
+    """
+    if symbol in etf_held and symbol not in pyramidable:
+        return True
+    if symbol not in etf_held and open_slots <= 0:
+        return True
+    return False
+
+
 def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
                      universe: list[dict], dry_run: bool,
                      twap_engine: TWAPEngine | None = None) -> int:
@@ -422,28 +437,29 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
     universe_syms = {s["symbol"] for s in universe}
 
     etf_held = {s: q for s, q in holdings.items() if s in universe_syms}
-    # 피라미딩: 기존 보유 중이라도 수익 중이면 추가 매수 허용
-    pyramid_mode = False
-    if etf_held:
-        positions = load_positions()
-        can_pyramid = False
-        for sym, qty in etf_held.items():
-            pos = positions.get(sym, {})
-            buy_p = pos.get("buy_price", 0)
-            pyramid_count = pos.get("pyramid_count", 0)
-            if buy_p > 0 and pyramid_count < 3:
-                cur_p = get_price(client, sym)
-                pnl = (cur_p - buy_p) / buy_p if buy_p > 0 else 0
-                if pnl >= 0.02:  # +2% 이상 수익 시 피라미딩 가능
-                    can_pyramid = True
-                    print(f"  [피라미딩] {sym} 수익 {pnl:+.1%} — 추가 매수 가능 "
-                          f"({pyramid_count + 1}/3단위)")
-        if not can_pyramid:
-            syms = ", ".join(f"{s}({q}주)" for s, q in etf_held.items())
-            print(f"  [ETF] 보유 중: {syms}. 리스크 관리 대기.")
-            return 0
-        pyramid_mode = True
-        budget = int(budget * 0.5)  # 피라미딩은 반 사이즈
+    # 다중 포지션: 유니버스 종목 1개 보유했다고 다른 종목 매수를 막지 않는다(단일포지션
+    # 가정 제거 — 069500 보유 중에도 단타종목 신규 진입 가능). 보유 종목은 스킵하되
+    # +2% 수익이면 피라미딩 허용, 미보유 종목은 신규 평가. max_concurrent_positions 한도.
+    positions = load_positions()
+    pyramidable: set[str] = set()
+    for sym in etf_held:
+        pos = positions.get(sym, {})
+        buy_p = pos.get("buy_price", 0)
+        pc = pos.get("pyramid_count", 0)
+        if buy_p > 0 and pc < 3:
+            cur_p = get_price(client, sym)
+            if cur_p > 0 and (cur_p - buy_p) / buy_p >= 0.02:
+                pyramidable.add(sym)
+                print(f"  [피라미딩] {sym} +{(cur_p - buy_p) / buy_p:.1%} — 추가매수 가능 ({pc + 1}/3)")
+    max_pos = int(load_risk_params().get("max_concurrent_positions", 5))
+    open_slots = max(0, max_pos - len(etf_held))
+    if open_slots <= 0 and not pyramidable:
+        syms = ", ".join(f"{s}({q}주)" for s, q in etf_held.items())
+        print(f"  [ETF] 보유 {len(etf_held)}종목(최대 {max_pos})·피라미딩 없음: {syms}. 대기.")
+        return 0
+    pyramid_mode = (open_slots <= 0)   # 신규 슬롯 없고 피라미딩만 가능하면 보수적 반 사이즈
+    if pyramid_mode:
+        budget = int(budget * 0.5)
 
     params = load_strategy_params()
     k = params.get("k", 0.5)
@@ -485,6 +501,9 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
     for stock in universe:
         symbol = stock["symbol"]
         name = stock["name"]
+        # 다중 포지션 필터: 보유(피라미딩 불가) 종목 스킵, 신규 슬롯 없으면 미보유도 스킵
+        if etf_multi_position_skip(symbol, etf_held, pyramidable, open_slots):
+            continue
         is_strong = any(sec in name for sec in strong_sectors)
         try:
             history = fetch_recent_history(client, symbol, days=70)
@@ -1600,7 +1619,7 @@ def run_once(dry_run: bool) -> None:
             # CAUTION: 롱 비중만큼 기존 전략, 나머지 방어 (급락일엔 롱 차단)
             long_budget = int(total_budget * allocation.long_pct)
             etf_held = any(s in universe_syms for s in holdings)
-            if not gap_skip and not etf_held and long_budget >= 10000:
+            if not gap_skip and long_budget >= 10000:
                 print(f"  [CAUTION] 롱 배정: {long_budget:,}원 ({allocation.long_pct:.0%})")
                 run_etf_strategy(client, long_budget, holdings, universe, dry_run)
             # 급락일엔 롱 예산도 방어로 회전
@@ -1620,7 +1639,7 @@ def run_once(dry_run: bool) -> None:
     else:
         # BULL 또는 하락장 전략 비활성: 기존 ETF 전략
         etf_held = any(s in universe_syms for s in holdings)
-        etf_budget = int(cash * size_factor) if not etf_held else 0
+        etf_budget = int(cash * size_factor)  # 다중포지션: 보유 중에도 신규 슬롯 평가
 
         if size_factor < 1.0:
             print(f"  [배분 조정] 신뢰도 반영: ETF {etf_budget:,}원 (x{size_factor:.0%})")
@@ -2057,7 +2076,7 @@ def run_loop(dry_run: bool) -> None:
 
                 if regime_result.regime == "CAUTION" and allocation.long_pct > 0:
                     long_budget = int(total_budget * allocation.long_pct)
-                    if not gap_skip and not etf_held and long_budget >= 10000:
+                    if not gap_skip and long_budget >= 10000:
                         etf_used = run_etf_strategy(client, long_budget, holdings,
                                                      universe, dry_run, twap_engine=twap)
                         if etf_used > 0:
@@ -2083,7 +2102,7 @@ def run_loop(dry_run: bool) -> None:
                 if def_used > 0:
                     bought_today = True
             else:
-                etf_budget = int(etf_budget_cap * size_factor) if not etf_held else 0
+                etf_budget = int(etf_budget_cap * size_factor)  # 다중포지션: 보유 중에도 신규 슬롯 평가
 
                 # ETF 변동성 돌파 (TWAP 분할 매수)
                 etf_used = run_etf_strategy(client, etf_budget, holdings, universe,
