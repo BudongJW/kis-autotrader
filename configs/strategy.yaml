@@ -176,7 +176,12 @@ us_session:
   regime_linked: true
 risk:
   min_position_krw: 300000
-  max_position_weight: 0.45
+  # 확신도 연동 단일종목 비중 상한. 강신호(돌파+융합≥70%)만 큰 비중, 중·약신호는
+  # 상한이 min_position_krw보다 작아 진입 스킵 → 약신호 과집중 차단(069500 손절 사례).
+  max_position_weight: 0.35       # 하드 상한(강신호)
+  conviction_strong_weight: 0.35
+  conviction_mid_weight: 0.22
+  conviction_weak_weight: 0.12
   max_concurrent_positions: 5
   stop_loss_pct: 0.03
   take_profit_pct: 0.05

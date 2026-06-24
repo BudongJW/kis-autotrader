@@ -518,6 +518,33 @@ def high_vol_size_factor(base_factor: float, is_high_vol: bool,
     return base_factor * mult, False
 
 
+def conviction_position_cap_krw(equity: float, fusion_prob: float,
+                                breakout: bool, cfg: dict | None = None) -> int:
+    """확신도 연동 단일종목 비중 상한(원). 약신호에 큰 비중을 금지한다.
+
+    069500을 약신호(돌파X·융합64%)에 16% 비중으로 잡았다가 -3.1% 손절로 누적
+    최저점을 찍은 사례 보완. 강신호(돌파+고융합)만 큰 비중까지 허용하고, 중·약
+    신호는 상한을 낮춰 — 상한이 min_position_krw보다 작으면 호출부가 진입을
+    스킵하게 한다(약신호는 아예 안 삼).
+
+    Args:
+        equity: 총자본(현금+보유평가), fusion_prob: 융합 확률, breakout: 돌파 여부
+        cfg: risk dict (max_position_weight / conviction_*_weight)
+    Returns: 단일종목 최대 투입액(원).
+    """
+    r = cfg or {}
+    base = float(r.get("max_position_weight", 0.35) or 0.35)
+    fp = float(fusion_prob or 0.0)
+    if breakout and fp >= 0.70:
+        pct = float(r.get("conviction_strong_weight", base))
+    elif fp >= 0.70 or (breakout and fp >= 0.62):
+        pct = float(r.get("conviction_mid_weight", 0.22))
+    else:
+        pct = float(r.get("conviction_weak_weight", 0.12))
+    pct = min(pct, base)  # 하드 상한 초과 금지
+    return int(max(0.0, equity) * pct)
+
+
 def apply_min_position(qty: int, price: float, avail_cash: float,
                        min_krw: float, max_weight: float = 0.0,
                        equity: float = 0.0) -> int:

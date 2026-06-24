@@ -39,7 +39,8 @@ from src.risk_manager import (
     remove_position,
     load_positions, save_positions, get_kelly_position_size, should_hold_overnight,
     check_daily_loss_limit, check_max_positions, compute_atr_for_position,
-    get_drawdown_scale, high_vol_size_factor, apply_min_position, PARTIAL_SELL_RATIO,
+    get_drawdown_scale, high_vol_size_factor, apply_min_position,
+    conviction_position_cap_krw, PARTIAL_SELL_RATIO,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -704,20 +705,45 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             except Exception as _imb_e:
                 pass  # imbalance 실패는 무시 (기본 동작 유지)
 
-            # ── 최소 포지션 금액 floor (단타: 소액 1주 회피 → %수익이 수수료 넘게) ──
+            # ── 확신 연동 사이징 + 집중 상한 (약신호 과집중 방지) ──
             _rp = load_risk_params()
             _min_krw = int(_rp.get("min_position_krw", 0) or 0)
+            _avail = get_available_cash(client)
+            _equity = _avail + sum(
+                get_price(client, s) * q for s, q in (holdings or {}).items())
+            _cap_krw = conviction_position_cap_krw(
+                _equity, fusion.final_prob, breakout_passed, _rp)
+            # 약신호 과집중 회피: 확신상한이 최소진입액보다 작으면 진입 자체 스킵
+            if _min_krw > 0 and _cap_krw < _min_krw:
+                print(f"    [확신상한] 약신호(융합 {fusion.final_prob:.0%}·돌파 "
+                      f"{'O' if breakout_passed else 'X'}) → 상한 {_cap_krw:,}원 "
+                      f"< 최소 {_min_krw:,}원. 진입 스킵(과집중·약신호 회피).")
+                log_decision(symbol, name, "skip",
+                             f"확신상한<최소 ({_cap_krw:,}<{_min_krw:,}) 약신호 과집중 회피",
+                             cur_price, strategy="etf", ta_scores=_ta_scores,
+                             lgbm_prob=lgbm_prob)
+                continue
+            # 최소 포지션 floor (소액 1주 회피)
             if _min_krw > 0:
-                _avail = get_available_cash(client)
-                _equity = _avail + sum(
-                    get_price(client, s) * q for s, q in (holdings or {}).items())
                 _q2 = apply_min_position(qty, cur_price, _avail, _min_krw,
                                          float(_rp.get("max_position_weight", 0) or 0),
                                          _equity)
                 if _q2 > qty:
-                    print(f"    [최소포지션] {qty}주→{_q2}주 "
-                          f"(≥{_min_krw:,}원, 단타 수수료 대비 이득)")
+                    print(f"    [최소포지션] {qty}주→{_q2}주 (≥{_min_krw:,}원)")
                     qty = _q2
+            # 확신 상한으로 캡 (강신호만 큰 비중). 1주도 상한 초과면 스킵.
+            if _cap_krw > 0 and qty * cur_price > _cap_krw:
+                _q3 = int(_cap_krw // cur_price)
+                if _q3 < qty:
+                    print(f"    [확신상한] {_cap_krw:,}원 캡 → {qty}→{max(_q3,0)}주 "
+                          f"(융합 {fusion.final_prob:.0%})")
+                    qty = _q3
+                if qty <= 0:
+                    log_decision(symbol, name, "skip",
+                                 f"1주가 확신상한 초과 ({cur_price:,}>{_cap_krw:,}) — 과집중 회피",
+                                 cur_price, strategy="etf", ta_scores=_ta_scores,
+                                 lgbm_prob=lgbm_prob)
+                    continue
 
             total = qty * cur_price
             buy_label = "STRONG_BUY" if fusion.signal == "STRONG_BUY" else "BUY"
