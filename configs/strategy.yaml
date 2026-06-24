@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.59
+    k: 0.54
     trend_ma: 15
     optimized_at: '2026-06-21'
     train_sharpe: 1.21
@@ -176,9 +176,7 @@ us_session:
   regime_linked: true
 risk:
   min_position_krw: 300000
-  # 확신도 연동 단일종목 비중 상한. 강신호(돌파+융합≥70%)만 큰 비중, 중·약신호는
-  # 상한이 min_position_krw보다 작아 진입 스킵 → 약신호 과집중 차단(069500 손절 사례).
-  max_position_weight: 0.35       # 하드 상한(강신호)
+  max_position_weight: 0.35
   conviction_strong_weight: 0.35
   conviction_mid_weight: 0.22
   conviction_weak_weight: 0.12
@@ -191,40 +189,26 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.651
-  vol_percentile: 34.0
-  analyzed_at: 2026-06-23 10:28
-  hmm_state: bull
-  hmm_confidence: 0.802228444067799
-  hmm_transition:
-    bull: 0.0039734863172228106
-    sideways: 0.9960252940108975
-    bear: 1.219671879696082e-06
-market_confidence: 0.418
+  trend_score: 0.631
+  vol_percentile: 74.0
+  analyzed_at: 2026-06-24 10:22
+  hmm_state: sideways
+  hmm_confidence: 0.6
+  hmm_transition: {}
+market_confidence: 0.397
 strong_sectors:
-- 반도체
-- 금융
 - IT
-- KOSPI200
-- 미국나스닥
 overnight_signal:
+  nasdaq_change: 0
+  sp500_change: -1.44
   direction: bearish
+  strength: 0.19
+  confidence_boost: -0.023
   recommended_action: reduce_size
-  nasdaq_change: -3.31
-  sp500_change: -1.47
-  strength: 0.8
-  confidence_boost: -0.15
-  source: us_post_learning
 dynamic_universe:
-- symbol: 091160
-  name: KODEX 반도체
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
-- symbol: 069500
-  name: KODEX KOSPI200
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.545
-  trades: 7
+  win_rate: 0.5
+  trades: 8
