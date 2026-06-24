@@ -386,5 +386,55 @@
     "exit_price": 141950,
     "evaluated": true,
     "rebuilt": true
+  },
+  {
+    "timestamp": "2026-06-23T03:22:09",
+    "date": "2026-06-23",
+    "symbol": "PSQ",
+    "name": "ProShares Short QQQ (1x inverse 나스닥)",
+    "action": "buy",
+    "reason": "US 매수: 변동성 돌파 + TA +18",
+    "price": 2521,
+    "qty": 8,
+    "strategy": "us_etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": {
+      "total": 18.0
+    },
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "win",
+    "pnl_pct": 1.94,
+    "exit_price": 2570,
+    "evaluated": true,
+    "rebuilt": true
+  },
+  {
+    "timestamp": "2026-06-25T00:19:39",
+    "date": "2026-06-25",
+    "symbol": "PSQ",
+    "name": "ProShares Short QQQ (1x inverse 나스닥)",
+    "action": "buy",
+    "reason": "US 매수: 변동성 돌파 + TA +18",
+    "price": 2570,
+    "qty": 8,
+    "strategy": "us_etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": {
+      "total": 18.0
+    },
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "win",
+    "pnl_pct": 1.32,
+    "exit_price": 2604,
+    "evaluated": true,
+    "rebuilt": true
   }
 ]
