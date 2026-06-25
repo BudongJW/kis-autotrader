@@ -282,6 +282,27 @@ def get_us_available_cash(client: KISClient) -> float:
     return 0.0
 
 
+def get_us_cash_usd(client: KISClient) -> float:
+    """실제 외화(USD) 예수금 — 총자산 합산용.
+
+    get_us_available_cash는 통합증거금 '매수여력'(frcr_ord_psbl_amt1, KRW 환산
+    포함 $558류)을 반환해 사이징엔 맞지만 총자산엔 KRW를 이중계상시킨다.
+    총자산엔 순수 USD 현금(ovrs_ord_psbl_amt = 앱 '주문가능달러' $205류)만 더한다.
+    (검증: dnca KRW 577,424 + $205.64×환율 = 859,437 = 앱 주문가능원화)
+    """
+    try:
+        ref_price = get_us_price(client, "QQQ", "NASD") or 500.0
+        resp = client.get_overseas_psamount("QQQ", ref_price, exchange="NASD")
+        if resp.get("rt_cd") == "0":
+            o = resp.get("output", {})
+            if isinstance(o, list) and o:
+                o = o[0]
+            return float(o.get("ovrs_ord_psbl_amt", 0) or 0)
+    except Exception as e:
+        log.warning("us_cash_usd_failed", error=str(e))
+    return 0.0
+
+
 # ──────────────────────────────────────────────────────────
 # 미국장 포지션 관리 (국내와 별도)
 # ──────────────────────────────────────────────────────────

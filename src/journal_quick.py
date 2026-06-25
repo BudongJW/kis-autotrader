@@ -26,6 +26,7 @@ from src.strategies.bear_strategy import (
 )
 from src.bot.us_session import (
     load_us_config, load_us_positions, get_us_holdings, get_us_available_cash,
+    get_us_cash_usd,
 )
 from src.experience import _load_experience
 from src.strategies.r_multiple import get_r_summary, R_LOG_PATH
@@ -43,6 +44,20 @@ CONFIG_PATH = Path("configs/strategy.yaml")
 KR_FEE_RATE = 0.00015
 KR_TAX_RATE = 0.0023
 US_FEE_RATE = 0.0025
+
+
+def _get_usdkrw_rate() -> float:
+    """USDKRW 환율. yfinance 'KRW=X' 우선, 실패 시 보수적 기본값."""
+    try:
+        import yfinance as yf
+        d = yf.Ticker("KRW=X").history(period="5d")
+        if d is not None and len(d):
+            r = float(d["Close"].iloc[-1])
+            if 800 < r < 2500:
+                return r
+    except Exception:
+        pass
+    return 1370.0
 
 
 def _is_us_symbol(symbol: str) -> bool:
@@ -463,6 +478,30 @@ def main() -> None:
 
     # 총자산: KIS API 값 우선, 없으면 직접 계산
     total_value = total_value_api if total_value_api > 0 else (cash + holdings_value)
+
+    # ── 통합증거금 USD 자산을 총자산에 합산 ──
+    # KIS 국내잔고(dnca_tot_amt)는 KRW만 잡혀 USD 예수금이 누락된다(6/25 31만원 과소계상
+    # 사례: dnca 577,424 + $205.64×환율 = 859,437 = 앱 주문가능원화). 순수 USD 현금
+    # (ovrs_ord_psbl_amt=주문가능달러)만 환산해 더한다(매수여력 frcr은 KRW 이중계상이라 제외).
+    usd_cash = 0.0
+    usd_in_krw = 0
+    try:
+        if load_us_config().get("enabled", False):
+            usd_cash = float(get_us_cash_usd(client) or 0)
+            _uh = get_us_holdings(client) or {}
+            for _s, _p in (load_us_positions() or {}).items():
+                _d = _uh.get(_s, {})
+                usd_cash += float(_d.get("qty", _p.get("qty", 0))) * \
+                    float(_d.get("current_price", _p.get("buy_price", 0)))
+            _fx = _get_usdkrw_rate()
+            usd_in_krw = int(usd_cash * _fx)
+            if usd_in_krw > 0:
+                total_value += usd_in_krw
+                cash += usd_in_krw
+                log.info("usd_added_to_total", usd=round(usd_cash, 2),
+                         fx=round(_fx, 1), krw=usd_in_krw, total_value=total_value)
+    except Exception as _e:
+        log.warning("usd_total_add_failed", error=str(_e))
 
     # 기존 데이터 로드
     existing = {}
