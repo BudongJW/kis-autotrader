@@ -1,19 +1,19 @@
 [
   {
-    "date": "2026-06-24",
+    "date": "2026-06-25",
     "regime_trend": "up",
-    "regime_volatility": "normal",
-    "trend_score": 0.631,
-    "vol_percentile": 74.0,
-    "hmm_state": "sideways",
+    "regime_volatility": "high",
+    "trend_score": 0.626,
+    "vol_percentile": 78.0,
+    "hmm_state": "bear",
     "hmm_confidence": 0.6,
     "breadth": "weak",
-    "kospi_5d": -7.22,
-    "kosdaq_5d": -7.71,
-    "confidence": 0.39696,
+    "kospi_5d": -1.8,
+    "kosdaq_5d": -4.33,
+    "confidence": 0.27,
     "strong_sectors": [
       "IT"
     ],
-    "k_value": 0.54
+    "k_value": 0.59
   }
 ]
