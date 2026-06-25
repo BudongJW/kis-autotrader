@@ -436,5 +436,30 @@
     "exit_price": 2604,
     "evaluated": true,
     "rebuilt": true
+  },
+  {
+    "timestamp": "2026-06-26T00:24:32",
+    "date": "2026-06-26",
+    "symbol": "SH",
+    "name": "ProShares Short S&P500 (1x inverse)",
+    "action": "buy",
+    "reason": "US 매수: 변동성 돌파 + TA +13",
+    "price": 3353,
+    "qty": 6,
+    "strategy": "us_etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": {
+      "total": 13.0
+    },
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "win",
+    "pnl_pct": 0.33,
+    "exit_price": 3364,
+    "evaluated": true,
+    "rebuilt": true
   }
 ]
