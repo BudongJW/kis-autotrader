@@ -282,25 +282,36 @@ def get_us_available_cash(client: KISClient) -> float:
     return 0.0
 
 
-def get_us_cash_usd(client: KISClient) -> float:
-    """실제 외화(USD) 예수금 — 총자산 합산용.
+def get_us_assets_krw(client: KISClient) -> int:
+    """US 자산(USD 현금 + 보유 평가)을 **KIS 제공 환율(exrt)**로 환산한 KRW.
 
-    get_us_available_cash는 통합증거금 '매수여력'(frcr_ord_psbl_amt1, KRW 환산
-    포함 $558류)을 반환해 사이징엔 맞지만 총자산엔 KRW를 이중계상시킨다.
-    총자산엔 순수 USD 현금(ovrs_ord_psbl_amt = 앱 '주문가능달러' $205류)만 더한다.
-    (검증: dnca KRW 577,424 + $205.64×환율 = 859,437 = 앱 주문가능원화)
+    총자산 합산용. 외부(yfinance) 환율 대신 KIS psamount 응답의 exrt를 직접 써
+    계좌와 정확히 일치시킨다(6/25: dnca 577,424 + $205.64×exrt = 실제 총자산).
+    순수 USD 현금은 ovrs_ord_psbl_amt(앱 주문가능달러), 매수여력 frcr은 KRW
+    이중계상이라 제외.
     """
     try:
         ref_price = get_us_price(client, "QQQ", "NASD") or 500.0
         resp = client.get_overseas_psamount("QQQ", ref_price, exchange="NASD")
-        if resp.get("rt_cd") == "0":
-            o = resp.get("output", {})
-            if isinstance(o, list) and o:
-                o = o[0]
-            return float(o.get("ovrs_ord_psbl_amt", 0) or 0)
+        if resp.get("rt_cd") != "0":
+            return 0
+        o = resp.get("output", {})
+        if isinstance(o, list) and o:
+            o = o[0]
+        usd = float(o.get("ovrs_ord_psbl_amt", 0) or 0)
+        exrt = float(o.get("exrt", 0) or 0)
+        if exrt <= 0 or usd <= 0:
+            return 0
+        # US 보유분 평가(USD) 추가
+        uh = get_us_holdings(client) or {}
+        for s, p in (load_us_positions() or {}).items():
+            d = uh.get(s, {})
+            usd += float(d.get("qty", p.get("qty", 0))) * \
+                float(d.get("current_price", p.get("buy_price", 0)))
+        return int(usd * exrt)
     except Exception as e:
-        log.warning("us_cash_usd_failed", error=str(e))
-    return 0.0
+        log.warning("us_assets_krw_failed", error=str(e))
+    return 0
 
 
 # ──────────────────────────────────────────────────────────
