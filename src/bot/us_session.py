@@ -551,6 +551,24 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
         except Exception:
             pass
 
+    # ── 인버스 churn 차단: 약세 확인 시에만 인버스 진입 ──
+    # 순환매/상승장(2026 US: Nasdaq 약세지만 광의지수 상승)에서 인버스 데이트레이드는
+    # 엣지가 약해 본전·수수료갈이. 한국장 BEAR(prefer_inverse) 또는 美 오버나이트 약세일
+    # 때만 인버스 매수 허용, 그 외엔 인버스 스킵.
+    inverse_requires_bearish = strat_cfg.get("inverse_requires_bearish", True)
+    allow_inverse = (not inverse_requires_bearish) or prefer_inverse
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as f:
+            _full = yaml.safe_load(f) or {}
+        _ov = _full.get("overnight_signal", {}) or {}
+        if _ov.get("direction") == "bearish" or \
+                _ov.get("recommended_action") in ("skip", "reduce_size"):
+            allow_inverse = True
+    except Exception:
+        pass
+    if not allow_inverse:
+        print("  [US] 인버스 진입 차단(약세조건 아님 — 순환매/상승장 churn 회피)")
+
     # 인버스 우선일 때 유니버스 재정렬
     if prefer_inverse:
         inverse_first = [s for s in universe if s.get("type") == "inverse"]
@@ -568,6 +586,13 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             asset_type = "us_defensive"
         else:
             asset_type = "us_long"
+
+        # 인버스 churn 차단: 약세조건 아니면 인버스 진입 스킵
+        if asset_type == "us_inverse" and not allow_inverse:
+            log_decision(symbol, name, "skip",
+                         "인버스 스킵: 약세조건 아님(순환매/상승장 churn 차단)",
+                         0, strategy="us_etf")
+            continue
 
         # 이미 보유 중이면 스킵
         if symbol in us_positions:

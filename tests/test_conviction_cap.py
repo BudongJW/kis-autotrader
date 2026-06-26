@@ -49,3 +49,23 @@ def test_069500_one_share_exceeds_weak_cap():
     # 069500 1주(146,520) > 약신호 상한(106,560) → 1주도 못 사 스킵
     cap = conviction_position_cap_krw(EQ, 0.64, False, CFG)
     assert 146_520 > cap
+
+
+def test_theme_boost_mid_to_strong():
+    # 반도체 주도주 중신호: 부스트 없으면 mid(195k<최소→스킵), 부스트면 strong(311k≥최소→진입)
+    no_boost = conviction_position_cap_krw(EQ, 0.72, False, CFG, theme_boost=False)
+    boosted = conviction_position_cap_krw(EQ, 0.72, False, CFG, theme_boost=True)
+    assert no_boost == int(EQ * 0.22)
+    assert boosted == int(EQ * 0.35)   # mid→strong
+    assert no_boost < MIN <= boosted   # 부스트로 진입 가능해짐
+
+
+def test_theme_boost_weak_to_mid():
+    boosted = conviction_position_cap_krw(EQ, 0.55, False, CFG, theme_boost=True)
+    assert boosted == int(EQ * 0.22)   # weak→mid
+
+
+def test_theme_boost_strong_unchanged_and_capped():
+    # 이미 강신호면 그대로(strong), 하드상한 초과 안 함
+    boosted = conviction_position_cap_krw(EQ, 0.75, True, CFG, theme_boost=True)
+    assert boosted == int(EQ * 0.35)   # strong 유지, base 0.35 초과 안 함

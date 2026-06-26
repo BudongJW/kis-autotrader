@@ -711,8 +711,17 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
             _avail = get_available_cash(client)
             _equity = _avail + sum(
                 get_price(client, s) * q for s, q in (holdings or {}).items())
+            # 강세 테마 부스트: 테마 주도주(반도체·삼성·하이닉스 등) + 상승추세(강세장)면
+            # 비중 상한 상향. theme_sectors는 학습기 strong_sectors와 독립(좁혀져도 유지).
+            _trend_up = cfg.get("market_regime", {}).get("trend") == "up"
+            _themes = _rp.get("theme_sectors", []) or []
+            _theme_match = any(str(t) in name for t in _themes)
+            _theme_boost = bool(_theme_match and _trend_up)
             _cap_krw = conviction_position_cap_krw(
-                _equity, fusion.final_prob, breakout_passed, _rp)
+                _equity, fusion.final_prob, breakout_passed, _rp,
+                theme_boost=_theme_boost)
+            if _theme_boost:
+                print(f"    [테마부스트] 강세섹터+상승추세 → 비중상한 상향 ({name})")
             # 약신호 과집중 회피: 확신상한이 최소진입액보다 작으면 진입 자체 스킵
             if _min_krw > 0 and _cap_krw < _min_krw:
                 print(f"    [확신상한] 약신호(융합 {fusion.final_prob:.0%}·돌파 "

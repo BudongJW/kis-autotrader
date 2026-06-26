@@ -519,13 +519,18 @@ def high_vol_size_factor(base_factor: float, is_high_vol: bool,
 
 
 def conviction_position_cap_krw(equity: float, fusion_prob: float,
-                                breakout: bool, cfg: dict | None = None) -> int:
+                                breakout: bool, cfg: dict | None = None,
+                                theme_boost: bool = False) -> int:
     """확신도 연동 단일종목 비중 상한(원). 약신호에 큰 비중을 금지한다.
 
     069500을 약신호(돌파X·융합64%)에 16% 비중으로 잡았다가 -3.1% 손절로 누적
     최저점을 찍은 사례 보완. 강신호(돌파+고융합)만 큰 비중까지 허용하고, 중·약
     신호는 상한을 낮춰 — 상한이 min_position_krw보다 작으면 호출부가 진입을
     스킵하게 한다(약신호는 아예 안 삼).
+
+    theme_boost: 강세섹터 종목 + 상승추세(강세장) 동시 충족 시 한 단계 상향.
+      역대급 반도체 슈퍼사이클(2026)을 현금으로 흘려보내던 문제 보완 — 테마 주도주
+      (삼성·하이닉스·KODEX반도체)는 중신호로도 의미있는 비중 진입. 하드상한(base)은 불변.
 
     Args:
         equity: 총자본(현금+보유평가), fusion_prob: 융합 확률, breakout: 돌파 여부
@@ -534,13 +539,19 @@ def conviction_position_cap_krw(equity: float, fusion_prob: float,
     """
     r = cfg or {}
     base = float(r.get("max_position_weight", 0.35) or 0.35)
+    strong = float(r.get("conviction_strong_weight", base))
+    mid = float(r.get("conviction_mid_weight", 0.22))
+    weak = float(r.get("conviction_weak_weight", 0.12))
     fp = float(fusion_prob or 0.0)
     if breakout and fp >= 0.70:
-        pct = float(r.get("conviction_strong_weight", base))
+        pct = strong
     elif fp >= 0.70 or (breakout and fp >= 0.62):
-        pct = float(r.get("conviction_mid_weight", 0.22))
+        pct = mid
     else:
-        pct = float(r.get("conviction_weak_weight", 0.12))
+        pct = weak
+    # 강세 테마(강세섹터+상승추세): 한 단계 상향
+    if theme_boost:
+        pct = strong if pct == mid else (mid if pct == weak else pct)
     pct = min(pct, base)  # 하드 상한 초과 금지
     return int(max(0.0, equity) * pct)
 
