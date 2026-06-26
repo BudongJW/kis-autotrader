@@ -1,0 +1,23 @@
+# 사용자 수동 설정 — 자동 워크플로(market-learn / optimize)가 절대 덮어쓰지 않음.
+# load_config가 strategy.yaml 로드 직후 이 파일을 deep-merge로 재적용한다.
+# 자동화가 strategy.yaml의 universe.default를 지워도 매 로드마다 여기 값이 복원된다.
+# (규칙: universe.default 리스트는 이 파일 값으로 완전 교체. 다른 하위섹션은 strategy.yaml 유지.)
+universe:
+  default:
+  - symbol: '395160'
+    name: KODEX 미국나스닥100TR
+  - symbol: '005930'
+    name: 삼성전자
+    type: stock
+  - symbol: '000660'
+    name: SK하이닉스
+    type: stock
+  - symbol: '034220'
+    name: LG디스플레이
+    type: stock
+  - symbol: '010140'
+    name: 삼성중공업
+    type: stock
+  - symbol: '011200'
+    name: HMM
+    type: stock

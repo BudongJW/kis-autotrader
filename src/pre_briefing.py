@@ -34,7 +34,9 @@ BRIEFING_PATH = Path("logs/pre_briefing.json")
 
 def load_config() -> dict:
     with CONFIG_PATH.open(encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    from src.config_overrides import apply_user_overrides
+    return apply_user_overrides(cfg)
 
 
 # ──────────────────────────────────────────────────────────

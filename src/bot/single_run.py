@@ -147,7 +147,9 @@ def _runtime_exceeded(loop_start_epoch: float, now_epoch: float,
 
 def load_config() -> dict:
     with CONFIG_PATH.open(encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    from src.config_overrides import apply_user_overrides
+    return apply_user_overrides(cfg)
 
 
 def load_universe() -> list[dict]:
