@@ -49,6 +49,21 @@ universe:
   default:
   - symbol: '395160'
     name: KODEX 미국나스닥100TR
+  - symbol: 005930
+    name: 삼성전자
+    type: stock
+  - symbol: '000660'
+    name: SK하이닉스
+    type: stock
+  - symbol: '034220'
+    name: LG디스플레이
+    type: stock
+  - symbol: '010140'
+    name: 삼성중공업
+    type: stock
+  - symbol: '011200'
+    name: HMM
+    type: stock
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
