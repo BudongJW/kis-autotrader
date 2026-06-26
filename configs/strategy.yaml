@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.59
+    k: 0.65
     trend_ma: 15
     optimized_at: '2026-06-21'
     train_sharpe: 1.21
@@ -167,7 +167,7 @@ us_session:
     trailing_activate_pct: 0.02
     trailing_stop_pct: 0.01
     reentry_cooldown_days: 2
-    inverse_requires_bearish: true   # 약세조건일 때만 인버스 매수(순환매/상승장 churn 차단)
+    inverse_requires_bearish: true
   eod_hold_winners: true
   market_open_kst: '22:30'
   market_close_kst: 05:00
@@ -187,8 +187,6 @@ risk:
   daily_loss_limit_pct: 0.05
   high_vol_action: size_down
   high_vol_size_mult: 0.5
-  # 강세 테마 부스트 대상(학습기 strong_sectors와 독립). 이름에 포함되면 상승추세 시
-  # 확신상한 한 단계 상향 — 2026 반도체 AI메모리 슈퍼사이클 주도주를 현금으로 흘리지 않도록.
   theme_sectors:
   - 반도체
   - 삼성전자
@@ -201,23 +199,25 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.626
-  vol_percentile: 78.0
-  analyzed_at: 2026-06-25 10:31
+  trend_score: 0.614
+  vol_percentile: 80.0
+  analyzed_at: 2026-06-26 10:35
   hmm_state: bear
-  hmm_confidence: 0.6
-  hmm_transition: {}
+  hmm_confidence: 0.5430878614298349
+  hmm_transition:
+    sideways: 0.9716750598262515
+    bear: 0.028324940162620108
+    bull: 1.112842602442984e-11
 market_confidence: 0.27
 strong_sectors:
 - IT
 overnight_signal:
+  nasdaq_change: -0.46
+  sp500_change: 0
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: 0.55
-  sp500_change: -0.04
-  strength: 0.09
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
