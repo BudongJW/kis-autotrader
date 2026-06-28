@@ -3,18 +3,18 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.5
     trend_ma: 15
-    optimized_at: '2026-06-21'
-    train_sharpe: 1.21
-    train_return: 5.22
-    train_mdd: -6.96
-    val_sharpe: 1.78
-    val_return: 2.4
-    val_mdd: -3.74
-    backtest_sharpe: 1.21
-    backtest_return: 5.22
-    backtest_mdd: -6.96
+    optimized_at: '2026-06-28'
+    train_sharpe: 0.88
+    train_return: 0.86
+    train_mdd: -1.85
+    val_sharpe: 5.67
+    val_return: 2.5
+    val_mdd: -0.43
+    backtest_sharpe: 0.88
+    backtest_return: 0.86
+    backtest_mdd: -1.85
   ta_weights:
     rsi: 0.17
     macd: 0.17
@@ -47,23 +47,10 @@ gap_recovery:
 kr_eod_liquidation: selective
 universe:
   default:
+  - symbol: '133690'
+    name: TIGER 미국나스닥100
   - symbol: '395160'
     name: KODEX 미국나스닥100TR
-  - symbol: 005930
-    name: 삼성전자
-    type: stock
-  - symbol: '000660'
-    name: SK하이닉스
-    type: stock
-  - symbol: '034220'
-    name: LG디스플레이
-    type: stock
-  - symbol: '010140'
-    name: 삼성중공업
-    type: stock
-  - symbol: '011200'
-    name: HMM
-    type: stock
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -214,15 +201,9 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.614
-  vol_percentile: 80.0
-  analyzed_at: 2026-06-26 10:35
-  hmm_state: bear
-  hmm_confidence: 0.5430878614298349
-  hmm_transition:
-    sideways: 0.9716750598262515
-    bear: 0.028324940162620108
-    bull: 1.112842602442984e-11
+  trend_score: 0.274
+  vol_percentile: 90.0
+  analyzed_at: '2026-06-28'
 market_confidence: 0.27
 strong_sectors:
 - IT
