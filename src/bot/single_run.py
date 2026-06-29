@@ -1063,9 +1063,18 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
     if adaptive["reason"] != "기본 파라미터":
         print(f"  [학습] {adaptive['reason']}")
 
-    # ── 인버스 ETF 매수 (BEAR·CRISIS 모드, 돌파 신호 게이트) ──
-    if r in ("BEAR", "CRISIS") and allocation.inverse_pct > 0:
-        inv_budget = int(budget * allocation.inverse_pct * adaptive.get("inverse_scale", 1.0))
+    # ── 인버스 ETF 매수: 돌파 OR 강한 TA 신호 (하락추세 대응) ──
+    # 기존엔 BEAR/CRISIS + 돌파 필수라, CAUTION(관망)에서 지수가 빠져도 인버스를 못 샀다.
+    # 이제 inverse_regimes(기본 BEAR/CRISIS/CAUTION)에서, 돌파가 없어도 인버스 TA가
+    # 충분히 강하면(inverse_ta_min) 진입. CAUTION은 강세장 역베팅이라 inverse_caution_pct로 소액.
+    _bc = load_bear_config()
+    _inv_regimes = _bc.get("inverse_regimes", ["BEAR", "CRISIS", "CAUTION"])
+    if r in _inv_regimes:
+        if allocation.inverse_pct > 0:
+            inv_pct = allocation.inverse_pct * adaptive.get("inverse_scale", 1.0)
+        else:
+            inv_pct = float(_bc.get("inverse_caution_pct", 0.15))  # CAUTION 등 소액 역베팅
+        inv_budget = int(budget * inv_pct)
         inv_universe = load_inverse_universe()
         inv_syms = {s["symbol"] for s in inv_universe}
 
@@ -1090,22 +1099,26 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                 try:
                     history = fetch_recent_history(client, symbol, days=70)
                     sig = inverse_breakout_signal(history, k=k, trend_ma=ma)
-                    print(f"    {name}: {sig['reason']}")
+                    ta = compute_ta_score(history)
+                    print(f"    {name}: {sig['reason']} | TA={ta.total:+.0f}")
 
-                    if not sig["breakout"]:
+                    # 진입 게이트: 돌파 OR (강한 TA — 하락추세 신호). 둘 다 아니면 스킵.
+                    _ta_entry = _bc.get("inverse_ta_entry", True)
+                    _inv_ta_min = int(_bc.get("inverse_ta_min", 20))
+                    _ok_signal = sig["breakout"] or (_ta_entry and ta.total >= _inv_ta_min)
+                    if not _ok_signal:
                         log_decision(symbol, name, "skip",
-                                     f"인버스 미돌파: {sig['reason']}",
+                                     f"인버스 미돌파+TA약함({ta.total:+.0f}<{_inv_ta_min}): {sig['reason']}",
                                      sig["price"], strategy="bear_inverse")
                         continue
-
-                    # TA 보조 확인 (인버스도 TA 적용)
-                    ta = compute_ta_score(history)
+                    # 최소 TA 방어: 돌파여도 TA가 기본선(10) 미만이면 스킵
                     if ta.total < 10:
                         print(f"    TA={ta.total:+.0f} 부족, 스킵")
                         log_decision(symbol, name, "skip",
                                      f"인버스 TA 부족 ({ta.total:+.0f})",
                                      sig["price"], strategy="bear_inverse")
                         continue
+                    _entry_via = "돌파" if sig["breakout"] else f"TA신호({ta.total:+.0f})"
 
                     cur_price = int(sig["price"])
 
@@ -1136,7 +1149,7 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                     if twap_engine:
                         twap_engine.submit(symbol, qty, "buy", name, cur_price,
                                            reason=(f"인버스 매수: {r} 레짐 하락대응 — "
-                                                   f"인버스 돌파(K={k}) + TA {ta.total:+.0f}"))
+                                                   f"인버스 {_entry_via} 진입 + TA {ta.total:+.0f}"))
                         record_buy(symbol, cur_price, qty, atr=atr_value,
                                    asset_type=asset_type)
                     elif not dry_run:
@@ -1146,7 +1159,7 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
                         if rt == "0":
                             log_trade(symbol, name, "buy", qty, cur_price,
                                       reason=(f"인버스 매수: {r} 레짐 하락대응 — "
-                                              f"인버스 돌파(K={k}) + TA {ta.total:+.0f}"))
+                                              f"인버스 {_entry_via} 진입 + TA {ta.total:+.0f}"))
                             record_buy(symbol, cur_price, qty, atr=atr_value,
                                        asset_type=asset_type)
                             log_bear_trade(r, "inverse", symbol, cur_price, today_str)
