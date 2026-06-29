@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.5
+    k: 0.41
     trend_ma: 15
     optimized_at: '2026-06-28'
     train_sharpe: 0.88
@@ -47,10 +47,23 @@ gap_recovery:
 kr_eod_liquidation: selective
 universe:
   default:
-  - symbol: '133690'
-    name: TIGER 미국나스닥100
   - symbol: '395160'
     name: KODEX 미국나스닥100TR
+  - symbol: 005930
+    name: 삼성전자
+    type: stock
+  - symbol: '000660'
+    name: SK하이닉스
+    type: stock
+  - symbol: '034220'
+    name: LG디스플레이
+    type: stock
+  - symbol: '010140'
+    name: 삼성중공업
+    type: stock
+  - symbol: '011200'
+    name: HMM
+    type: stock
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -201,23 +214,49 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.274
-  vol_percentile: 90.0
-  analyzed_at: '2026-06-28'
-market_confidence: 0.27
+  trend_score: 0.59
+  vol_percentile: 78.0
+  analyzed_at: 2026-06-29 10:35
+  hmm_state: bull
+  hmm_confidence: 0.682778919444762
+  hmm_transition:
+    bull: 2.506579491876802e-09
+    sideways: 0.9999999942144535
+    bear: 3.278967035306492e-09
+market_confidence: 0.61
 strong_sectors:
+- 반도체
+- 2차전지
+- 바이오
+- 금융
 - IT
+- 철강
+- KOSPI200
+- KOSDAQ150
 overnight_signal:
+  nasdaq_change: 0
+  sp500_change: -0.05
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -1.44
-  sp500_change: -0.4
-  strength: 0.31
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
+- symbol: 091160
+  name: KODEX 반도체
+- symbol: '305720'
+  name: KODEX 2차전지
+- symbol: '244580'
+  name: KODEX 바이오
+- symbol: '102110'
+  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
+- symbol: '117700'
+  name: KODEX 철강
+- symbol: 069500
+  name: KODEX KOSPI200
+- symbol: '229200'
+  name: KODEX KOSDAQ150
 adaptive_allocation:
   etf: 1.0
   win_rate: 0.5
