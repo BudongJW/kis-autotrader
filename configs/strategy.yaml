@@ -45,12 +45,9 @@ gap_recovery:
   hard_stop_pct: 0.03
   max_krw: 300000
 kr_eod_liquidation: selective
-# 조간 모멘텀 스캘프: 개장 윈도(09:00~10:00)에 KODEX200 아침 변동으로 방향 판단 —
-# 강한 상승이면 인덱스 롱(069500), 강한 하락이면 인버스(114800). 타이트 익절/손절 +
-# 시간청산(11:00)으로 빠르게 빠짐(오버나이트 캐리 아님). 인버스는 파생ETF 게이트 적용.
 morning_momentum:
   enabled: true
-  window_start_kst: '09:00'
+  window_start_kst: 09:00
   entry_end_kst: '10:00'
   exit_by_kst: '11:00'
   up_threshold_pct: 1.0
@@ -59,7 +56,7 @@ morning_momentum:
   position_krw: 300000
   take_profit_pct: 0.012
   stop_loss_pct: 0.007
-  long_symbol: '069500'
+  long_symbol: 069500
   long_name: KODEX 200
   inverse_symbol: '114800'
   inverse_name: KODEX 인버스
@@ -169,8 +166,6 @@ bear_strategy:
   inverse_caution_pct: 0.15
   inverse_min_krw: 250000
   inverse_max_krw: 350000
-  # 계좌가 파생ETF(레버리지·인버스 ETP) 거래신청 완료되면 true로. 미신청이면 KIS가
-  # 주문 거부(rt_cd=7)하므로 false 유지 시 인버스 시도 자체를 스킵.
   derivative_etf_enabled: true
 us_session:
   enabled: true
