@@ -29,6 +29,7 @@ def build_report() -> dict:
         evaluate_regime, compute_current_day_plan, day_plan_blocks_buy,
         load_leveraged_config, get_all_holdings, get_available_cash, get_price,
         load_universe, load_inverse_universe, load_config, compute_ta_score,
+        load_bear_config,
     )
     from src.bot.runner import fetch_recent_history
     from src.risk_manager import check_stop_loss
@@ -84,6 +85,13 @@ def build_report() -> dict:
     k = float(params.get("k", 0.5) or 0.5)
     ma = int(params.get("trend_ma", 20) or 20)
     candidates = []
+    # 인버스 진입 게이트(run_bear_strategy와 동일 규칙으로 리포트도 정직하게):
+    # 돌파 OR (inverse_ta_entry AND TA>=inverse_ta_min), 단 TA>=10, 현재 레짐이 inverse_regimes에 포함.
+    _bc = _safe(load_bear_config, {}) or {}
+    _inv_ta_entry = bool(_bc.get("inverse_ta_entry", True))
+    _inv_ta_min = int(_bc.get("inverse_ta_min", 20))
+    _inv_regimes = _bc.get("inverse_regimes", ["BEAR", "CRISIS", "CAUTION"])
+    _cur_regime = getattr(rr, "regime", "?") if rr else "?"
     universe = (load_universe() or []) + (load_inverse_universe() or [])
     for stock in universe:
         sym = stock.get("symbol")
@@ -102,16 +110,33 @@ def build_report() -> dict:
                 h = hist.tail(15)
                 em = atr_pct(float((h["high"] - h["low"]).mean()), price)
                 fee_ok, _ = edge_clears_cost(em, "KR")
-                ta_floor = 10 if is_inv else 0
-                decision = "진입가능" if (sig.get("breakout") and ta.total >= ta_floor and fee_ok) else "스킵"
+                bo = bool(sig.get("breakout"))
                 why = []
-                if not sig.get("breakout"):
-                    why.append("미돌파")
-                if ta.total < ta_floor:
-                    why.append(f"TA부족({ta.total:+.0f})")
-                if not fee_ok:
-                    why.append("수수료게이트")
-                return {**base, "decision": decision, "breakout": bool(sig.get("breakout")),
+                if is_inv:
+                    # 인버스: 돌파 또는 강한 TA(>=inverse_ta_min)면 진입, TA>=10 하한, 레짐 게이트.
+                    ta_signal = _inv_ta_entry and ta.total >= _inv_ta_min
+                    regime_ok = _cur_regime in _inv_regimes
+                    ok_signal = bo or ta_signal
+                    decision = "진입가능" if (ok_signal and ta.total >= 10 and fee_ok and regime_ok) else "스킵"
+                    entry_via = "돌파" if bo else (f"TA신호({ta.total:+.0f})" if ta_signal else "-")
+                    if not ok_signal:
+                        why.append(f"미돌파 · TA부족({ta.total:+.0f}<{_inv_ta_min})")
+                    if ta.total < 10:
+                        why.append(f"TA<10({ta.total:+.0f})")
+                    if not regime_ok:
+                        why.append(f"레짐({_cur_regime})∉인버스레짐")
+                    if not fee_ok:
+                        why.append("수수료게이트")
+                    base["entry_via"] = entry_via if decision == "진입가능" else "-"
+                else:
+                    decision = "진입가능" if (bo and ta.total >= 0 and fee_ok) else "스킵"
+                    if not bo:
+                        why.append("미돌파")
+                    if ta.total < 0:
+                        why.append(f"TA부족({ta.total:+.0f})")
+                    if not fee_ok:
+                        why.append("수수료게이트")
+                return {**base, "decision": decision, "breakout": bo,
                         "ta": round(ta.total, 1), "atr_pct": round(em * 100, 2),
                         "fee_gate_ok": fee_ok, "why_skip": " · ".join(why) or "-"}
             except Exception as e:
@@ -236,8 +261,9 @@ def print_report(rep: dict) -> None:
     print("\n[신규 진입 후보 — KR]")
     for c in rep.get("entry_candidates", []):
         if isinstance(c, dict):
+            via = f" 진입경로={c.get('entry_via')}" if c.get("entry_via") and c.get("entry_via") != "-" else ""
             print(f"  {c.get('symbol')} [{c.get('type')}] {c.get('decision')} "
-                  f"(돌파={c.get('breakout')}, TA={c.get('ta')}, ATR%={c.get('atr_pct')}) "
+                  f"(돌파={c.get('breakout')}, TA={c.get('ta')}, ATR%={c.get('atr_pct')}){via} "
                   f"{c.get('why_skip')}")
     print("\n[신규 진입 후보 — US (다음 야간 세션)]")
     for c in rep.get("us_entry_candidates", []):
