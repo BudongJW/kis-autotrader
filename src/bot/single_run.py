@@ -418,6 +418,148 @@ def run_gap_recovery_strategy(client: KISClient, budget: int, holdings: dict,
     return 0
 
 
+_MORNING_STATE_PATH = Path("logs/morning_positions.json")
+
+
+def _load_morning_positions() -> dict:
+    try:
+        import json as _json
+        return _json.loads(_MORNING_STATE_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _save_morning_positions(state: dict) -> None:
+    try:
+        import json as _json
+        _MORNING_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _MORNING_STATE_PATH.write_text(
+            _json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"  [조간] 상태저장 실패: {e}")
+
+
+def run_morning_momentum_strategy(client: KISClient, holdings: dict,
+                                  regime: str | None, blind: bool,
+                                  dry_run: bool) -> bool:
+    """조간 모멘텀 스캘프 — 개장 윈도에서 지수 방향을 빠르게 잡아 롱/인버스 진입,
+    타이트한 익절·손절·시간청산으로 빠르게 빠진다. 신규 진입했으면 True 반환.
+
+    청산 관리는 매 사이클 항상 수행(윈도 무관). 진입은 윈도 한정.
+    config `morning_momentum.enabled=false`면 즉시 no-op(검증 전 라이브 발주 금지).
+    인버스 방향은 계좌 파생ETF 게이트(derivative_etf_enabled) 통과 시에만.
+    베어 헷지 등 기존 보유분과의 충돌은 '이미 보유 시 진입 스킵'으로 회피.
+    """
+    cfg = load_config()
+    mm = cfg.get("morning_momentum", {}) or {}
+    if not mm.get("enabled", False):
+        return False
+    from src.strategies.morning_momentum import (
+        morning_momentum_signal, should_exit_morning,
+    )
+    long_sym = str(mm.get("long_symbol", "069500"))
+    long_name = str(mm.get("long_name", "KODEX 200"))
+    inv_sym = str(mm.get("inverse_symbol", "114800"))
+    inv_name = str(mm.get("inverse_name", "KODEX 인버스"))
+    pos_krw = int(mm.get("position_krw", 300000))
+    now_hhmm = _now().strftime("%H:%M")
+    today = _now().strftime("%Y-%m-%d")
+    state = _load_morning_positions()
+
+    # ── 1) 청산 단계 (매 사이클): 추적 중인 조간 포지션 관리 ──
+    for sym in list(state.keys()):
+        ent = state.get(sym) or {}
+        if ent.get("date") != today:
+            state.pop(sym, None)
+            continue
+        held_qty = int(holdings.get(sym, 0) or 0)
+        if held_qty <= 0:
+            state.pop(sym, None)  # 이미 빠짐(다른 경로/수동)
+            continue
+        try:
+            cur = int(get_quote(client, sym)["price"])
+        except Exception:
+            continue
+        do_exit, why = should_exit_morning(
+            entry_price=float(ent.get("entry_price", 0)), cur_price=cur,
+            direction=ent.get("direction", "long"), now_hhmm=now_hhmm, cfg=mm)
+        if not do_exit:
+            print(f"  [조간] {ent.get('name', sym)} {why}")
+            continue
+        sell_qty = min(held_qty, int(ent.get("qty", held_qty)))
+        print(f"  [조간 SELL] {ent.get('name', sym)} {sell_qty}주 @ {cur:,}원 — {why}")
+        if dry_run:
+            state.pop(sym, None)
+            continue
+        resp = _safe_order_cash(client, sym, sell_qty, cur, "sell")
+        print(f"      응답: rt_cd={resp.get('rt_cd')}, msg={resp.get('msg1', '')}")
+        if resp.get("rt_cd") == "0":
+            log_trade(sym, ent.get("name", sym), "sell", sell_qty, cur,
+                      reason=f"조간 청산: {why}")
+            remove_position(sym)
+            state.pop(sym, None)
+    _save_morning_positions(state)
+
+    # ── 2) 진입 단계 (윈도 한정, 동시 1포지션) ──
+    if any((e or {}).get("date") == today for e in state.values()):
+        return False  # 이미 오늘 조간 포지션 보유 — 추가 진입 안 함
+    try:
+        q = get_quote(client, long_sym)  # 벤치마크(KODEX200) 아침 변동으로 방향 판단
+    except Exception:
+        return False
+    sig = morning_momentum_signal(
+        prev_close=q["prev_close"], today_open=q["open"], cur_price=q["price"],
+        now_hhmm=now_hhmm, cfg=mm, blind=bool(blind))
+    if not sig.is_entry:
+        if sig.in_window:
+            print(f"  [조간] 진입 없음 — {sig.reason}")
+        return False
+
+    if sig.direction == "long":
+        tgt_sym, tgt_name, tgt_price = long_sym, long_name, int(q["price"])
+    else:
+        if not load_bear_config().get("derivative_etf_enabled", False):
+            print("  [조간] 인버스 방향이나 계좌 파생ETF 미신청 — 스킵")
+            return False
+        try:
+            tgt_price = int(get_quote(client, inv_sym)["price"])
+        except Exception:
+            return False
+        tgt_sym, tgt_name = inv_sym, inv_name
+
+    if int(holdings.get(tgt_sym, 0) or 0) > 0:
+        print(f"  [조간] {tgt_name} 이미 보유(헷지 등) — 중복 진입 스킵")
+        return False
+    try:
+        avail = get_available_cash(client)
+    except Exception:
+        avail = pos_krw
+    budget = min(pos_krw, int(avail * 0.95))
+    if tgt_price <= 0 or budget < tgt_price:
+        print(f"  [조간] 예산 부족 ({budget:,}원 < {tgt_price:,}원)")
+        return False
+    qty = int(budget * 0.999 // tgt_price)
+    if qty <= 0:
+        return False
+    total = qty * tgt_price
+    print(f"  [조간 BUY] {tgt_name} {qty}주 @ {tgt_price:,}원 = {total:,}원 — {sig.reason}")
+    if dry_run:
+        print("      (dry-run — 주문 미전송)")
+        return True
+    resp = _safe_order_cash(client, tgt_sym, qty, tgt_price, "buy")
+    print(f"      응답: rt_cd={resp.get('rt_cd')}, msg={resp.get('msg1', '')}")
+    if resp.get("rt_cd") == "0":
+        log_trade(tgt_sym, tgt_name, "buy", qty, tgt_price,
+                  reason=f"조간 모멘텀 {sig.direction}: {sig.reason}")
+        record_buy(tgt_sym, tgt_price, qty, asset_type=f"morning_{sig.direction}")
+        state[tgt_sym] = {"direction": sig.direction, "entry_price": tgt_price,
+                          "qty": qty, "entry_hhmm": now_hhmm, "date": today,
+                          "name": tgt_name}
+        _save_morning_positions(state)
+        return True
+    return False
+
+
 def etf_multi_position_skip(symbol: str, etf_held, pyramidable: set,
                             open_slots: int) -> bool:
     """다중 포지션 진입 필터 (순수 함수). True면 이 종목 스킵.
@@ -1671,12 +1813,20 @@ def run_once(dry_run: bool) -> None:
     # ── 개장 갭업 회복 진입(휴면: gap_recovery.enabled=false면 no-op) ──
     # 분기보다 먼저 평가 — 크래시 후 TA 마이너스로 V회복 갭을 놓치는 사각지대 보완.
     # blind/CRISIS/촉발無/윈도경과 시 신호함수가 자체 차단.
-    gr_used = run_gap_recovery_strategy(
+    # ── 조간 모멘텀 스캘프 (개장 윈도 양방향, 빠른 청산) — 청산관리 + 윈도내 진입 ──
+    mm_entered = run_morning_momentum_strategy(
+        client, holdings,
+        getattr(regime_result, "regime", None) if regime_result else None,
+        getattr(regime_result, "blind", False) if regime_result else False,
+        dry_run)
+    gr_used = 0 if mm_entered else run_gap_recovery_strategy(
         client, int(cash * size_factor), holdings, universe,
         getattr(regime_result, "regime", None) if regime_result else None,
         getattr(regime_result, "blind", False) if regime_result else False,
         dry_run)
-    if gr_used > 0:
+    if mm_entered:
+        print("  [조간] 진입 완료 — 이후 분기 생략")
+    elif gr_used > 0:
         print("  [갭회복] 진입 완료 — 이후 분기 생략")
     elif bear_enabled and regime_result and regime_result.regime in ("BEAR", "CRISIS", "CAUTION"):
         print(f"  [레짐] {regime_result.regime} — 하락장 전략 진입")
@@ -2126,12 +2276,19 @@ def run_loop(dry_run: bool) -> None:
             # ── 개장 갭업 회복 진입(휴면: gap_recovery.enabled=false면 no-op) ──
             # 분기보다 먼저 평가 — 크래시 후 TA 마이너스로 V회복 갭을 전부 놓치는
             # 사각지대 보완. blind/CRISIS/촉발無/윈도경과 시 신호함수가 자체 차단.
-            gr_used = run_gap_recovery_strategy(
+            # ── 조간 모멘텀 스캘프 (개장 윈도 양방향, 빠른 청산) ──
+            # 매 사이클 청산관리 + 윈도내 진입. 진입 시 이번 사이클 레짐분기 단락(중복매수 회피).
+            mm_entered = run_morning_momentum_strategy(
+                client, holdings,
+                getattr(regime_result, "regime", None) if regime_result else None,
+                getattr(regime_result, "blind", False) if regime_result else False,
+                dry_run)
+            gr_used = 0 if mm_entered else run_gap_recovery_strategy(
                 client, int(etf_budget_cap * size_factor), holdings, universe,
                 getattr(regime_result, "regime", None) if regime_result else None,
                 getattr(regime_result, "blind", False) if regime_result else False,
                 dry_run)
-            if gr_used > 0:
+            if mm_entered or gr_used > 0:
                 bought_today = True
             # ── 블라인드 가드: 시장 데이터를 못 읽으면 신규매수 전면 보류 ──
             # (롱·인버스·레버리지 모두). 보유분 리스크관리(매도)는 위에서 이미 수행됨.

@@ -36,3 +36,20 @@ bear_strategy:
   # KIS 계좌 파생ETF(레버리지·인버스 ETP) 거래신청 완료 후 true로 바꾸면 인버스 매수 활성화.
   # 2026-06-30 사용자 KIS 거래신청 완료 → 활성화.
   derivative_etf_enabled: true
+
+# 조간 모멘텀 스캘프 — 자동 클로버 방지로 여기 고정.
+morning_momentum:
+  enabled: true
+  window_start_kst: '09:00'
+  entry_end_kst: '10:00'
+  exit_by_kst: '11:00'
+  up_threshold_pct: 1.0
+  down_threshold_pct: 1.0
+  intraday_confirm_pct: 0.0
+  position_krw: 300000
+  take_profit_pct: 0.012
+  stop_loss_pct: 0.007
+  long_symbol: '069500'
+  long_name: KODEX 200
+  inverse_symbol: '114800'
+  inverse_name: KODEX 인버스
