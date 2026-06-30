@@ -21,3 +21,15 @@ universe:
   - symbol: '011200'
     name: HMM
     type: stock
+
+# 인버스 진입 사이즈·게이트 — 자동화 클로버 방지로 여기 고정.
+bear_strategy:
+  inverse_ta_entry: true
+  inverse_ta_min: 20
+  inverse_regimes:
+  - BEAR
+  - CRISIS
+  - CAUTION
+  inverse_caution_pct: 0.15
+  inverse_min_krw: 250000
+  inverse_max_krw: 350000

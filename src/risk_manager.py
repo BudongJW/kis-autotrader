@@ -581,6 +581,34 @@ def apply_min_position(qty: int, price: float, avail_cash: float,
     return max(qty, bumped)
 
 
+def size_inverse_budget(raw_budget: float, avail_cash: float,
+                        min_krw: float = 250000, max_krw: float = 350000) -> int:
+    """인버스 진입 예산을 의미있는 사이즈로 보정 (역베팅이라 상하한 둠).
+
+    문제: 인버스 예산이 bear_budget × inverse_caution_pct(0.15)라 Kelly·고변동
+    throttle을 거치면 수천원으로 쪼그라들어, 신호가 떠도 inv_budget>=10000 게이트나
+    '1주도 못 사는' 문제로 스킵됐다. 신호가 확인된 인버스는 최소 min_krw 수준으로
+    키워 실제 진입시키되, 강세장 역방향 베팅이므로 max_krw로 상한을 둔다.
+
+    Args:
+        raw_budget: inverse_caution_pct 등으로 산정된 원시 예산.
+        avail_cash: 주문가능현금(원). 95%까지만 사용.
+        min_krw: 진입 시 최소 투입(0 이하면 floor 비활성).
+        max_krw: 역베팅 상한(0 이하면 상한 비활성).
+    Returns:
+        보정된 투입 금액(원). 가용현금 95%를 절대 넘지 않음. 현금이 floor보다
+        적으면 가용현금 한도로 내려간다(최소 0).
+    """
+    b = float(raw_budget)
+    if min_krw > 0:
+        b = max(b, float(min_krw))
+    if max_krw > 0:
+        b = min(b, float(max_krw))
+    # 가용현금 95% 한도는 항상 적용 — 현금이 0/음수면 0으로 내려가 과주문 방지.
+    b = min(b, float(avail_cash) * 0.95)
+    return max(int(b), 0)
+
+
 def kelly_fraction(win_rate: float, avg_win: float, avg_loss: float,
                    half: bool = True) -> float:
     """Kelly Criterion 최적 투입 비율.

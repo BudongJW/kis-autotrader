@@ -40,7 +40,7 @@ from src.risk_manager import (
     load_positions, save_positions, get_kelly_position_size, should_hold_overnight,
     check_daily_loss_limit, check_max_positions, compute_atr_for_position,
     get_drawdown_scale, high_vol_size_factor, apply_min_position,
-    conviction_position_cap_krw, PARTIAL_SELL_RATIO,
+    conviction_position_cap_krw, size_inverse_budget, PARTIAL_SELL_RATIO,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -1074,7 +1074,16 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
             inv_pct = allocation.inverse_pct * adaptive.get("inverse_scale", 1.0)
         else:
             inv_pct = float(_bc.get("inverse_caution_pct", 0.15))  # CAUTION 등 소액 역베팅
-        inv_budget = int(budget * inv_pct)
+        _raw_inv_budget = int(budget * inv_pct)
+        # 인버스가 Kelly·고변동 throttle로 수천원까지 쪼그라들어 신호가 떠도 스킵되는
+        # 문제 차단: 신호 확인 시 의미있는 사이즈로 floor(역베팅이라 max로 상한).
+        try:
+            _inv_cash = get_available_cash(client)
+        except Exception:
+            _inv_cash = budget
+        _inv_min = float(_bc.get("inverse_min_krw", 250000))
+        _inv_max = float(_bc.get("inverse_max_krw", 350000))
+        inv_budget = size_inverse_budget(_raw_inv_budget, _inv_cash, _inv_min, _inv_max)
         inv_universe = load_inverse_universe()
         inv_syms = {s["symbol"] for s in inv_universe}
 
@@ -1083,7 +1092,7 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
         if inv_held:
             print(f"  [인버스] 이미 보유 중. 추가 매수 스킵.")
         elif inv_budget >= 10000:
-            print(f"  [인버스] 배정: {inv_budget:,}원 (K={k}, MA={ma})")
+            print(f"  [인버스] 배정: {inv_budget:,}원 (원시 {_raw_inv_budget:,}→floor, K={k}, MA={ma})")
 
             for stock in inv_universe:
                 symbol = stock["symbol"]
