@@ -34,4 +34,5 @@ bear_strategy:
   inverse_min_krw: 250000
   inverse_max_krw: 350000
   # KIS 계좌 파생ETF(레버리지·인버스 ETP) 거래신청 완료 후 true로 바꾸면 인버스 매수 활성화.
-  derivative_etf_enabled: false
+  # 2026-06-30 사용자 KIS 거래신청 완료 → 활성화.
+  derivative_etf_enabled: true
