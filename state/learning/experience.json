@@ -461,5 +461,30 @@
     "exit_price": 3364,
     "evaluated": true,
     "rebuilt": true
+  },
+  {
+    "timestamp": "2026-07-01T00:12:19",
+    "date": "2026-07-01",
+    "symbol": "XLF",
+    "name": "Financial Select Sector SPDR (금융)",
+    "action": "buy",
+    "reason": "US 매수: 변동성 돌파 + TA +24",
+    "price": 5370,
+    "qty": 4,
+    "strategy": "us_etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": {
+      "total": 24.0
+    },
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "loss",
+    "pnl_pct": -0.15,
+    "exit_price": 5362,
+    "evaluated": true,
+    "rebuilt": true
   }
 ]

@@ -248,19 +248,20 @@ market_regime:
     bear: 0.9797748536318638
     sideways: 0.020225146132437716
     bull: 2.3569844172024833e-10
-market_confidence: 0.533
+market_confidence: 0.583
 strong_sectors:
 - 바이오
 - IT
 - 철강
 - KOSDAQ150
 overnight_signal:
-  nasdaq_change: 2.07
-  sp500_change: 1.18
   direction: bullish
-  strength: 0.57
-  confidence_boost: 0.103
-  recommended_action: aggressive_buy
+  recommended_action: normal
+  nasdaq_change: 1.61
+  sp500_change: 0.7
+  strength: 0.38
+  confidence_boost: 0.05
+  source: us_post_learning
 dynamic_universe:
 - symbol: '244580'
   name: KODEX 바이오
