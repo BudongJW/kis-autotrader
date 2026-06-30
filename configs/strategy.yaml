@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.41
+    k: 0.44
     trend_ma: 15
     optimized_at: '2026-06-28'
     train_sharpe: 0.88
@@ -151,8 +151,6 @@ bear_strategy:
   inverse_caution_pct: 0.15
   inverse_min_krw: 250000
   inverse_max_krw: 350000
-  # 계좌가 파생ETF(레버리지·인버스 ETP) 거래신청 완료되면 true로. 미신청이면 KIS가
-  # 주문 거부(rt_cd=7)하므로 false 유지 시 인버스 시도 자체를 스킵.
   derivative_etf_enabled: false
 us_session:
   enabled: true
@@ -226,48 +224,35 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.59
-  vol_percentile: 78.0
-  analyzed_at: 2026-06-29 10:35
-  hmm_state: bull
-  hmm_confidence: 0.682778919444762
+  trend_score: 0.575
+  vol_percentile: 76.0
+  analyzed_at: 2026-06-30 10:30
+  hmm_state: sideways
+  hmm_confidence: 0.56066037079774
   hmm_transition:
-    bull: 2.506579491876802e-09
-    sideways: 0.9999999942144535
-    bear: 3.278967035306492e-09
-market_confidence: 0.66
+    bear: 0.9797748536318638
+    sideways: 0.020225146132437716
+    bull: 2.3569844172024833e-10
+market_confidence: 0.533
 strong_sectors:
-- 반도체
-- 2차전지
 - 바이오
-- 금융
 - IT
 - 철강
-- KOSPI200
 - KOSDAQ150
 overnight_signal:
+  nasdaq_change: 2.07
+  sp500_change: 1.18
   direction: bullish
-  recommended_action: normal
-  nasdaq_change: 2.33
-  sp500_change: 1.57
-  strength: 0.65
-  confidence_boost: 0.05
-  source: us_post_learning
+  strength: 0.57
+  confidence_boost: 0.103
+  recommended_action: aggressive_buy
 dynamic_universe:
-- symbol: 091160
-  name: KODEX 반도체
-- symbol: '305720'
-  name: KODEX 2차전지
 - symbol: '244580'
   name: KODEX 바이오
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
 - symbol: '117700'
   name: KODEX 철강
-- symbol: 069500
-  name: KODEX KOSPI200
 - symbol: '229200'
   name: KODEX KOSDAQ150
 adaptive_allocation:
