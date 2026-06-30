@@ -1069,7 +1069,19 @@ def run_bear_strategy(client: KISClient, budget: int, holdings: dict,
     # 충분히 강하면(inverse_ta_min) 진입. CAUTION은 강세장 역베팅이라 inverse_caution_pct로 소액.
     _bc = load_bear_config()
     _inv_regimes = _bc.get("inverse_regimes", ["BEAR", "CRISIS", "CAUTION"])
-    if r in _inv_regimes:
+    # 계좌 파생ETF 거래신청 게이트: KODEX 인버스(114800)는 파생형 ETF라, 계좌에
+    # 선택확인서(레버리지·인버스 ETP 거래신청)가 없으면 KIS가 주문을 거부한다
+    # (rt_cd=7 "파생ETF 미 신청 ... 거래 불가"). 신청 전엔 매 사이클 거부만 반복하므로
+    # 아예 시도하지 않고 명확한 안내만 남긴다. KIS에서 거래신청 후 이 값을 true로.
+    _deriv_ok = bool(_bc.get("derivative_etf_enabled", False))
+    if r in _inv_regimes and not _deriv_ok:
+        print("  [인버스] 계좌 파생ETF 미신청(선택확인서 미징구) — 인버스 거래 불가(rt_cd=7). "
+              "KIS에서 '레버리지·인버스 ETP(파생ETF) 거래신청' 후 "
+              "configs에서 derivative_etf_enabled:true로 활성화. 인버스 스킵.")
+        log_decision("114800", "KODEX 인버스", "skip",
+                     "계좌 파생ETF 미신청 — KIS 거래신청 필요(선택확인서)", 0.0,
+                     strategy="bear_inverse")
+    if r in _inv_regimes and _deriv_ok:
         if allocation.inverse_pct > 0:
             inv_pct = allocation.inverse_pct * adaptive.get("inverse_scale", 1.0)
         else:

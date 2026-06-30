@@ -151,6 +151,9 @@ bear_strategy:
   inverse_caution_pct: 0.15
   inverse_min_krw: 250000
   inverse_max_krw: 350000
+  # 계좌가 파생ETF(레버리지·인버스 ETP) 거래신청 완료되면 true로. 미신청이면 KIS가
+  # 주문 거부(rt_cd=7)하므로 false 유지 시 인버스 시도 자체를 스킵.
+  derivative_etf_enabled: false
 us_session:
   enabled: true
   universe:
