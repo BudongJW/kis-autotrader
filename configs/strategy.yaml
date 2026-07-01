@@ -255,12 +255,12 @@ strong_sectors:
 - 철강
 - KOSDAQ150
 overnight_signal:
-  direction: bullish
+  direction: neutral
   recommended_action: normal
-  nasdaq_change: 1.61
-  sp500_change: 0.7
-  strength: 0.38
-  confidence_boost: 0.05
+  nasdaq_change: -1.46
+  sp500_change: -0.19
+  strength: 0.28
+  confidence_boost: 0.0
   source: us_post_learning
 dynamic_universe:
 - symbol: '244580'
