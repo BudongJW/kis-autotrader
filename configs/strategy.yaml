@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.44
+    k: 0.41
     trend_ma: 15
     optimized_at: '2026-06-28'
     train_sharpe: 0.88
@@ -47,7 +47,7 @@ gap_recovery:
 kr_eod_liquidation: selective
 morning_momentum:
   enabled: true
-  window_start_kst: '09:00'
+  window_start_kst: 09:00
   entry_end_kst: '14:00'
   exit_by_kst: '15:00'
   up_threshold_pct: 1.0
@@ -58,7 +58,7 @@ morning_momentum:
   stop_loss_pct: 0.01
   reentry_cooldown_min: 30
   max_cycles_per_day: 3
-  long_symbol: '069500'
+  long_symbol: 069500
   long_name: KODEX 200
   inverse_symbol: '114800'
   inverse_name: KODEX 인버스
@@ -240,33 +240,38 @@ risk:
   - 나스닥
 market_regime:
   trend: up
-  volatility: high
-  trend_score: 0.575
-  vol_percentile: 76.0
-  analyzed_at: 2026-06-30 10:30
+  volatility: normal
+  trend_score: 0.529
+  vol_percentile: 72.0
+  analyzed_at: 2026-07-02 10:29
   hmm_state: sideways
-  hmm_confidence: 0.56066037079774
+  hmm_confidence: 0.7595337086961298
   hmm_transition:
-    bear: 0.9797748536318638
-    sideways: 0.020225146132437716
-    bull: 2.3569844172024833e-10
-market_confidence: 0.583
+    bull: 0.9091085686913283
+    sideways: 5.861291776405886e-08
+    bear: 0.09089137269575384
+market_confidence: 0.62
 strong_sectors:
+- 2차전지
 - 바이오
+- 자동차
 - IT
 - 철강
 - KOSDAQ150
 overnight_signal:
+  nasdaq_change: -0.66
+  sp500_change: -0.22
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -1.46
-  sp500_change: -0.19
-  strength: 0.28
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
+- symbol: '305720'
+  name: KODEX 2차전지
 - symbol: '244580'
   name: KODEX 바이오
+- symbol: 091180
+  name: KODEX 자동차
 - symbol: 098560
   name: KODEX IT
 - symbol: '117700'
