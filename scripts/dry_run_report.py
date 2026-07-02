@@ -178,6 +178,29 @@ def build_report() -> dict:
         "candidates": gr_eval,
     }
 
+    # ── 조간/인트라데이 모멘텀 판단 (지수 방향 → 롱/인버스) ──
+    try:
+        from src.strategies.morning_momentum import morning_momentum_signal
+        mm_cfg = cfg.get("morning_momentum", {}) or {}
+        long_sym = str(mm_cfg.get("long_symbol", "069500"))
+        mq = _safe(lambda: get_quote(client, long_sym), {}) or {}
+        msig = morning_momentum_signal(
+            prev_close=mq.get("prev_close", 0), today_open=mq.get("open", 0),
+            cur_price=mq.get("price", 0), now_hhmm=now_hhmm, cfg=mm_cfg,
+            blind=gr_blind)
+        rep["morning_momentum"] = {
+            "enabled_live": bool(mm_cfg.get("enabled", False)),
+            "now_kst": now_hhmm,
+            "window": f"{mm_cfg.get('window_start_kst','09:00')}~{mm_cfg.get('entry_end_kst','14:00')}",
+            "up_th": mm_cfg.get("up_threshold_pct"), "down_th": mm_cfg.get("down_threshold_pct"),
+            "benchmark": long_sym,
+            "direction": msig.direction, "in_window": msig.in_window,
+            "move_pct": round(msig.move_pct, 2), "intraday_pct": round(msig.intraday_pct, 2),
+            "would_enter": msig.is_entry, "reason": msig.reason,
+        }
+    except Exception as e:
+        rep["morning_momentum"] = {"error": str(e)}
+
     # ── US 진입 후보 (돌파·TA·수수료게이트·재진입쿨다운) ──
     us_candidates = []
     try:
@@ -265,6 +288,18 @@ def print_report(rep: dict) -> None:
             print(f"  {c.get('symbol')} [{c.get('type')}] {c.get('decision')} "
                   f"(돌파={c.get('breakout')}, TA={c.get('ta')}, ATR%={c.get('atr_pct')}){via} "
                   f"{c.get('why_skip')}")
+    mm = rep.get("morning_momentum", {})
+    if mm:
+        print("\n[조간/인트라데이 모멘텀]")
+        if mm.get("error"):
+            print(f"  평가실패: {mm.get('error')}")
+        else:
+            print(f"  기준지수 {mm.get('benchmark')} | 윈도 {mm.get('window')} "
+                  f"(현재 {mm.get('now_kst')}, in_window={mm.get('in_window')}) | "
+                  f"임계 ±{mm.get('up_th')}%")
+            print(f"  전일대비 {mm.get('move_pct')}% / 시가대비 {mm.get('intraday_pct')}% "
+                  f"→ 방향={mm.get('direction')} | 진입={mm.get('would_enter')} | {mm.get('reason')}")
+
     print("\n[신규 진입 후보 — US (다음 야간 세션)]")
     for c in rep.get("us_entry_candidates", []):
         if isinstance(c, dict):

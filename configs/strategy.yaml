@@ -50,8 +50,8 @@ morning_momentum:
   window_start_kst: 09:00
   entry_end_kst: '14:00'
   exit_by_kst: '15:00'
-  up_threshold_pct: 1.0
-  down_threshold_pct: 1.0
+  up_threshold_pct: 0.6
+  down_threshold_pct: 0.6
   intraday_confirm_pct: 0.0
   position_krw: 300000
   take_profit_pct: 0.025
