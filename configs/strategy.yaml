@@ -234,19 +234,21 @@ risk:
   stop_loss_pct: 0.03
   take_profit_pct: 0.05
   daily_loss_limit_pct: 0.05
-  # 일일 익절 목표: 당일 실현+미실현이 이 비율 도달 시 그날 신규매수 중단(이익 잠금).
-  # '매일 1% 의무'가 아니라 '차면 그날 리스크 그만' — 이익 되돌림·과매매 방지. 0=비활성.
   daily_profit_target_pct: 0.01
-  # 성과 검증 단계별 포지션 상한 램프: 검증 전 35%, 거래수·승률 쌓이면 단계 상향,
-  # 하드 최대 65%(전액 절대 금지 — 갭·스톱실패 완충). 검증되면 자동으로 사이즈 키움.
   sizing_ramp:
     enabled: true
     base_weight: 0.35
     hard_max: 0.65
     tiers:
-    - {trades: 20, win_rate: 0.50, weight: 0.45}
-    - {trades: 40, win_rate: 0.55, weight: 0.55}
-    - {trades: 60, win_rate: 0.58, weight: 0.65}
+    - trades: 20
+      win_rate: 0.5
+      weight: 0.45
+    - trades: 40
+      win_rate: 0.55
+      weight: 0.55
+    - trades: 60
+      win_rate: 0.58
+      weight: 0.65
   high_vol_action: size_down
   high_vol_size_mult: 0.5
   theme_sectors:
