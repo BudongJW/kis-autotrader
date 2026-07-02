@@ -79,6 +79,34 @@ def morning_momentum_signal(*, prev_close: float, today_open: float, cur_price: 
         move, intra, in_window)
 
 
+def _hhmm_to_min(s: str) -> int:
+    return (int(s[:2]) * 60 + int(s[3:5])) if s and len(s) >= 5 else -10000
+
+
+def can_reenter(*, meta: dict, now_hhmm: str, cfg: dict) -> tuple[bool, str]:
+    """인트라데이 재진입 가능 여부 — 일일 사이클 상한 + 청산 후 쿨다운(순수 함수).
+
+    프로세스(진입→청산→재판단→재진입)가 꼭지 추격/과매매로 폭주하지 않게 막는다.
+
+    Args:
+        meta: {"cycles": 오늘 완료 사이클수, "last_exit_hhmm": "HH:MM" or None}
+        now_hhmm: 현재 "HH:MM".
+        cfg: max_cycles_per_day, reentry_cooldown_min.
+    Returns: (재진입 가능?, 사유)
+    """
+    max_cycles = int(cfg.get("max_cycles_per_day", 3))
+    cooldown = int(cfg.get("reentry_cooldown_min", 30))
+    cycles = int(meta.get("cycles", 0))
+    if cycles >= max_cycles:
+        return False, f"일일 사이클 상한 도달({cycles}/{max_cycles})"
+    last = meta.get("last_exit_hhmm")
+    if last:
+        gap = _hhmm_to_min(now_hhmm) - _hhmm_to_min(last)
+        if gap < cooldown:
+            return False, f"청산 후 쿨다운 중({gap}<{cooldown}분)"
+    return True, "재진입 가능"
+
+
 def should_exit_morning(*, entry_price: float, cur_price: float, direction: str,
                         now_hhmm: str, cfg: dict) -> tuple[bool, str]:
     """조간 포지션 청산 판단 — 타이트한 익절/손절 + 시간청산(오버나이트 캐리 금지).

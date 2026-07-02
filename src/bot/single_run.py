@@ -466,8 +466,15 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
     today = _now().strftime("%Y-%m-%d")
     state = _load_morning_positions()
 
+    # 일일 사이클 메타(_meta): 재진입 쿨다운·사이클 상한 추적. 날짜 바뀌면 리셋.
+    meta = state.get("_meta") or {}
+    if meta.get("date") != today:
+        meta = {"date": today, "cycles": 0, "last_exit_hhmm": None}
+
     # ── 1) 청산 단계 (매 사이클): 추적 중인 조간 포지션 관리 ──
     for sym in list(state.keys()):
+        if sym == "_meta":
+            continue
         ent = state.get(sym) or {}
         if ent.get("date") != today:
             state.pop(sym, None)
@@ -498,11 +505,18 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
                       reason=f"조간 청산: {why}")
             remove_position(sym)
             state.pop(sym, None)
+            meta["cycles"] = int(meta.get("cycles", 0)) + 1  # 사이클 1회 종료
+            meta["last_exit_hhmm"] = now_hhmm
+    state["_meta"] = meta
     _save_morning_positions(state)
 
-    # ── 2) 진입 단계 (윈도 한정, 동시 1포지션) ──
-    if any((e or {}).get("date") == today for e in state.values()):
-        return False  # 이미 오늘 조간 포지션 보유 — 추가 진입 안 함
+    # ── 2) 진입 단계 (인트라데이 사이클: 청산→쿨다운→재진입, 일일 상한) ──
+    if any((e or {}).get("date") == today for k, e in state.items() if k != "_meta"):
+        return False  # 이미 포지션 보유 중 — 청산 먼저(동시 1포지션)
+    from src.strategies.morning_momentum import can_reenter
+    _ok_re, _re_reason = can_reenter(meta=meta, now_hhmm=now_hhmm, cfg=mm)
+    if not _ok_re:
+        return False  # 사이클 상한/쿨다운 — 과매매·꼭지추격 방지
     try:
         q = get_quote(client, long_sym)  # 벤치마크(KODEX200) 아침 변동으로 방향 판단
     except Exception:

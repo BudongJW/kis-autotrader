@@ -4,7 +4,7 @@
 검증. 룰 기반 매매는 테스트 가능 영역(CLAUDE.md).
 """
 from src.strategies.morning_momentum import (
-    morning_momentum_signal, should_exit_morning,
+    morning_momentum_signal, should_exit_morning, can_reenter,
 )
 
 CFG = {
@@ -88,3 +88,34 @@ def test_no_exit_within_band_before_time():
     out, _ = should_exit_morning(entry_price=100, cur_price=100.3, direction="long",
                                  now_hhmm="09:40", cfg=CFG)
     assert not out   # +0.3%, 시간 전 → 보유
+
+
+# ── 인트라데이 재진입(사이클 상한·쿨다운) ──
+RC = {"max_cycles_per_day": 3, "reentry_cooldown_min": 30}
+
+
+def test_reenter_first_time_ok():
+    ok, _ = can_reenter(meta={"cycles": 0, "last_exit_hhmm": None},
+                        now_hhmm="09:15", cfg=RC)
+    assert ok   # 첫 진입 — 청산 이력 없음
+
+
+def test_reenter_blocked_by_cooldown():
+    # 10:00 청산 후 10:20(20분<30) 재진입 시도 → 차단
+    ok, why = can_reenter(meta={"cycles": 1, "last_exit_hhmm": "10:00"},
+                          now_hhmm="10:20", cfg=RC)
+    assert not ok and "쿨다운" in why
+
+
+def test_reenter_ok_after_cooldown():
+    # 10:00 청산 후 10:35(35분>=30) → 재진입 가능
+    ok, _ = can_reenter(meta={"cycles": 1, "last_exit_hhmm": "10:00"},
+                        now_hhmm="10:35", cfg=RC)
+    assert ok
+
+
+def test_reenter_blocked_by_daily_cap():
+    # 이미 3사이클 완료 → 상한 도달, 쿨다운 지나도 차단
+    ok, why = can_reenter(meta={"cycles": 3, "last_exit_hhmm": "13:00"},
+                          now_hhmm="13:59", cfg=RC)
+    assert not ok and "상한" in why

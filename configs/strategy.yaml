@@ -47,16 +47,18 @@ gap_recovery:
 kr_eod_liquidation: selective
 morning_momentum:
   enabled: true
-  window_start_kst: 09:00
-  entry_end_kst: '10:00'
-  exit_by_kst: '11:00'
+  window_start_kst: '09:00'
+  entry_end_kst: '14:00'
+  exit_by_kst: '15:00'
   up_threshold_pct: 1.0
   down_threshold_pct: 1.0
   intraday_confirm_pct: 0.0
   position_krw: 300000
-  take_profit_pct: 0.012
-  stop_loss_pct: 0.007
-  long_symbol: 069500
+  take_profit_pct: 0.025
+  stop_loss_pct: 0.01
+  reentry_cooldown_min: 30
+  max_cycles_per_day: 3
+  long_symbol: '069500'
   long_name: KODEX 200
   inverse_symbol: '114800'
   inverse_name: KODEX 인버스
