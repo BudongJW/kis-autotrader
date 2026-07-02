@@ -647,6 +647,29 @@ def conviction_position_cap_krw(equity: float, fusion_prob: float,
     return int(max(0.0, equity) * pct)
 
 
+def position_cap_weight(trades: int, win_rate: float, cfg: dict) -> float:
+    """검증 성과에 따라 단일종목 비중 상한을 단계적으로 상향(하드 최대 고정, 전액 금지).
+
+    사용자 요청: "맞으면 크게" — 단, 검증 전엔 보수적 유지하고, 거래수·승률이 쌓일수록
+    상한을 단계적으로 올린다. 절대 hard_max(기본 0.65)를 넘지 않는다(갭·스톱실패 완충).
+
+    cfg(risk.sizing_ramp): {enabled, base_weight, hard_max, tiers:[{trades,win_rate,weight}]}
+    각 tier는 (trades>=X AND win_rate>=Y)를 모두 충족할 때 적용. 충족 tier 중 최대 weight.
+    Returns: 적용할 단일종목 비중(0~hard_max).
+    """
+    ramp = (cfg or {}).get("sizing_ramp", {}) or {}
+    base = float(ramp.get("base_weight", 0.35))
+    hard_max = float(ramp.get("hard_max", 0.65))
+    if not ramp.get("enabled", False):
+        return min(base, hard_max)
+    cap = base
+    for t in (ramp.get("tiers", []) or []):
+        if (int(trades) >= int(t.get("trades", 0))
+                and float(win_rate) >= float(t.get("win_rate", 0.0))):
+            cap = max(cap, float(t.get("weight", base)))
+    return max(0.0, min(cap, hard_max))
+
+
 def apply_min_position(qty: int, price: float, avail_cash: float,
                        min_krw: float, max_weight: float = 0.0,
                        equity: float = 0.0) -> int:

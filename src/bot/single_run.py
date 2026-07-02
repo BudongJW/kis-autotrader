@@ -41,7 +41,8 @@ from src.risk_manager import (
     check_daily_loss_limit, check_daily_profit_target, check_max_positions,
     compute_atr_for_position,
     get_drawdown_scale, high_vol_size_factor, apply_min_position,
-    conviction_position_cap_krw, size_inverse_budget, PARTIAL_SELL_RATIO,
+    conviction_position_cap_krw, size_inverse_budget, position_cap_weight,
+    PARTIAL_SELL_RATIO,
 )
 from src.market_learner import get_market_confidence, get_intraday_regime_adjustment
 from src.execution.twap import TWAPEngine
@@ -462,7 +463,13 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
     long_name = str(mm.get("long_name", "KODEX 200"))
     inv_sym = str(mm.get("inverse_symbol", "114800"))
     inv_name = str(mm.get("inverse_name", "KODEX 인버스"))
-    pos_krw = int(mm.get("position_krw", 300000))
+    # 성과 검증 단계별 상한 램프: 검증되면 조간 사이즈도 비례 상향(base 대비 배율).
+    _rp_mm = cfg.get("risk", {}) or {}
+    _aa_mm = cfg.get("adaptive_allocation", {}) or {}
+    _base_w_mm = float((_rp_mm.get("sizing_ramp", {}) or {}).get("base_weight", 0.35)) or 0.35
+    _ramp_w_mm = position_cap_weight(int(_aa_mm.get("trades", 0) or 0),
+                                     float(_aa_mm.get("win_rate", 0) or 0), _rp_mm)
+    pos_krw = int(int(mm.get("position_krw", 300000)) * (_ramp_w_mm / _base_w_mm))
     now_hhmm = _now().strftime("%H:%M")
     today = _now().strftime("%Y-%m-%d")
     state = _load_morning_positions()
@@ -872,6 +879,11 @@ def run_etf_strategy(client: KISClient, budget: int, holdings: dict,
 
             # ── 확신 연동 사이징 + 집중 상한 (약신호 과집중 방지) ──
             _rp = load_risk_params()
+            # 성과 검증 단계별 상한 램프: 검증되면 max_position_weight를 단계 상향(하드캡 65%).
+            _aa = cfg.get("adaptive_allocation", {}) or {}
+            _ramp_w = position_cap_weight(int(_aa.get("trades", 0) or 0),
+                                          float(_aa.get("win_rate", 0) or 0), _rp)
+            _rp = {**_rp, "max_position_weight": _ramp_w}
             _min_krw = int(_rp.get("min_position_krw", 0) or 0)
             _avail = get_available_cash(client)
             _equity = _avail + sum(

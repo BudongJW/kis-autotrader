@@ -25,6 +25,15 @@ universe:
 # 일일 익절 목표(자동 클로버 방지). 당일 +1% 도달 시 신규매수 중단(이익 잠금). 0=비활성.
 risk:
   daily_profit_target_pct: 0.01
+  # 성과 검증 단계별 포지션 상한 램프 (전액 금지, 하드 최대 65%). 검증되면 자동 상향.
+  sizing_ramp:
+    enabled: true
+    base_weight: 0.35
+    hard_max: 0.65
+    tiers:
+    - {trades: 20, win_rate: 0.50, weight: 0.45}
+    - {trades: 40, win_rate: 0.55, weight: 0.55}
+    - {trades: 60, win_rate: 0.58, weight: 0.65}
 
 # 인버스 진입 사이즈·게이트 — 자동화 클로버 방지로 여기 고정.
 bear_strategy:
