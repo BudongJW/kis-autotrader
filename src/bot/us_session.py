@@ -445,6 +445,11 @@ def check_us_stop_loss(symbol: str, current_price: float, cfg: dict) -> tuple[bo
         save_us_positions(positions)
         peak_price = current_price
 
+    # 하드 익절: 큰 이익은 마감 안 기다리고 장중 바로 확보
+    take_profit = cfg.get("strategy", {}).get("take_profit_pct", 0.0)
+    if take_profit > 0 and pnl_pct >= take_profit:
+        return True, f"US 익절 ({pnl_pct:+.1%} ≥ +{take_profit:.1%})"
+
     # 손절
     if pnl_pct <= -stop_pct:
         return True, f"US 손절 ({pnl_pct:+.1%} ≤ -{stop_pct:.1%})"
