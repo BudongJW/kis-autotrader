@@ -38,7 +38,8 @@ from src.risk_manager import (
     check_stop_loss, check_turbulence, record_buy, record_pyramid,
     remove_position,
     load_positions, save_positions, get_kelly_position_size, should_hold_overnight,
-    check_daily_loss_limit, check_max_positions, compute_atr_for_position,
+    check_daily_loss_limit, check_daily_profit_target, check_max_positions,
+    compute_atr_for_position,
     get_drawdown_scale, high_vol_size_factor, apply_min_position,
     conviction_position_cap_krw, size_inverse_budget, PARTIAL_SELL_RATIO,
 )
@@ -2158,6 +2159,13 @@ def run_loop(dry_run: bool) -> None:
             loss_exceeded, loss_reason = check_daily_loss_limit(client)
             if loss_exceeded:
                 print(f"[{now:%H:%M:%S}] [일일손실] {loss_reason}")
+                time_mod.sleep(RISK_CHECK_INTERVAL)
+                continue
+
+            # 일일 익절 목표 체크 — 도달 시 그날 신규매수 중단(이익 잠금, 보유분은 트레일링 유지)
+            profit_hit, profit_reason = check_daily_profit_target(client)
+            if profit_hit:
+                print(f"[{now:%H:%M:%S}] [일일익절] {profit_reason}")
                 time_mod.sleep(RISK_CHECK_INTERVAL)
                 continue
 

@@ -450,6 +450,85 @@ def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
     return False, f"당일 손익 {total_loss:+,}원 ({loss_pct:.1%} / 한도 {limit_pct:.0%})"
 
 
+def daily_target_hit(realized_pnl: float, unrealized_pnl: float,
+                     equity: float, target_pct: float) -> tuple[bool, float]:
+    """일일 익절 목표 도달 여부(순수 함수).
+
+    Returns: (도달?, 당일수익률). equity<=0 또는 target<=0이면 (False, 0).
+    """
+    if equity <= 0 or target_pct <= 0:
+        return False, 0.0
+    pct = (realized_pnl + unrealized_pnl) / equity
+    return pct >= target_pct, pct
+
+
+def check_daily_profit_target(client: KISClient) -> tuple[bool, str]:
+    """일일 익절 목표 도달 여부. True면 그날 신규매수 중단(이익 잠금).
+
+    risk.daily_profit_target_pct (기본 0=비활성, 예 0.01=1%). 당일 실현+미실현이
+    목표 이상이면 신규 진입을 중단(보유분은 트레일링으로 계속 관리). '매일 1% 의무'가
+    아니라 '차면 그날 리스크 그만' 규칙 — 이익 되돌림·과매매 방지. 손실한도와 대칭.
+    """
+    import csv
+    import yaml
+    from src.tracker import TRADE_LOG_PATH
+
+    try:
+        with Path("configs/strategy.yaml").open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        target_pct = cfg.get("risk", {}).get("daily_profit_target_pct", 0.0)
+    except Exception:
+        target_pct = 0.0
+    if not target_pct or target_pct <= 0:
+        return False, "일일 익절목표 비활성"
+    if not TRADE_LOG_PATH.exists():
+        return False, "거래 기록 없음"
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    buys: dict[str, list[int]] = {}
+    realized = 0
+    with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if not row.get("timestamp", "").startswith(today_str):
+                continue
+            sym = row.get("symbol", "")
+            price = int(row.get("price", 0) or 0)
+            qty = int(row.get("qty", 0) or 0)
+            side = row.get("side", "")
+            if side == "buy":
+                buys.setdefault(sym, []).append(price * qty)
+            elif side == "sell" and buys.get(sym):
+                realized += price * qty - buys[sym].pop(0)
+
+    positions = load_positions()
+    unrealized = 0
+    for sym, pos in positions.items():
+        bp = pos.get("buy_price", 0)
+        qty = pos.get("qty", 0)
+        if bp > 0 and qty > 0:
+            try:
+                resp = client.get_price(sym)
+                if resp.get("rt_cd") == "0":
+                    unrealized += (int(resp["output"]["stck_prpr"]) - bp) * qty
+            except Exception:
+                pass
+
+    try:
+        resp = client.get_balance()
+        c = resp.get("output2", [{}])
+        equity = int(c[0].get("tot_evlu_amt", 0)) if c else 0
+        if equity <= 0:
+            equity = int(c[0].get("dnca_tot_amt", 1_000_000)) if c else 1_000_000
+    except Exception:
+        equity = 1_000_000
+
+    hit, pct = daily_target_hit(realized, unrealized, equity, target_pct)
+    if hit:
+        return True, (f"일일 익절목표 도달 ({pct:+.2%} >= {target_pct:.0%}, "
+                      f"실현 {realized:+,}원 미실현 {unrealized:+,}원) — 신규매수 중단(이익 잠금)")
+    return False, f"당일 {pct:+.2%} (목표 {target_pct:.0%})"
+
+
 def check_max_positions(max_positions: int = 5) -> tuple[bool, str]:
     """최대 동시 포지션 수 초과 여부 확인. True면 매수 가능.
 

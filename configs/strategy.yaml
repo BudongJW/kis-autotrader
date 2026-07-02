@@ -229,6 +229,9 @@ risk:
   stop_loss_pct: 0.03
   take_profit_pct: 0.05
   daily_loss_limit_pct: 0.05
+  # 일일 익절 목표: 당일 실현+미실현이 이 비율 도달 시 그날 신규매수 중단(이익 잠금).
+  # '매일 1% 의무'가 아니라 '차면 그날 리스크 그만' — 이익 되돌림·과매매 방지. 0=비활성.
+  daily_profit_target_pct: 0.01
   high_vol_action: size_down
   high_vol_size_mult: 0.5
   theme_sectors:
