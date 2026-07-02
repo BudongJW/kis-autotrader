@@ -108,22 +108,40 @@ def can_reenter(*, meta: dict, now_hhmm: str, cfg: dict) -> tuple[bool, str]:
 
 
 def should_exit_morning(*, entry_price: float, cur_price: float, direction: str,
-                        now_hhmm: str, cfg: dict) -> tuple[bool, str]:
-    """조간 포지션 청산 판단 — 타이트한 익절/손절 + 시간청산(오버나이트 캐리 금지).
+                        now_hhmm: str, cfg: dict,
+                        peak_price: float = 0.0) -> tuple[bool, str]:
+    """조간 포지션 청산 판단 — 트레일링 + 하드 익절/손절 + 시간청산(오버나이트 금지).
+
+    사용자 프로세스("충분히 올랐다 → 하락추세 → 익절")를 트레일링 스톱으로 구현:
+    보유 ETF가 진입 대비 trail_activate_pct 이상 오르면 트레일링을 켜고, 그 뒤 고점
+    대비 trail_gap_pct 만큼 꺾이면 익절한다. 이게 하드 TP(고정 %)보다 추세 끝까지
+    먹고 반전에 빠지게 해준다. 하드 TP/SL/시간청산은 그대로 백스톱.
 
     direction이 inverse면 인버스 ETF 자체의 가격으로 손익을 본다(인버스 ETF는 지수가
-    빠지면 가격이 오르므로, 보유 ETF 가격 기준 손익이 곧 우리 손익이다).
+    빠지면 오르므로 보유 ETF 가격 기준 손익이 곧 우리 손익).
 
+    Args:
+        peak_price: 진입 후 관측된 고점(호출측이 매 틱 갱신해 전달). 0이면 트레일링 미적용.
     Returns: (청산여부, 사유).
     """
-    tp = float(cfg.get("take_profit_pct", 0.012))
-    sl = float(cfg.get("stop_loss_pct", 0.007))
-    exit_by = str(cfg.get("exit_by_kst", "11:00"))
+    tp = float(cfg.get("take_profit_pct", 0.025))
+    sl = float(cfg.get("stop_loss_pct", 0.01))
+    exit_by = str(cfg.get("exit_by_kst", "15:00"))
+    trail_act = float(cfg.get("trail_activate_pct", 0.015))
+    trail_gap = float(cfg.get("trail_gap_pct", 0.008))
 
     if entry_price <= 0 or cur_price <= 0:
         return False, "가격데이터 부족"
 
     pnl = (cur_price - entry_price) / entry_price  # 보유 ETF 기준 손익률
+
+    # 트레일링: 고점 대비 꺾임 (추세 끝까지 먹고 반전에 익절)
+    if trail_gap > 0 and peak_price and peak_price > entry_price:
+        peak_gain = (peak_price - entry_price) / entry_price
+        drop = (peak_price - cur_price) / peak_price
+        if peak_gain >= trail_act and drop >= trail_gap:
+            return True, (f"트레일링 익절 (고점 +{peak_gain*100:.2f}% 대비 "
+                          f"-{drop*100:.2f}%, 손익 {pnl*100:+.2f}%)")
 
     if pnl >= tp:
         return True, f"익절 +{pnl*100:.2f}% (>= +{tp*100:.1f}%)"

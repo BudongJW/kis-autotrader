@@ -12,6 +12,7 @@ CFG = {
     "up_threshold_pct": 1.0, "down_threshold_pct": 1.0,
     "intraday_confirm_pct": 0.0,
     "take_profit_pct": 0.012, "stop_loss_pct": 0.007, "exit_by_kst": "11:00",
+    "trail_activate_pct": 0.015, "trail_gap_pct": 0.008,
 }
 
 
@@ -87,7 +88,33 @@ def test_exit_time_force():
 def test_no_exit_within_band_before_time():
     out, _ = should_exit_morning(entry_price=100, cur_price=100.3, direction="long",
                                  now_hhmm="09:40", cfg=CFG)
-    assert not out   # +0.3%, 시간 전 → 보유
+    assert not out   # +0.3%, 시간 전, 트레일링 미활성 → 보유
+
+
+# ── 트레일링 스톱 ("충분히 올랐다 → 꺾이면 익절") ──
+# 하드 TP(1.2%)에 가리지 않게 TP를 높인 cfg로 트레일링만 격리 검증.
+TRAIL_CFG = {**CFG, "take_profit_pct": 0.05}
+
+
+def test_trailing_exit_after_peak():
+    # 진입100 → 고점102(+2%>=1.5% 트레일 활성) → 현재101.0 (고점대비 -0.98%>=0.8%) → 익절
+    out, why = should_exit_morning(entry_price=100, cur_price=101.0, direction="long",
+                                   now_hhmm="09:40", cfg=TRAIL_CFG, peak_price=102.0)
+    assert out and "트레일링" in why
+
+
+def test_trailing_not_triggered_if_not_activated():
+    # 고점101(+1%<1.5% 미활성) → 현재100.2 살짝 꺾여도 트레일링 안 켜짐 → 보유
+    out, _ = should_exit_morning(entry_price=100, cur_price=100.2, direction="long",
+                                 now_hhmm="09:40", cfg=TRAIL_CFG, peak_price=101.0)
+    assert not out
+
+
+def test_trailing_holds_near_peak():
+    # 고점102 활성이나 현재 101.8 (고점대비 -0.196%<0.8%) → 아직 안 꺾임 → 보유
+    out, _ = should_exit_morning(entry_price=100, cur_price=101.8, direction="long",
+                                 now_hhmm="09:40", cfg=TRAIL_CFG, peak_price=102.0)
+    assert not out
 
 
 # ── 인트라데이 재진입(사이클 상한·쿨다운) ──

@@ -124,7 +124,7 @@ def _now() -> datetime:
 DEFAULT_ETF_RATIO = 1.0
 
 # 루프 간격 (초)
-RISK_CHECK_INTERVAL = 60       # 리스크 체크: 1분
+RISK_CHECK_INTERVAL = 30       # 리스크 체크 + 조간 인트라데이 사이클: 30초 (빠른 반응)
 STRATEGY_CHECK_INTERVAL = 300  # 전략 체크: 5분 (기본)
 STRATEGY_CHECK_EARLY = 120     # 장 초반(09:00~10:00) 전략 체크: 2분
 TURBULENCE_CHECK_INTERVAL = 180  # 터뷸런스 체크: 3분
@@ -487,9 +487,15 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
             cur = int(get_quote(client, sym)["price"])
         except Exception:
             continue
+        # 트레일링용 고점 갱신(진입가 하한)
+        peak = max(int(ent.get("peak", ent.get("entry_price", cur))), cur)
+        if peak != ent.get("peak"):
+            ent["peak"] = peak
+            state[sym] = ent
         do_exit, why = should_exit_morning(
             entry_price=float(ent.get("entry_price", 0)), cur_price=cur,
-            direction=ent.get("direction", "long"), now_hhmm=now_hhmm, cfg=mm)
+            direction=ent.get("direction", "long"), now_hhmm=now_hhmm, cfg=mm,
+            peak_price=float(peak))
         if not do_exit:
             print(f"  [조간] {ent.get('name', sym)} {why}")
             continue
@@ -568,7 +574,7 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
         record_buy(tgt_sym, tgt_price, qty, asset_type=f"morning_{sig.direction}")
         state[tgt_sym] = {"direction": sig.direction, "entry_price": tgt_price,
                           "qty": qty, "entry_hhmm": now_hhmm, "date": today,
-                          "name": tgt_name}
+                          "name": tgt_name, "peak": tgt_price}
         _save_morning_positions(state)
         return True
     return False
@@ -2092,6 +2098,16 @@ def run_loop(dry_run: bool) -> None:
             if risk_sold:
                 holdings = _refresh_holdings(client, holdings)
 
+        # ── 조간/인트라데이 사이클 (빠른 틱: 매 30초, bought_today 무관) ──
+        # 진입 후에도 청산·트레일링·재진입이 신속 반응하도록 리스크 주기에 둔다.
+        # (전략블록은 bought_today면 스킵되므로 거기 두면 진입 후 청산이 안 돌던 버그 회피.)
+        try:
+            if run_morning_momentum_strategy(client, holdings, None, False, dry_run):
+                bought_today = True
+                holdings = _refresh_holdings(client, holdings)
+        except Exception as e:
+            print(f"[{now:%H:%M:%S}] [조간] 오류: {e}")
+
         # ── 15:20 이후 미매도 청산 (선별: ETF 추세·방어 보유, 급등주만 청산) ──
         if t > MARKET_CLOSE and holdings:
             bot_positions = load_positions()
@@ -2290,19 +2306,13 @@ def run_loop(dry_run: bool) -> None:
             # ── 개장 갭업 회복 진입(휴면: gap_recovery.enabled=false면 no-op) ──
             # 분기보다 먼저 평가 — 크래시 후 TA 마이너스로 V회복 갭을 전부 놓치는
             # 사각지대 보완. blind/CRISIS/촉발無/윈도경과 시 신호함수가 자체 차단.
-            # ── 조간 모멘텀 스캘프 (개장 윈도 양방향, 빠른 청산) ──
-            # 매 사이클 청산관리 + 윈도내 진입. 진입 시 이번 사이클 레짐분기 단락(중복매수 회피).
-            mm_entered = run_morning_momentum_strategy(
-                client, holdings,
-                getattr(regime_result, "regime", None) if regime_result else None,
-                getattr(regime_result, "blind", False) if regime_result else False,
-                dry_run)
-            gr_used = 0 if mm_entered else run_gap_recovery_strategy(
+            # (조간/인트라데이 사이클은 위 빠른 틱에서 매 30초 실행됨 — 여기선 생략)
+            gr_used = run_gap_recovery_strategy(
                 client, int(etf_budget_cap * size_factor), holdings, universe,
                 getattr(regime_result, "regime", None) if regime_result else None,
                 getattr(regime_result, "blind", False) if regime_result else False,
                 dry_run)
-            if mm_entered or gr_used > 0:
+            if gr_used > 0:
                 bought_today = True
             # ── 블라인드 가드: 시장 데이터를 못 읽으면 신규매수 전면 보류 ──
             # (롱·인버스·레버리지 모두). 보유분 리스크관리(매도)는 위에서 이미 수행됨.
