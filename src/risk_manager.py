@@ -29,6 +29,8 @@ POSITIONS_PATH = Path("logs/positions.json")
 STOP_LOSS_PCT = -0.03        # -3% 손절 (ATR 없을 때 폴백)
 TRAILING_ACTIVATE_PCT = 0.02   # +2% 도달 시 추적 손절 활성화 (ATR 없을 때 폴백)
 TRAILING_STOP_PCT = 0.012     # 고점 대비 -1.2% 하락 시 매도 (ATR 없을 때 폴백)
+BREAKEVEN_TRIGGER_PCT = 0.007  # +0.7% 이익권 도달 후엔 본전 이하로 안 넘김(라운드트립 차단)
+BREAKEVEN_BUFFER_PCT = 0.001   # 본전 + 0.1% 에서 청산 (이익권 확보)
 
 # ── ATR 기반 동적 손절 파라미터 ──
 ATR_STOP_MULTIPLIER = 2.0     # 손절 = 매수가 - ATR × 2.0 (Turtle 기준 확대)
@@ -271,6 +273,16 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
             if drop_from_peak <= -TRAILING_STOP_PCT:
                 return True, (f"추적 손절 (고점 {peak_price:,}원에서 "
                               f"{drop_from_peak:+.1%} 하락, 수익 {pnl_pct:+.1%})")
+
+    # ── 3b. 본전 보존: 한번 +0.7% 이익권에 올랐다 반전하면 본전+에서 청산 ──
+    # 트레일링 활성(+2%) 전 구간의 라운드트립 차단 — "이겼다 손실로 넘기는" 것 방지.
+    # 사용자 요청: 이익 볼 때 확실히 챙기고, 손절(-3%) 전에 이익권에서 익절.
+    if buy_price > 0 and peak_price > buy_price:
+        peak_pnl = (peak_price - buy_price) / buy_price
+        if (peak_pnl >= BREAKEVEN_TRIGGER_PCT
+                and current_price <= buy_price * (1 + BREAKEVEN_BUFFER_PCT)):
+            return True, (f"본전이익 보존 (고점 +{peak_pnl:.1%}였다가 반전 → "
+                          f"{pnl_pct:+.1%}, 손절 전 이익권 청산)")
 
     # ── 4. 동적 ROI: 보유 시간별 최소 수익률 ──
     if pnl_pct > 0:

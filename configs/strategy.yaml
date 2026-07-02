@@ -58,6 +58,8 @@ morning_momentum:
   stop_loss_pct: 0.01
   trail_activate_pct: 0.015
   trail_gap_pct: 0.008
+  breakeven_trigger_pct: 0.007
+  breakeven_buffer_pct: 0.001
   reentry_cooldown_min: 30
   max_cycles_per_day: 3
   long_symbol: 069500
@@ -210,6 +212,8 @@ us_session:
     stop_loss_pct: 0.025
     trailing_activate_pct: 0.02
     trailing_stop_pct: 0.01
+    breakeven_trigger_pct: 0.007
+    breakeven_buffer_pct: 0.001
     reentry_cooldown_days: 2
     inverse_requires_bearish: true
   eod_hold_winners: true

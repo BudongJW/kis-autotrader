@@ -456,6 +456,14 @@ def check_us_stop_loss(symbol: str, current_price: float, cfg: dict) -> tuple[bo
         if drop <= -trailing_stop:
             return True, f"US 추적손절 (고점 ${peak_price:.2f}에서 {drop:+.1%})"
 
+    # 본전 보존: 한번 +breakeven_trigger 이익권에 올랐다 반전하면 본전+에서 청산.
+    # 사용자 지적(XLF 마감청산 손실): 이겼다 손실/본전이하로 넘어가기 전에 이익권 확보.
+    be_trigger = cfg.get("strategy", {}).get("breakeven_trigger_pct", 0.007)
+    be_buffer = cfg.get("strategy", {}).get("breakeven_buffer_pct", 0.001)
+    if be_trigger > 0 and peak_pnl >= be_trigger and current_price <= buy_price * (1 + be_buffer):
+        return True, (f"US 본전이익 보존 (고점 +{peak_pnl:.1%}였다가 반전 → "
+                      f"{pnl_pct:+.1%}, 손절 전 이익권 청산)")
+
     return False, ""
 
 

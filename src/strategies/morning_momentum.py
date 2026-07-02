@@ -129,19 +129,30 @@ def should_exit_morning(*, entry_price: float, cur_price: float, direction: str,
     exit_by = str(cfg.get("exit_by_kst", "15:00"))
     trail_act = float(cfg.get("trail_activate_pct", 0.015))
     trail_gap = float(cfg.get("trail_gap_pct", 0.008))
+    be_trigger = float(cfg.get("breakeven_trigger_pct", 0.007))
+    be_buffer = float(cfg.get("breakeven_buffer_pct", 0.001))
 
     if entry_price <= 0 or cur_price <= 0:
         return False, "가격데이터 부족"
 
     pnl = (cur_price - entry_price) / entry_price  # 보유 ETF 기준 손익률
+    pk = peak_price if peak_price and peak_price > entry_price else cur_price
+    peak_gain = (pk - entry_price) / entry_price
 
     # 트레일링: 고점 대비 꺾임 (추세 끝까지 먹고 반전에 익절)
-    if trail_gap > 0 and peak_price and peak_price > entry_price:
-        peak_gain = (peak_price - entry_price) / entry_price
-        drop = (peak_price - cur_price) / peak_price
+    if trail_gap > 0 and pk > entry_price:
+        drop = (pk - cur_price) / pk
         if peak_gain >= trail_act and drop >= trail_gap:
             return True, (f"트레일링 익절 (고점 +{peak_gain*100:.2f}% 대비 "
                           f"-{drop*100:.2f}%, 손익 {pnl*100:+.2f}%)")
+
+    # 본전 보존: 한번 +be_trigger 이상 이익권에 올랐으면, 그 뒤엔 본전+버퍼로 내려올 때
+    # 이익권에서 청산(손절 -sl 기다리지 않음). "이겼다 손실로 넘기는" 라운드트립 차단.
+    if be_trigger > 0 and peak_gain >= be_trigger:
+        be_floor = entry_price * (1 + be_buffer)
+        if cur_price <= be_floor:
+            return True, (f"본전이익 보존 (고점 +{peak_gain*100:.2f}%였다가 반전 "
+                          f"→ {pnl*100:+.2f}%에서 청산, 손절 전 이익권 확보)")
 
     if pnl >= tp:
         return True, f"익절 +{pnl*100:.2f}% (>= +{tp*100:.1f}%)"

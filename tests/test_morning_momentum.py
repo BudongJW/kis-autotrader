@@ -117,6 +117,28 @@ def test_trailing_holds_near_peak():
     assert not out
 
 
+# ── 본전 보존 (이겼다 손실로 안 넘김) ──
+def test_breakeven_locks_after_profit_reversal():
+    # 고점 +0.9%(>=0.7% 트리거)였다 현재 본전(+0.05%<버퍼0.1%)으로 반전 → 이익권 청산
+    out, why = should_exit_morning(entry_price=100, cur_price=100.05, direction="long",
+                                   now_hhmm="09:40", cfg=CFG, peak_price=100.9)
+    assert out and "본전이익" in why
+
+
+def test_breakeven_not_armed_below_trigger():
+    # 고점 +0.4%(<0.7% 미도달) → 본전보존 미발동. 현재 +0.05%면 보유(손절 -0.7% 전)
+    out, _ = should_exit_morning(entry_price=100, cur_price=100.05, direction="long",
+                                 now_hhmm="09:40", cfg=CFG, peak_price=100.4)
+    assert not out
+
+
+def test_breakeven_holds_while_still_up():
+    # 고점 +1%였고 현재 +0.5%(본전버퍼 위) → 아직 이익권 → 보유(트레일링·본전 다 미발동)
+    out, _ = should_exit_morning(entry_price=100, cur_price=100.5, direction="long",
+                                 now_hhmm="09:40", cfg=CFG, peak_price=101.0)
+    assert not out
+
+
 # ── 인트라데이 재진입(사이클 상한·쿨다운) ──
 RC = {"max_cycles_per_day": 3, "reentry_cooldown_min": 30}
 
