@@ -3,17 +3,17 @@
     "date": "2026-07-03",
     "regime_trend": "up",
     "regime_volatility": "high",
-    "trend_score": 0.495,
-    "vol_percentile": 82.0,
-    "hmm_state": "sideways",
-    "hmm_confidence": 0.6276649006396015,
+    "trend_score": 0.5,
+    "vol_percentile": 96.0,
+    "hmm_state": "bull",
+    "hmm_confidence": 0.5725637853008924,
     "breadth": "weak",
-    "kospi_5d": -10.15,
-    "kosdaq_5d": -11.61,
+    "kospi_5d": -4.91,
+    "kosdaq_5d": -10.02,
     "confidence": 0.27,
     "strong_sectors": [
       "IT"
     ],
-    "k_value": 0.44
+    "k_value": 0.41
   }
 ]
