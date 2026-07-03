@@ -94,6 +94,20 @@ jobs:
             -o logs/trades.csv && echo "trades.csv 복원($(wc -l < logs/trades.csv)줄)" || echo "trades.csv 없음"
         continue-on-error: true
 
+      # 영속 학습상태(LGBM 모델, 정확도, 경험) 복원: download-artifact@v4는 run-id 없이
+      # 이전 런 아티팩트를 못 받아 항상 실패한다. repo에 커밋된 state/learning/* 를
+      # logs/ 로 되돌려야 lgbm_predictor(logs/lgbm_model.pkl)가 모델을 실제로 로드한다.
+      - name: Restore persisted learning state (repo to logs)
+        run: |
+          mkdir -p logs
+          if [ -d state/learning ] && [ -n "$(ls -A state/learning 2>/dev/null)" ]; then
+            cp -f state/learning/* logs/ 2>/dev/null || true
+            echo "학습상태 복원: $(ls state/learning | wc -l)개 파일 (logs/)"
+            [ -f logs/lgbm_model.pkl ] && echo "  LGBM 모델 복원됨: $(wc -c < logs/lgbm_model.pkl) bytes" || echo "  (LGBM 모델 아직 없음 — 최초 학습 대기)"
+          else
+            echo "state/learning 비어있음 (최초 실행 — 이번 런이 첫 모델 생성)"
+          fi
+
       - name: Run market learning
         env:
           PYTHONPATH: '.'
