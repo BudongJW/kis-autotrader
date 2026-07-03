@@ -46,7 +46,7 @@ gap_recovery:
   max_krw: 300000
 kr_eod_liquidation: selective
 morning_momentum:
-  enabled: true
+  enabled: false
   window_start_kst: 09:00
   entry_end_kst: '14:00'
   exit_by_kst: '15:00'

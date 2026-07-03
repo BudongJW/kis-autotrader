@@ -53,7 +53,7 @@ bear_strategy:
 # 조간/인트라데이 모멘텀 사이클 — 자동 클로버 방지로 여기 고정.
 # 프로세스: 강신호에 진입 → 익절 2.5%/손절 1% → 15:00 오후 강제청산 → 쿨다운 후 재판단·재진입.
 morning_momentum:
-  enabled: true
+  enabled: false
   window_start_kst: '09:00'
   entry_end_kst: '14:00'
   exit_by_kst: '15:00'
