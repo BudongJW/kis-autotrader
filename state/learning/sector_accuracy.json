@@ -5,5 +5,40 @@
     "sector": "ProShares Short S&P500 (1x inverse)",
     "strong_sector": false,
     "pnl_pct": 0.33
+  },
+  {
+    "date": "2026-07-03",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": -1.22
+  },
+  {
+    "date": "2026-07-03",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": -1.07
+  },
+  {
+    "date": "2026-07-03",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": -1.19
+  },
+  {
+    "date": "2026-07-03",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 0.04
+  },
+  {
+    "date": "2026-07-03",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 2.58
   }
 ]
