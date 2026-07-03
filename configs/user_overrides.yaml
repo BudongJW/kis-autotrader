@@ -53,7 +53,7 @@ bear_strategy:
 # 조간/인트라데이 모멘텀 사이클 — 자동 클로버 방지로 여기 고정.
 # 프로세스: 강신호에 진입 → 익절 2.5%/손절 1% → 15:00 오후 강제청산 → 쿨다운 후 재판단·재진입.
 morning_momentum:
-  enabled: false
+  enabled: true
   window_start_kst: '09:00'
   entry_end_kst: '14:00'
   exit_by_kst: '15:00'
@@ -69,6 +69,8 @@ morning_momentum:
   breakeven_buffer_pct: 0.001
   reentry_cooldown_min: 30
   max_cycles_per_day: 3
+  max_move_pct: 2.0
+  long_block_regimes: [BEAR, CRISIS]
   long_symbol: '069500'
   long_name: KODEX 200
   inverse_symbol: '114800'

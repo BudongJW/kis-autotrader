@@ -13,6 +13,7 @@ CFG = {
     "intraday_confirm_pct": 0.0,
     "take_profit_pct": 0.012, "stop_loss_pct": 0.007, "exit_by_kst": "11:00",
     "trail_activate_pct": 0.015, "trail_gap_pct": 0.008,
+    "max_move_pct": 2.0, "long_block_regimes": ["BEAR", "CRISIS"],
 }
 
 
@@ -22,9 +23,35 @@ def _sig(prev, op, cur, hhmm="09:10", blind=False):
 
 
 def test_strong_up_goes_long():
-    # 전일 100 → 시가 101 → 현재 102 (전일대비 +2%, 시가대비 상승) → 롱
-    s = _sig(100, 101, 102)
+    # 전일 100 → 시가 100.5 → 현재 101.5 (전일대비 +1.5%<2%, 시가대비 상승) → 롱
+    s = _sig(100, 100.5, 101.5)
     assert s.direction == "long" and s.is_entry
+
+
+# ── 근본수정: 역레짐 롱 금지 + 추격 방지 (2026-07-03 whipsaw 재발방지) ──
+def test_long_blocked_in_crisis_regime():
+    # 상승 신호(+1.5%)여도 CRISIS 레짐이면 롱 금지 (오늘 09:00 실수 재현 차단)
+    s = morning_momentum_signal(prev_close=100, today_open=100.5, cur_price=101.5,
+                                now_hhmm="09:10", cfg=CFG, regime="CRISIS")
+    assert s.direction == "none" and "역레짐" in s.reason
+
+
+def test_long_ok_in_normal_regime():
+    s = morning_momentum_signal(prev_close=100, today_open=100.5, cur_price=101.5,
+                                now_hhmm="09:10", cfg=CFG, regime="CAUTION")
+    assert s.direction == "long"   # CAUTION은 long_block 아님 → 롱 허용
+
+
+def test_extended_move_blocked_antichase():
+    # 전일대비 -2.51% (>max 2%) → 추격 회피로 진입 안 함 (오늘 09:32 인버스 실수 차단)
+    s = _sig(100, 99, 97.49)
+    assert s.direction == "none" and "추격" in s.reason
+
+
+def test_fresh_down_move_still_inverse():
+    # 전일대비 -1.5% (임계~max 사이) → 인버스 정상 진입
+    s = _sig(100, 99.5, 98.5)
+    assert s.direction == "inverse" and s.is_entry
 
 
 def test_strong_down_goes_inverse():

@@ -489,7 +489,11 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
             continue
         held_qty = int(holdings.get(sym, 0) or 0)
         if held_qty <= 0:
-            state.pop(sym, None)  # 이미 빠짐(다른 경로/수동)
+            # 이미 빠짐(일반 손절·수동 등 다른 경로) — 조간 자체 청산이 아니어도
+            # 재진입 쿨다운을 걸어 whipsaw 방지(2026-07-03 회전 근본원인).
+            state.pop(sym, None)
+            meta["cycles"] = int(meta.get("cycles", 0)) + 1
+            meta["last_exit_hhmm"] = now_hhmm
             continue
         try:
             cur = int(get_quote(client, sym)["price"])
@@ -537,7 +541,7 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
         return False
     sig = morning_momentum_signal(
         prev_close=q["prev_close"], today_open=q["open"], cur_price=q["price"],
-        now_hhmm=now_hhmm, cfg=mm, blind=bool(blind))
+        now_hhmm=now_hhmm, cfg=mm, blind=bool(blind), regime=regime)
     if not sig.is_entry:
         if sig.in_window:
             print(f"  [조간] 진입 없음 — {sig.reason}")
@@ -1985,6 +1989,7 @@ def run_loop(dry_run: bool) -> None:
     # ── 캐리 포지션 흡수 + 미체결 매도 감지 (positions.json 미복원 보완) ──
     adopt_carry_and_verify(client, universe)
 
+    last_regime = None  # 조간 빠른틱에 넘길 최근 레짐(역레짐 롱 금지용)
     while True:
         now = _now()
         t = now.time()
@@ -2115,7 +2120,7 @@ def run_loop(dry_run: bool) -> None:
         # 진입 후에도 청산·트레일링·재진입이 신속 반응하도록 리스크 주기에 둔다.
         # (전략블록은 bought_today면 스킵되므로 거기 두면 진입 후 청산이 안 돌던 버그 회피.)
         try:
-            if run_morning_momentum_strategy(client, holdings, None, False, dry_run):
+            if run_morning_momentum_strategy(client, holdings, last_regime, False, dry_run):
                 bought_today = True
                 holdings = _refresh_holdings(client, holdings)
         except Exception as e:
@@ -2320,6 +2325,7 @@ def run_loop(dry_run: bool) -> None:
 
             # ── 레짐 판단 + 전략 분기 ──
             regime_result, allocation, bear_enabled = evaluate_regime(client)
+            last_regime = getattr(regime_result, "regime", None) if regime_result else last_regime
             # 모든 분기에서 참조되므로 분기 전에 한 번만 계산 (BEAR/CRISIS 분기에서 미정의되는 버그 방지)
             etf_held = any(s in universe_syms for s in holdings)
 

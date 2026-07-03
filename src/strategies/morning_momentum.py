@@ -29,7 +29,8 @@ class MorningMomentumSignal:
 
 def morning_momentum_signal(*, prev_close: float, today_open: float, cur_price: float,
                             now_hhmm: str, cfg: dict,
-                            blind: bool = False) -> MorningMomentumSignal:
+                            blind: bool = False,
+                            regime: str | None = None) -> MorningMomentumSignal:
     """개장 윈도 내 지수 아침 변동으로 롱/인버스 방향을 판단.
 
     Args:
@@ -49,6 +50,10 @@ def morning_momentum_signal(*, prev_close: float, today_open: float, cur_price: 
     up_th = float(cfg.get("up_threshold_pct", 1.0))
     down_th = float(cfg.get("down_threshold_pct", 1.0))
     intra_confirm = float(cfg.get("intraday_confirm_pct", 0.0))
+    # 추격 방지: 이미 이만큼 이상 움직였으면 진입 안 함(꼭지/바닥 추격 회피). 0이면 비활성.
+    max_move = float(cfg.get("max_move_pct", 2.0))
+    # 역레짐 롱 금지: 하락 레짐에서 개장 반등에 롱 잡던 실수 차단(2026-07-03 손절 사례).
+    long_block = set(cfg.get("long_block_regimes", ["BEAR", "CRISIS"]) or [])
 
     in_window = start <= now_hhmm <= end
 
@@ -65,13 +70,23 @@ def morning_momentum_signal(*, prev_close: float, today_open: float, cur_price: 
         return MorningMomentumSignal("none", f"윈도 밖({now_hhmm}∉{start}~{end})",
                                      move, intra, in_window)
 
-    if move >= up_th and intra >= intra_confirm:
+    # 추격 방지: 이미 크게 움직인 뒤엔 반전 위험 → 진입 스킵
+    if max_move > 0 and abs(move) > max_move:
         return MorningMomentumSignal(
-            "long", f"강한 상승 아침추세 (전일대비 {move:+.2f}%, 시가대비 {intra:+.2f}%)",
+            "none", f"이미 확장된 움직임 {move:+.2f}% (>{max_move}% — 추격 회피)",
+            move, intra, in_window)
+
+    if move >= up_th and intra >= intra_confirm:
+        if regime in long_block:
+            return MorningMomentumSignal(
+                "none", f"롱 신호({move:+.2f}%)이나 {regime} 레짐 — 역레짐 롱 금지",
+                move, intra, in_window)
+        return MorningMomentumSignal(
+            "long", f"상승 아침추세 (전일대비 {move:+.2f}%, 시가대비 {intra:+.2f}%)",
             move, intra, in_window)
     if move <= -down_th and intra <= -intra_confirm:
         return MorningMomentumSignal(
-            "inverse", f"강한 하락 아침추세 (전일대비 {move:+.2f}%, 시가대비 {intra:+.2f}%)",
+            "inverse", f"하락 아침추세 (전일대비 {move:+.2f}%, 시가대비 {intra:+.2f}%)",
             move, intra, in_window)
 
     return MorningMomentumSignal(

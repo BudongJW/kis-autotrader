@@ -46,7 +46,7 @@ gap_recovery:
   max_krw: 300000
 kr_eod_liquidation: selective
 morning_momentum:
-  enabled: false
+  enabled: true
   window_start_kst: 09:00
   entry_end_kst: '14:00'
   exit_by_kst: '15:00'
@@ -62,6 +62,8 @@ morning_momentum:
   breakeven_buffer_pct: 0.001
   reentry_cooldown_min: 30
   max_cycles_per_day: 3
+  max_move_pct: 2.0
+  long_block_regimes: [BEAR, CRISIS]
   long_symbol: 069500
   long_name: KODEX 200
   inverse_symbol: '114800'
