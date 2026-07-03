@@ -27,6 +27,9 @@ import yaml
 from src.config import settings
 from src.kis_client import KISClient
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
+from src.strategies.morning_momentum import (
+    morning_momentum_signal, should_exit_morning, can_reenter,
+)
 from src.strategies.ta_composite import compute_ta_score
 from src.risk_manager import (load_positions, save_positions, record_buy,
                               remove_position, apply_min_position)
@@ -798,3 +801,236 @@ def close_us_positions(client: KISClient, dry_run: bool) -> None:
         else:
             print("      (dry-run)")
             remove_us_position(symbol)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 미장 방향성 모멘텀 스캘프 (KR 조간 엔진의 US판)
+#   나스닥(QQQM 기준) 상승 → QQQM 롱 / 하락 → PSQ 숏(1x 인버스).
+#   순수 함수(morning_momentum_signal/should_exit_morning/can_reenter) 재사용.
+#   자정을 넘는 US 세션이라 시간청산은 문자열 비교 대신 마감 잔여분으로 판정.
+# ══════════════════════════════════════════════════════════════════════
+
+US_MOM_POSITIONS_PATH = Path("logs/us_momentum_positions.json")
+OVERRIDES_PATH = Path("configs/user_overrides.yaml")
+
+
+def load_us_momentum_config() -> dict:
+    """us_momentum 설정 — strategy.yaml + user_overrides 오버레이(자동클로버 방지)."""
+    base: dict = {}
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as f:
+            base = (yaml.safe_load(f) or {}).get("us_momentum", {}) or {}
+    except Exception:
+        base = {}
+    try:
+        if OVERRIDES_PATH.exists():
+            with OVERRIDES_PATH.open(encoding="utf-8") as f:
+                ov = (yaml.safe_load(f) or {}).get("us_momentum")
+            if isinstance(ov, dict):
+                base = {**base, **ov}
+    except Exception:
+        pass
+    return base
+
+
+def _load_us_mom() -> dict:
+    try:
+        if US_MOM_POSITIONS_PATH.exists():
+            return json.loads(US_MOM_POSITIONS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_us_mom(d: dict) -> None:
+    try:
+        US_MOM_POSITIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        US_MOM_POSITIONS_PATH.write_text(
+            json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_mom_save_failed", error=str(e))
+
+
+def _us_quote(client: KISClient, symbol: str, exchange: str) -> tuple[float, float]:
+    """(전일종가 base, 현재가 last) — KIS 해외 현재가. 실패 시 (0,0)."""
+    try:
+        resp = client.get_overseas_price(symbol, exchange=exchange)
+        if resp.get("rt_cd") == "0":
+            o = resp.get("output", {}) or {}
+            base = float(str(o.get("base", 0) or 0).replace(",", ""))
+            last = float(str(o.get("last", 0) or 0).replace(",", ""))
+            return base, last
+    except Exception:
+        pass
+    return 0.0, 0.0
+
+
+def _us_current_regime() -> str | None:
+    """best-effort 레짐(bear_state.json). 역레짐 롱 금지에 사용. 없으면 None."""
+    try:
+        bs = json.loads(Path("logs/bear_state.json").read_text(encoding="utf-8"))
+        return bs.get("regime")
+    except Exception:
+        return None
+
+
+def _minutes_until_us_close(now_kst: datetime, close_str: str) -> float:
+    """폐장까지 남은 분(KST). 자정 넘는 폐장(예 05:00)은 다음날로 보정."""
+    try:
+        ch, cm = int(close_str[:2]), int(close_str[3:5])
+    except Exception:
+        ch, cm = 5, 0
+    close_dt = now_kst.replace(hour=ch, minute=cm, second=0, microsecond=0)
+    if ch < 12 and now_kst.hour >= 12:
+        close_dt += timedelta(days=1)
+    return (close_dt - now_kst).total_seconds() / 60.0
+
+
+def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
+    """미장 방향성 스캘프 1틱. 상승→QQQM 롱, 하락→PSQ 숏. 매수/매도 있으면 True.
+
+    KR 조간과 동일 엔진. 진입은 개장 첫 90분(윈도), 청산은 트레일/본전/TP/SL + 세션말.
+    """
+    cfg = load_us_momentum_config()
+    if not cfg.get("enabled", False):
+        return False
+    if not is_us_market_hours():
+        return False
+
+    long_sym = str(cfg.get("long_symbol", "QQQM"))
+    long_exch = str(cfg.get("long_exchange", "NASD"))
+    inv_sym = str(cfg.get("inverse_symbol", "PSQ"))
+    inv_exch = str(cfg.get("inverse_exchange", "AMEX"))
+    close_str = str(load_us_config().get("market_close_kst", "05:00"))
+
+    now_kst = datetime.now(KST)
+    now_hhmm = now_kst.strftime("%H:%M")
+    today = now_kst.strftime("%Y-%m-%d")
+
+    state = _load_us_mom()
+    meta = state.get("_meta", {})
+    if meta.get("date") != today:
+        meta = {"cycles": 0, "last_exit_hhmm": None, "date": today, "session_open": {}}
+        state = {"_meta": meta}
+    session_open = meta.setdefault("session_open", {})
+
+    mins_left = _minutes_until_us_close(now_kst, close_str)
+    force_eod = mins_left <= float(cfg.get("session_exit_min_before", 15))
+
+    acted = False
+    holdings_api = get_us_holdings(client)
+
+    # ── 1) 청산 (보유 모멘텀 포지션) ──
+    for sym in [k for k in state.keys() if k != "_meta"]:
+        pos = state[sym]
+        exch = pos.get("exchange", long_exch if sym == long_sym else inv_exch)
+        held = int(holdings_api.get(sym, {}).get("qty", 0) or 0)
+        if held <= 0:
+            # 외부 청산됨(마감청산/수동 등) → 상태 정리 + 사이클 계상 + 쿨다운
+            print(f"  [US-MOM] {sym} 외부 청산 감지 — 상태 정리")
+            del state[sym]
+            meta["cycles"] = int(meta.get("cycles", 0)) + 1
+            meta["last_exit_hhmm"] = now_hhmm
+            continue
+        _, cur = _us_quote(client, sym, exch)
+        if cur <= 0:
+            continue
+        entry = float(pos["entry"])
+        peak = max(float(pos.get("peak", entry)), cur)
+        pos["peak"] = peak
+        direction = pos.get("direction", "long")
+        do_exit, why = should_exit_morning(
+            entry_price=entry, cur_price=cur, direction=direction,
+            now_hhmm=now_hhmm, cfg=cfg, peak_price=peak)
+        if force_eod and not do_exit:
+            do_exit = True
+            why = (f"세션말 강제청산 (마감 {mins_left:.0f}분 전, "
+                   f"손익 {(cur - entry) / entry * 100:+.2f}%)")
+        if not do_exit:
+            state[sym] = pos  # peak 갱신 보존
+            continue
+        qty = int(pos["qty"])
+        print(f"  [US-MOM] {sym} 청산: {why}")
+        if not dry_run:
+            resp = client.order_overseas(sym, qty, price=cur, side="sell",
+                                         exchange=exch, order_type="00")
+            if resp.get("rt_cd") == "0":
+                log_trade(sym, sym, "sell", qty, int(cur * 100), market="US",
+                          reason=f"US모멘텀 청산: {why}")
+                remove_us_position(sym)
+                del state[sym]
+                meta["cycles"] = int(meta.get("cycles", 0)) + 1
+                meta["last_exit_hhmm"] = now_hhmm
+                acted = True
+            else:
+                print(f"      매도 실패 rt_cd={resp.get('rt_cd')} {resp.get('msg1', '')}")
+                state[sym] = pos
+        else:
+            print("      (dry-run 매도)")
+            del state[sym]
+            meta["cycles"] = int(meta.get("cycles", 0)) + 1
+            meta["last_exit_hhmm"] = now_hhmm
+            acted = True
+
+    # ── 2) 진입 (플랫 + 재진입 가능 + 세션말 아님) ──
+    holding_now = [k for k in state.keys() if k != "_meta"]
+    if not holding_now and not force_eod:
+        ok, why = can_reenter(meta=meta, now_hhmm=now_hhmm, cfg=cfg)
+        if not ok:
+            print(f"  [US-MOM] 재진입 보류: {why}")
+        else:
+            prev_close, cur = _us_quote(client, long_sym, long_exch)
+            so = session_open.get(long_sym)
+            if not so and cur > 0:
+                session_open[long_sym] = cur
+                so = cur
+            today_open = so or cur
+            sig = morning_momentum_signal(
+                prev_close=prev_close, today_open=today_open, cur_price=cur,
+                now_hhmm=now_hhmm, cfg=cfg, regime=_us_current_regime())
+            print(f"  [US-MOM] 판단: {sig.direction} — {sig.reason}")
+            if sig.is_entry:
+                if sig.direction == "long":
+                    tsym, texch, atype, tdir = long_sym, long_exch, "us_mom_long", "long"
+                else:
+                    tsym, texch, atype, tdir = inv_sym, inv_exch, "us_mom_inverse", "inverse"
+                _, tprice = _us_quote(client, tsym, texch)
+                if tprice > 0:
+                    avail = get_us_available_cash(client)
+                    pos_usd = min(float(cfg.get("position_usd", 300)), avail)
+                    qty = int(pos_usd // tprice)
+                    if qty < 1 and avail >= tprice:
+                        qty = 1  # 최소 1주 (가용이 1주는 감당할 때)
+                    if qty >= 1:
+                        cost = qty * tprice
+                        print(f"    [US-MOM BUY] {tsym} {qty}주 @ ${tprice:.2f} "
+                              f"= ${cost:.2f} ({tdir})")
+                        if not dry_run:
+                            resp = client.order_overseas(tsym, qty, price=tprice,
+                                                         side="buy", exchange=texch,
+                                                         order_type="00")
+                            if resp.get("rt_cd") == "0":
+                                log_trade(tsym, tsym, "buy", qty, int(tprice * 100),
+                                          market="US",
+                                          reason=f"US모멘텀 {tdir}: {sig.reason}")
+                                record_us_buy(tsym, tprice, qty, texch, atype)
+                                state[tsym] = {"entry": tprice, "qty": qty,
+                                               "peak": tprice, "direction": tdir,
+                                               "exchange": texch}
+                                acted = True
+                            else:
+                                print(f"      매수 실패 rt_cd={resp.get('rt_cd')} "
+                                      f"{resp.get('msg1', '')}")
+                        else:
+                            print("      (dry-run 매수)")
+                            state[tsym] = {"entry": tprice, "qty": qty,
+                                           "peak": tprice, "direction": tdir,
+                                           "exchange": texch}
+                            acted = True
+                    else:
+                        print(f"    [US-MOM] 예산 부족: 가용 ${avail:.2f}, "
+                              f"{tsym} ${tprice:.2f}")
+
+    state["_meta"] = meta
+    _save_us_mom(state)
+    return acted

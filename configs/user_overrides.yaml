@@ -75,3 +75,32 @@ morning_momentum:
   long_name: KODEX 200
   inverse_symbol: '114800'
   inverse_name: KODEX 인버스
+
+# 미장 방향성 스캘프 — 나스닥 상승→QQQM 롱, 하락→PSQ 숏. 자동 클로버 방지로 여기 고정.
+# QQQ 불가($712>가용$555) → 저가판 QQQM($293) 롱. US 왕복수수료 0.5% 커버 위해 문턱/본전버퍼 확대.
+us_momentum:
+  enabled: true
+  window_start_kst: '22:30'
+  entry_end_kst: '23:59'
+  exit_by_kst: '99:99'
+  up_threshold_pct: 0.8
+  down_threshold_pct: 0.8
+  intraday_confirm_pct: 0.0
+  take_profit_pct: 0.025
+  stop_loss_pct: 0.012
+  trail_activate_pct: 0.015
+  trail_gap_pct: 0.008
+  breakeven_trigger_pct: 0.01
+  breakeven_buffer_pct: 0.006
+  reentry_cooldown_min: 40
+  max_cycles_per_day: 2
+  max_move_pct: 3.0
+  long_block_regimes: [BEAR, CRISIS]
+  long_symbol: QQQM
+  long_name: Invesco NASDAQ 100 (저가판)
+  long_exchange: NASD
+  inverse_symbol: PSQ
+  inverse_name: ProShares Short QQQ (나스닥 1x 인버스)
+  inverse_exchange: AMEX
+  position_usd: 300
+  session_exit_min_before: 15

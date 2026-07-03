@@ -137,6 +137,35 @@ leveraged:
     type: leverage_3x
     market: US
     exchange: AMEX
+us_momentum:
+  # 미장 방향성 스캘프 — 나스닥 상승→QQQM 롱, 하락→PSQ 숏(1x 인버스). KR 조간 엔진 재사용.
+  # QQQ($712)는 가용 예산($555)로 불가 → 같은 나스닥100 저가판 QQQM($293) 롱.
+  # 수수료 왕복 0.5%라 문턱/본전버퍼를 KR보다 넓혀 수수료 갈이 방지.
+  enabled: true
+  window_start_kst: '22:30'      # US 개장(서머타임)
+  entry_end_kst: '23:59'         # 첫 90분만 진입(자정 크로스 회피 위해 당일 상한)
+  exit_by_kst: '99:99'           # 문자열 시간청산 비활성(자정 넘는 세션 버그 회피). 세션말은 래퍼가 처리
+  up_threshold_pct: 0.8
+  down_threshold_pct: 0.8
+  intraday_confirm_pct: 0.0
+  take_profit_pct: 0.025
+  stop_loss_pct: 0.012
+  trail_activate_pct: 0.015
+  trail_gap_pct: 0.008
+  breakeven_trigger_pct: 0.01
+  breakeven_buffer_pct: 0.006    # US 왕복수수료 0.5% 커버 → 본전이 진짜 순본전 이상
+  reentry_cooldown_min: 40       # US 과매매 비용 커서 KR(30)보다 김
+  max_cycles_per_day: 2          # US 왕복 비쌈 → 타이트
+  max_move_pct: 3.0              # 나스닥 갭 큼 → 3%까지 허용
+  long_block_regimes: [BEAR, CRISIS]
+  long_symbol: QQQM
+  long_name: Invesco NASDAQ 100 (저가판)
+  long_exchange: NASD
+  inverse_symbol: PSQ
+  inverse_name: ProShares Short QQQ (나스닥 1x 인버스)
+  inverse_exchange: AMEX
+  position_usd: 300              # 목표 포지션(QQQM 1주 커버), 가용 상한 내로 캡
+  session_exit_min_before: 15    # 폐장 N분 전 강제청산
 bear_strategy:
   enabled: true
   regime_switch:

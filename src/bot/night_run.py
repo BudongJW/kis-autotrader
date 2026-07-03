@@ -27,9 +27,11 @@ from src.kis_client import KISClient
 from src.safety import killswitch
 from src.bot.us_session import (
     load_us_config,
+    load_us_momentum_config,
     is_us_market_hours,
     get_us_market_times,
     run_us_strategy,
+    run_us_momentum_strategy,
     check_us_risk,
     close_us_positions,
     load_us_positions,
@@ -110,8 +112,15 @@ def run_once(dry_run: bool) -> None:
     # 리스크 체크
     check_us_risk(client, dry_run)
 
-    # 전략 실행
-    run_us_strategy(client, dry_run)
+    # US 방향성 모멘텀 (조간 스캘프의 US판) — 활성 시 방향성만 집중
+    try:
+        run_us_momentum_strategy(client, dry_run)
+    except Exception as e:  # noqa: BLE001
+        print(f"  [US-MOM] 예외: {e}")
+
+    # 전략 실행 (us_momentum 활성 시 기존 돌파/방어 진입은 건너뜀)
+    if not load_us_momentum_config().get("enabled", False):
+        run_us_strategy(client, dry_run)
 
     # 포트폴리오 저널 업데이트
     _update_journal()
@@ -130,6 +139,8 @@ def run_loop(dry_run: bool) -> None:
     if not cfg.get("enabled", False):
         print("[US Night] 비활성화 상태.")
         return
+
+    us_mom_on = bool(load_us_momentum_config().get("enabled", False))
 
     open_t, close_t = get_us_market_times()
     summer = cfg.get("summer_time", False)
@@ -233,12 +244,23 @@ def run_loop(dry_run: bool) -> None:
         if positions:
             check_us_risk(client, dry_run)
 
+        # ── US 방향성 모멘텀 (매 틱, KR 조간 스캘프의 US판) ──
+        # 진입/청산을 5분 전략틱이 아니라 리스크틱마다 돌려야 개장 초반 추세를 놓치지 않고
+        # 청산도 즉각 반응한다(KR 조간에서 배운 fast-tick 원칙).
+        try:
+            if run_us_momentum_strategy(client, dry_run):
+                _update_journal()
+        except Exception as e:  # noqa: BLE001
+            print(f"  [US-MOM] 예외: {e}")
+
         # ── 전략 체크 (매 5분, 개장 초반 2분) ──
+        # us_momentum 활성 시엔 방향성만 집중 — 기존 돌파/방어/섹터 진입은 건너뜀.
         early_end = _add_minutes(open_t, EARLY_SESSION_MINUTES)
         is_early = _time_in_range(t, open_t, early_end)
         interval = STRATEGY_CHECK_EARLY if is_early else STRATEGY_CHECK_INTERVAL
 
-        if epoch_now - last_strategy_check >= interval and not bought_today:
+        if (epoch_now - last_strategy_check >= interval and not bought_today
+                and not us_mom_on):
             last_strategy_check = epoch_now
 
             positions = load_us_positions()
