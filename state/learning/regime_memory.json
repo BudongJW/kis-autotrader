@@ -1,11 +1,11 @@
 {
   "None/None": {
     "buy": {
-      "count": 28,
+      "count": 31,
       "wins": 16,
-      "pnl_sum": 4.060000000000002,
-      "win_rate": 0.571,
-      "avg_pnl": 0.145
+      "pnl_sum": 2.900000000000002,
+      "win_rate": 0.516,
+      "avg_pnl": 0.0935
     },
     "skip": {
       "count": 0,
