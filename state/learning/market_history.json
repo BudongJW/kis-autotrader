@@ -15,5 +15,24 @@
       "IT"
     ],
     "k_value": 0.41
+  },
+  {
+    "date": "2026-07-06",
+    "regime_trend": "up",
+    "regime_volatility": "high",
+    "trend_score": 0.478,
+    "vol_percentile": 96.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.6,
+    "breadth": "weak",
+    "kospi_5d": -4.68,
+    "kosdaq_5d": -10.96,
+    "confidence": 0.31,
+    "strong_sectors": [
+      "자동차",
+      "IT",
+      "철강"
+    ],
+    "k_value": 0.46
   }
 ]
