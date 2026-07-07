@@ -80,3 +80,22 @@ def test_minutes_until_us_close_crosses_midnight():
     # 04:45 KST → 같은날 05:00 폐장까지 15분
     now2 = datetime(2026, 7, 4, 4, 45, tzinfo=KST)
     assert abs(_minutes_until_us_close(now2, "05:00") - 15) < 1
+
+
+def test_minutes_since_us_open_crosses_midnight():
+    # 진입창 버그 수정 핵심: 개장(22:30) 경과분을 자정 넘어서도 올바로 계산
+    from src.bot.us_session import _minutes_since_us_open
+    assert abs(_minutes_since_us_open(datetime(2026, 7, 6, 22, 35, tzinfo=KST), "22:30") - 5) < 1
+    assert abs(_minutes_since_us_open(datetime(2026, 7, 6, 23, 0, tzinfo=KST), "22:30") - 30) < 1
+    # 01:00 KST(자정 이후) → 개장 전날 22:30부터 150분
+    assert abs(_minutes_since_us_open(datetime(2026, 7, 7, 1, 0, tzinfo=KST), "22:30") - 150) < 1
+
+
+def test_entry_window_reachable_after_midnight():
+    # 버그 재현 방지: 01:00 KST가 진입창 안(개장 후 150분 <= 180). 예전엔 '01:00 ∉ 22:30~23:59'로 영영 불가.
+    from src.bot.us_session import _minutes_since_us_open
+    mso = _minutes_since_us_open(datetime(2026, 7, 7, 1, 0, tzinfo=KST), "22:30")
+    assert 0 <= mso <= 180        # 진입 가능
+    # 03:30 KST(개장 후 300분)는 창 밖 — 세션 후반 진입 안 함(force-exit 구간 근접)
+    late = _minutes_since_us_open(datetime(2026, 7, 7, 3, 30, tzinfo=KST), "22:30")
+    assert late > 180

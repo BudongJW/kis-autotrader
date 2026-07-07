@@ -81,7 +81,8 @@ morning_momentum:
 us_momentum:
   enabled: true
   window_start_kst: '22:30'
-  entry_end_kst: '23:59'
+  entry_end_kst: '23:59'      # (vestigial) 신호 내부 윈도는 무력화, 실제 진입창은 entry_window_min
+  entry_window_min: 180       # 개장 후 3시간까지 진입 허용(자정 넘김·루프지연 대응). 버그수정 핵심
   exit_by_kst: '99:99'
   up_threshold_pct: 0.8
   down_threshold_pct: 0.8

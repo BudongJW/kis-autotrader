@@ -886,6 +886,22 @@ def _minutes_until_us_close(now_kst: datetime, close_str: str) -> float:
     return (close_dt - now_kst).total_seconds() / 60.0
 
 
+def _minutes_since_us_open(now_kst: datetime, open_str: str) -> float:
+    """US 개장 후 경과 분(KST). 자정 넘는 세션이라 개장시각보다 이른 새벽이면 개장은 전날.
+
+    진입창을 문자열 시각("01:00" ∉ "22:30~23:59")으로 판정하던 게 버그 —
+    자정 이후엔 창이 영영 안 열려 US 모멘텀이 전혀 진입 못 했다. 이 경과분으로 대체.
+    """
+    try:
+        oh, om = int(open_str[:2]), int(open_str[3:5])
+    except Exception:
+        oh, om = 22, 30
+    open_dt = now_kst.replace(hour=oh, minute=om, second=0, microsecond=0)
+    if now_kst < open_dt:                      # 01:00 < 22:30 → 개장은 전날 밤
+        open_dt -= timedelta(days=1)
+    return (now_kst - open_dt).total_seconds() / 60.0
+
+
 def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
     """미장 방향성 스캘프 1틱. 상승→QQQM 롱, 하락→PSQ 숏. 매수/매도 있으면 True.
 
@@ -916,6 +932,12 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
 
     mins_left = _minutes_until_us_close(now_kst, close_str)
     force_eod = mins_left <= float(cfg.get("session_exit_min_before", 15))
+
+    # 진입창: 개장 후 N분 이내(개장경과분 기준 — 자정 넘김/루프지연에도 정상 동작)
+    open_str = str(load_us_config().get("market_open_kst", "22:30"))
+    mins_since_open = _minutes_since_us_open(now_kst, open_str)
+    entry_window_min = float(cfg.get("entry_window_min", 180))
+    in_entry_window = 0 <= mins_since_open <= entry_window_min
 
     acted = False
     holdings_api = get_us_holdings(client)
@@ -974,7 +996,9 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
 
     # ── 2) 진입 (플랫 + 재진입 가능 + 세션말 아님) ──
     holding_now = [k for k in state.keys() if k != "_meta"]
-    if not holding_now and not force_eod:
+    if not holding_now and not force_eod and not in_entry_window:
+        print(f"  [US-MOM] 진입창 밖 (개장 후 {mins_since_open:.0f}분 > {entry_window_min:.0f}분)")
+    elif not holding_now and not force_eod:
         ok, why = can_reenter(meta=meta, now_hhmm=now_hhmm, cfg=cfg)
         if not ok:
             print(f"  [US-MOM] 재진입 보류: {why}")
@@ -985,9 +1009,11 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
                 session_open[long_sym] = cur
                 so = cur
             today_open = so or cur
+            # 신호 내부의 문자열 윈도 체크는 무력화(개장경과분으로 이미 판정) — 자정 넘김 버그 회피
+            sig_cfg = {**cfg, "window_start_kst": "00:00", "entry_end_kst": "23:59"}
             sig = morning_momentum_signal(
                 prev_close=prev_close, today_open=today_open, cur_price=cur,
-                now_hhmm=now_hhmm, cfg=cfg, regime=_us_current_regime())
+                now_hhmm=now_hhmm, cfg=sig_cfg, regime=_us_current_regime())
             print(f"  [US-MOM] 판단: {sig.direction} — {sig.reason}")
             if sig.is_entry:
                 if sig.direction == "long":
