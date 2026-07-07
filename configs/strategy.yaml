@@ -305,17 +305,18 @@ market_regime:
     bear: 0.1326627045920805
     bull: 0.8673372954025679
     sideways: 5.35158451931719e-12
-market_confidence: 0.478
+market_confidence: 0.398
 strong_sectors:
 - 자동차
 - IT
 overnight_signal:
-  nasdaq_change: 1.12
-  sp500_change: 0.72
-  direction: bullish
-  strength: 0.32
-  confidence_boost: 0.038
-  recommended_action: normal
+  direction: bearish
+  recommended_action: reduce_size
+  nasdaq_change: -1.87
+  sp500_change: -0.57
+  strength: 0.41
+  confidence_boost: -0.08
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091180
   name: KODEX 자동차

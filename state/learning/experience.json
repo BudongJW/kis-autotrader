@@ -739,5 +739,28 @@
     "exit_price": 950,
     "evaluated": true,
     "rebuilt": true
+  },
+  {
+    "timestamp": "2026-07-08T00:26:10",
+    "date": "2026-07-08",
+    "symbol": "PSQ",
+    "name": "PSQ",
+    "action": "buy",
+    "reason": "US모멘텀 inverse: 하락 아침추세 (전일대비 -2.19%, 시가대비 +0.00%)",
+    "price": 2609,
+    "qty": 11,
+    "strategy": "us_etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": null,
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "loss",
+    "pnl_pct": -0.11,
+    "exit_price": 2606,
+    "evaluated": true,
+    "rebuilt": true
   }
 ]
