@@ -54,7 +54,7 @@ morning_momentum:
   down_threshold_pct: 0.6
   intraday_confirm_pct: 0.0
   position_krw: 300000
-  take_profit_pct: 0.025
+  take_profit_pct: 0.05
   stop_loss_pct: 0.01
   trail_activate_pct: 0.015
   trail_gap_pct: 0.008
@@ -62,7 +62,7 @@ morning_momentum:
   breakeven_buffer_pct: 0.001
   reentry_cooldown_min: 30
   max_cycles_per_day: 3
-  max_move_pct: 2.0
+  max_move_pct: 0
   long_block_regimes:
   - BEAR
   - CRISIS
@@ -145,7 +145,7 @@ us_momentum:
   up_threshold_pct: 0.8
   down_threshold_pct: 0.8
   intraday_confirm_pct: 0.0
-  take_profit_pct: 0.025
+  take_profit_pct: 0.05
   stop_loss_pct: 0.012
   trail_activate_pct: 0.015
   trail_gap_pct: 0.008
@@ -153,7 +153,7 @@ us_momentum:
   breakeven_buffer_pct: 0.006
   reentry_cooldown_min: 40
   max_cycles_per_day: 2
-  max_move_pct: 3.0
+  max_move_pct: 0
   long_block_regimes:
   - BEAR
   - CRISIS
