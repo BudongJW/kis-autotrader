@@ -52,5 +52,25 @@
       "IT"
     ],
     "k_value": 0.49
+  },
+  {
+    "date": "2026-07-08",
+    "regime_trend": "up",
+    "regime_volatility": "normal",
+    "trend_score": 0.425,
+    "vol_percentile": 62.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.6173790720705628,
+    "breadth": "mixed",
+    "kospi_5d": 1.37,
+    "kosdaq_5d": -7.91,
+    "confidence": 0.54496,
+    "strong_sectors": [
+      "자동차",
+      "금융",
+      "IT",
+      "KOSPI200"
+    ],
+    "k_value": 0.44
   }
 ]
