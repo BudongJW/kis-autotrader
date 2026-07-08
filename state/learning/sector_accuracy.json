@@ -61,5 +61,33 @@
     "sector": "KODEX 인버스",
     "strong_sector": false,
     "pnl_pct": 0.0
+  },
+  {
+    "date": "2026-07-08",
+    "symbol": "PSQ",
+    "sector": "PSQ",
+    "strong_sector": false,
+    "pnl_pct": -0.11
+  },
+  {
+    "date": "2026-07-08",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": -0.39
+  },
+  {
+    "date": "2026-07-08",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 0.09
+  },
+  {
+    "date": "2026-07-08",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 1.95
   }
 ]
