@@ -1,15 +1,15 @@
 {
-  "trained_at": "2026-07-09T19:30:00.061856",
+  "trained_at": "2026-07-10T07:49:12.498187",
   "mode": "daily_warm_start",
   "accuracy": 0.7778,
   "auc": 0.8857,
-  "n_samples": 180,
+  "n_samples": 177,
   "feature_importance": {
-    "momentum_accel_3d": 249.26,
+    "momentum_accel_3d": 251.13,
     "body_ratio": 156.75,
     "upper_shadow": 138.1,
     "di_plus": 102.79,
-    "ma60_ratio": 93.58,
+    "ma60_ratio": 95.78,
     "obv_slope_10": 90.79,
     "ret_3d": 82.5,
     "vol_trend_5d": 82.11,
@@ -23,7 +23,7 @@
     "vol_ratio": 61.45,
     "ret_10d": 56.56,
     "adx": 55.51,
-    "atr_ratio": 52.24,
-    "vol_5d": 50.21
+    "vol_5d": 54.83,
+    "atr_ratio": 52.24
   }
 }
