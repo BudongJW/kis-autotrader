@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.44
+    k: 0.37
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -16,15 +16,15 @@ strategies:
     backtest_return: 1.75
     backtest_mdd: -1.85
   ta_weights:
-    rsi: 0.111
-    macd: 0.111
-    bb: 0.111
-    stoch: 0.111
-    adx: 0.111
-    ma: 0.111
-    obv: 0.111
-    mfi: 0.111
-    atr: 0.111
+    rsi: 0.059
+    macd: 0.118
+    bb: 0.118
+    stoch: 0.176
+    adx: 0.118
+    ma: 0.118
+    obv: 0.176
+    mfi: 0.059
+    atr: 0.059
 day_plan:
   force_stance: null
 costs:
@@ -296,40 +296,30 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.425
-  vol_percentile: 62.0
-  analyzed_at: 2026-07-08 09:57
-  hmm_state: sideways
-  hmm_confidence: 0.6173790720705628
+  trend_score: 0.391
+  vol_percentile: 58.0
+  analyzed_at: 2026-07-09 10:07
+  hmm_state: bull
+  hmm_confidence: 0.9552999621989088
   hmm_transition:
-    bear: 0.7077178968197918
-    sideways: 0.037407278842837864
-    bull: 0.25487482433737046
-market_confidence: 0.545
+    bear: 0.22785786791637
+    bull: 0.5810427938332252
+    sideways: 0.19109933825040487
+market_confidence: 0.42
 strong_sectors:
-- 자동차
-- 금융
 - IT
-- KOSPI200
 overnight_signal:
+  nasdaq_change: 0.2
+  sp500_change: -0.28
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: 0.12
-  sp500_change: -0.45
-  strength: 0.06
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
-- symbol: 091180
-  name: KODEX 자동차
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
-- symbol: 069500
-  name: KODEX KOSPI200
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.381
-  trades: 17
+  win_rate: 0.417
+  trades: 20
 sector_momentum_effective: true

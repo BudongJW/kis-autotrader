@@ -72,5 +72,22 @@
       "KOSPI200"
     ],
     "k_value": 0.44
+  },
+  {
+    "date": "2026-07-09",
+    "regime_trend": "up",
+    "regime_volatility": "normal",
+    "trend_score": 0.391,
+    "vol_percentile": 58.0,
+    "hmm_state": "bull",
+    "hmm_confidence": 0.9552999621989088,
+    "breadth": "weak",
+    "kospi_5d": -7.53,
+    "kosdaq_5d": -6.99,
+    "confidence": 0.42,
+    "strong_sectors": [
+      "IT"
+    ],
+    "k_value": 0.37
   }
 ]
