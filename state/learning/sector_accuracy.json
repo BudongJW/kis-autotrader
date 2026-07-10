@@ -117,5 +117,26 @@
     "sector": "KODEX 인버스",
     "strong_sector": false,
     "pnl_pct": 0.76
+  },
+  {
+    "date": "2026-07-10",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 0.09
+  },
+  {
+    "date": "2026-07-10",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 1.92
+  },
+  {
+    "date": "2026-07-10",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": -1.01
   }
 ]
