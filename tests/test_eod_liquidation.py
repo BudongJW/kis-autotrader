@@ -46,3 +46,13 @@ def test_defensive_bond_held_overnight(monkeypatch):
     _patch_universe(monkeypatch)
     liq = sr.eod_liquidation_targets({"214980": 1}, cfg={"kr_eod_liquidation": "selective"})
     assert liq == {}                        # 방어자산은 청산 안 함
+
+
+def test_inverse_liquidated_at_eod_no_overnight(monkeypatch):
+    """7-10 사례: 인버스(114800) 밤샘 -13,897 갭 사고. 방향 예측 불가(coin-flip)라
+    인버스는 오버나이트 금지 — 추세·방어 ETF는 보유하되 인버스만 마감청산."""
+    _patch_universe(monkeypatch)
+    holdings = {"114800": 196, "395160": 2, "214980": 1}  # 인버스+추세+방어
+    liq = sr.eod_liquidation_targets(holdings, cfg={"kr_eod_liquidation": "selective"})
+    assert liq == {"114800": 196}           # 인버스만 청산
+    assert "395160" not in liq and "214980" not in liq  # 추세·방어는 계속 보유

@@ -1070,7 +1070,15 @@ def eod_liquidation_targets(bot_holdings: dict, cfg: dict | None = None) -> dict
     if mode == "all":
         return dict(bot_holdings)
     etf = _all_etf_symbols()
-    return {s: q for s, q in bot_holdings.items() if s not in etf}
+    # 인버스는 방향성 베팅 → 다음날 방향은 예측 불가(coin-flip)라 오버나이트 갭 위험
+    # (2026-07-10 인버스 밤샘 -13,897 사고). 추세·방어·인컴 ETF는 계속 보유하되,
+    # 인버스만 장마감 청산 대상에 넣어 방향 포지션을 밤새 들고 가지 않는다.
+    try:
+        inverse_syms = {s["symbol"] for s in (load_inverse_universe() or [])}
+    except Exception:
+        inverse_syms = set()
+    hold = etf - inverse_syms
+    return {s: q for s, q in bot_holdings.items() if s not in hold}
 
 
 def load_leveraged_config() -> dict:
