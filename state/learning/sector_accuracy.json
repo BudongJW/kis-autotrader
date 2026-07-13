@@ -138,5 +138,54 @@
     "sector": "KODEX 200",
     "strong_sector": false,
     "pnl_pct": -1.01
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": -1.07
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 1.55
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 0.93
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 0.45
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 0.45
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 0.27
+  },
+  {
+    "date": "2026-07-13",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 0.27
   }
 ]
