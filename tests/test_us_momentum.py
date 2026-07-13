@@ -58,11 +58,17 @@ def test_down_move_goes_inverse():
     assert s.direction == "inverse"
 
 
-def test_extended_move_blocked_antichase():
-    # 전일대비 -3.5%(>max 3.0%) → 추격 회피
+def test_extended_move_antichase_follows_config():
+    # 안티체이스(max_move_pct)는 config 값에 따름. 2026-07-09 추세추종 전환으로 0(삭제).
+    #   max_move_pct==0: 큰 추세(-3.5%)도 진입(추세 라이드)
+    #   max_move_pct>0 : 그 이상 움직임은 추격 회피로 차단
+    c = _cfg()
     s = morning_momentum_signal(prev_close=100, today_open=98, cur_price=96.5,
-                                now_hhmm="22:40", cfg=_cfg())
-    assert s.direction == "none" and "추격" in s.reason
+                                now_hhmm="22:40", cfg=c)
+    if float(c.get("max_move_pct", 0) or 0) == 0:
+        assert s.direction == "inverse"        # 안티체이스 꺼짐 → 진입
+    else:
+        assert s.direction == "none" and "추격" in s.reason
 
 
 def test_no_entry_after_midnight_window_closed():
