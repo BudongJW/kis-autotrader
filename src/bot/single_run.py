@@ -1073,9 +1073,13 @@ def eod_liquidation_targets(bot_holdings: dict, cfg: dict | None = None) -> dict
       원칙), 유니버스 밖 종목(급등주 등 일중 데이트레이드)만 청산 → 수수료 churn↓.
     all: 전량 청산(기존 동작). config `kr_eod_liquidation: all` 로 복원 가능.
     """
-    mode = ((cfg or load_config()).get("kr_eod_liquidation") or "selective")
+    cfg = cfg or load_config()
+    # 수동 오버나이트 유지 예외: 사용자가 특정 종목을 밤새 들고 가겠다고 지정하면
+    # (config eod_liquidation_exempt) 장마감 청산에서 제외. 하루짜리 예외로, 다음날 제거.
+    exempt = set(cfg.get("eod_liquidation_exempt") or [])
+    mode = (cfg.get("kr_eod_liquidation") or "selective")
     if mode == "all":
-        return dict(bot_holdings)
+        return {s: q for s, q in bot_holdings.items() if s not in exempt}
     etf = _all_etf_symbols()
     # 인버스는 방향성 베팅 → 다음날 방향은 예측 불가(coin-flip)라 오버나이트 갭 위험
     # (2026-07-10 인버스 밤샘 -13,897 사고). 추세·방어·인컴 ETF는 계속 보유하되,
@@ -1084,7 +1088,7 @@ def eod_liquidation_targets(bot_holdings: dict, cfg: dict | None = None) -> dict
         inverse_syms = {s["symbol"] for s in (load_inverse_universe() or [])}
     except Exception:
         inverse_syms = set()
-    hold = etf - inverse_syms
+    hold = (etf - inverse_syms) | exempt   # 예외 종목은 청산 안 함(수동 오버나이트)
     return {s: q for s, q in bot_holdings.items() if s not in hold}
 
 
