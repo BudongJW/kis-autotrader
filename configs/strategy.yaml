@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.41
+    k: 0.4
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -16,15 +16,15 @@ strategies:
     backtest_return: 1.75
     backtest_mdd: -1.85
   ta_weights:
-    rsi: 0.049
-    macd: 0.18
-    bb: 0.072
-    stoch: 0.108
-    adx: 0.072
-    ma: 0.18
-    obv: 0.18
-    mfi: 0.049
-    atr: 0.108
+    rsi: 0.048
+    macd: 0.193
+    bb: 0.065
+    stoch: 0.097
+    adx: 0.065
+    ma: 0.193
+    obv: 0.193
+    mfi: 0.048
+    atr: 0.097
 day_plan:
   force_stance: null
 costs:
@@ -296,45 +296,33 @@ risk:
 market_regime:
   trend: up
   volatility: normal
-  trend_score: 0.329
-  vol_percentile: 54.0
-  analyzed_at: 2026-07-13 09:15
-  hmm_state: bull
-  hmm_confidence: 0.767058770242257
+  trend_score: 0.284
+  vol_percentile: 68.0
+  analyzed_at: 2026-07-14 09:13
+  hmm_state: sideways
+  hmm_confidence: 0.9251346119491046
   hmm_transition:
-    bear: 0.07565189894618103
-    sideways: 2.067202192880516e-05
-    bull: 0.9243274290318901
-market_confidence: 0.62
+    bear: 0.8739993540416985
+    sideways: 0.002836452815877834
+    bull: 0.1231641931424236
+market_confidence: 0.39
 strong_sectors:
-- 반도체
 - 2차전지
-- 자동차
 - IT
-- 철강
-- KOSDAQ150
 overnight_signal:
-  nasdaq_change: 0.29
-  sp500_change: 0.42
-  direction: neutral
-  strength: 0.1
-  confidence_boost: 0
-  recommended_action: normal
+  nasdaq_change: -1.55
+  sp500_change: -0.79
+  direction: bearish
+  strength: 0.42
+  confidence_boost: -0.05
+  recommended_action: reduce_size
 dynamic_universe:
-- symbol: 091160
-  name: KODEX 반도체
 - symbol: '305720'
   name: KODEX 2차전지
-- symbol: 091180
-  name: KODEX 자동차
 - symbol: 098560
   name: KODEX IT
-- symbol: '117700'
-  name: KODEX 철강
-- symbol: '229200'
-  name: KODEX KOSDAQ150
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.433
-  trades: 26
+  win_rate: 0.455
+  trades: 29
 sector_momentum_effective: false
