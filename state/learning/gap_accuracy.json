@@ -34,5 +34,14 @@
     "action": "normal",
     "kospi_gap": 2.47,
     "correct": true
+  },
+  {
+    "date": "2026-07-14",
+    "nasdaq_change": -1.55,
+    "sp500_change": -0.79,
+    "direction": "bearish",
+    "action": "reduce_size",
+    "kospi_gap": 0.83,
+    "correct": false
   }
 ]
