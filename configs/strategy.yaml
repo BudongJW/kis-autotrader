@@ -310,12 +310,13 @@ strong_sectors:
 - 2차전지
 - IT
 overnight_signal:
-  nasdaq_change: -1.55
-  sp500_change: -0.79
-  direction: bearish
-  strength: 0.42
-  confidence_boost: -0.05
-  recommended_action: reduce_size
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: 1.12
+  sp500_change: 0.38
+  strength: 0.25
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: '305720'
   name: KODEX 2차전지
