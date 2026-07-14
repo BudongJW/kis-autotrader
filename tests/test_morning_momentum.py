@@ -42,6 +42,21 @@ def test_long_ok_in_normal_regime():
     assert s.direction == "long"   # CAUTION은 long_block 아님 → 롱 허용
 
 
+def test_long_blocked_by_block_long_flag_hmm_independent():
+    # HMM이 sideways/bull로 오분류(regime 비차단)해도 block_long=True면 롱 금지
+    # (2026-07-14 폭락장 falling-knife 롱 재발 차단). 오버나이트 bearish 등으로 캐러가 넘김.
+    s = morning_momentum_signal(prev_close=100, today_open=100.5, cur_price=101.5,
+                                now_hhmm="09:10", cfg=CFG, regime="sideways", block_long=True)
+    assert s.direction == "none" and "하락컨텍스트" in s.reason
+
+
+def test_inverse_not_blocked_by_block_long():
+    # block_long은 롱만 막고 인버스(트렌드 정렬)는 계속 허용
+    s = morning_momentum_signal(prev_close=100, today_open=99.5, cur_price=98.5,
+                                now_hhmm="09:10", cfg=CFG, regime="sideways", block_long=True)
+    assert s.direction == "inverse"
+
+
 def test_extended_move_blocked_antichase():
     # 전일대비 -2.51% (>max 2%) → 추격 회피로 진입 안 함 (오늘 09:32 인버스 실수 차단)
     s = _sig(100, 99, 97.49)

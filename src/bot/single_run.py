@@ -539,9 +539,16 @@ def run_morning_momentum_strategy(client: KISClient, holdings: dict,
         q = get_quote(client, long_sym)  # 벤치마크(KODEX200) 아침 변동으로 방향 판단
     except Exception:
         return False
+    # HMM 독립 롱차단: HMM이 폭락을 sideways/bull로 오분류해도(2026-07-14) 오버나이트
+    # 하락신호로 falling-knife 롱을 막는다. 인버스 방향은 계속 허용(트렌드 정렬).
+    _og = cfg.get("overnight_signal", {}) or {}
+    block_long = (
+        str(_og.get("direction", "")).lower() == "bearish"
+        or str(_og.get("recommended_action", "")).lower() in ("reduce_size", "risk_off", "defensive")
+    )
     sig = morning_momentum_signal(
         prev_close=q["prev_close"], today_open=q["open"], cur_price=q["price"],
-        now_hhmm=now_hhmm, cfg=mm, blind=bool(blind), regime=regime)
+        now_hhmm=now_hhmm, cfg=mm, blind=bool(blind), regime=regime, block_long=block_long)
     if not sig.is_entry:
         if sig.in_window:
             print(f"  [조간] 진입 없음 — {sig.reason}")

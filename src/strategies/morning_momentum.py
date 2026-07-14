@@ -30,7 +30,8 @@ class MorningMomentumSignal:
 def morning_momentum_signal(*, prev_close: float, today_open: float, cur_price: float,
                             now_hhmm: str, cfg: dict,
                             blind: bool = False,
-                            regime: str | None = None) -> MorningMomentumSignal:
+                            regime: str | None = None,
+                            block_long: bool = False) -> MorningMomentumSignal:
     """개장 윈도 내 지수 아침 변동으로 롱/인버스 방향을 판단.
 
     Args:
@@ -80,6 +81,12 @@ def morning_momentum_signal(*, prev_close: float, today_open: float, cur_price: 
         if regime in long_block:
             return MorningMomentumSignal(
                 "none", f"롱 신호({move:+.2f}%)이나 {regime} 레짐 — 역레짐 롱 금지",
+                move, intra, in_window)
+        # HMM 독립 롱차단: 급락/오버나이트 하락 등 캐러가 넘긴 컨텍스트. HMM이 폭락을
+        # sideways/bull로 오분류해도(2026-07-14) 롱을 막아 falling-knife 진입을 차단.
+        if block_long:
+            return MorningMomentumSignal(
+                "none", f"롱 신호({move:+.2f}%)이나 하락컨텍스트(급락/오버나이트 bearish) — 롱 금지",
                 move, intra, in_window)
         return MorningMomentumSignal(
             "long", f"상승 아침추세 (전일대비 {move:+.2f}%, 시가대비 {intra:+.2f}%)",
