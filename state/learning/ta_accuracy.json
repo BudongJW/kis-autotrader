@@ -1,38 +1,38 @@
 {
   "rsi": {
     "correct": 1,
-    "total": 11
+    "total": 12
   },
   "macd": {
     "correct": 7,
-    "total": 11
+    "total": 12
   },
   "bb": {
-    "correct": 2,
-    "total": 11
+    "correct": 3,
+    "total": 12
   },
   "stoch": {
-    "correct": 3,
-    "total": 11
+    "correct": 4,
+    "total": 12
   },
   "adx": {
-    "correct": 2,
-    "total": 11
+    "correct": 3,
+    "total": 12
   },
   "ma": {
     "correct": 7,
-    "total": 11
+    "total": 12
   },
   "obv": {
     "correct": 7,
-    "total": 11
+    "total": 12
   },
   "mfi": {
-    "correct": 1,
-    "total": 11
+    "correct": 2,
+    "total": 12
   },
   "atr": {
     "correct": 4,
-    "total": 11
+    "total": 12
   }
 }

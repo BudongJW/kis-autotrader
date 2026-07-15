@@ -215,5 +215,19 @@
     "sector": "KODEX 200",
     "strong_sector": false,
     "pnl_pct": -1.01
+  },
+  {
+    "date": "2026-07-15",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 0.08
+  },
+  {
+    "date": "2026-07-15",
+    "symbol": "069500",
+    "sector": "KODEX 200",
+    "strong_sector": false,
+    "pnl_pct": 1.48
   }
 ]
