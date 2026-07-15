@@ -146,5 +146,27 @@
       "IT"
     ],
     "k_value": 0.4
+  },
+  {
+    "date": "2026-07-15",
+    "regime_trend": "up",
+    "regime_volatility": "high",
+    "trend_score": 0.257,
+    "vol_percentile": 94.0,
+    "hmm_state": "bear",
+    "hmm_confidence": 0.6,
+    "breadth": "mixed",
+    "kospi_5d": -0.69,
+    "kosdaq_5d": 2.25,
+    "confidence": 0.49767999999999996,
+    "strong_sectors": [
+      "반도체",
+      "2차전지",
+      "자동차",
+      "IT",
+      "철강",
+      "KOSDAQ150"
+    ],
+    "k_value": 0.53
   }
 ]
