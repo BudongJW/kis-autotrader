@@ -305,17 +305,18 @@ market_regime:
     bear: 0.1787173189884194
     bull: 0.8212826810115672
     sideways: 1.3339585882737403e-14
-market_confidence: 0.311
+market_confidence: 0.231
 strong_sectors:
 - 2차전지
 - IT
 overnight_signal:
-  nasdaq_change: 0.62
-  sp500_change: 0.38
-  direction: bullish
-  strength: 0.17
-  confidence_boost: 0.021
-  recommended_action: normal
+  direction: bearish
+  recommended_action: reduce_size
+  nasdaq_change: -1.86
+  sp500_change: -0.65
+  strength: 0.42
+  confidence_boost: -0.08
+  source: us_post_learning
 dynamic_universe:
 - symbol: '305720'
   name: KODEX 2차전지
