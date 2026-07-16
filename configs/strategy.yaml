@@ -329,5 +329,5 @@ sector_momentum_effective: false
 eod_liquidation_exempt:
 - '114800'
 gap_adaptive_thresholds:
-  bullish: 1.0
-  bearish: -1.0
+  bullish: 1.5
+  bearish: -1.5
