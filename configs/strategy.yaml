@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.62
+    k: 0.7
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -17,14 +17,14 @@ strategies:
     backtest_mdd: -1.85
   ta_weights:
     rsi: 0.049
-    macd: 0.18
-    bb: 0.078
-    stoch: 0.103
-    adx: 0.078
-    ma: 0.18
-    obv: 0.18
-    mfi: 0.051
-    atr: 0.103
+    macd: 0.19
+    bb: 0.071
+    stoch: 0.095
+    adx: 0.071
+    ma: 0.19
+    obv: 0.19
+    mfi: 0.049
+    atr: 0.095
 day_plan:
   force_stance: null
 costs:
@@ -296,36 +296,32 @@ risk:
 market_regime:
   trend: up
   volatility: high
-  trend_score: 0.223
-  vol_percentile: 80.0
-  analyzed_at: 2026-07-16 09:15
+  trend_score: 0.222
+  vol_percentile: 82.0
+  analyzed_at: 2026-07-17 09:57
   hmm_state: bear
-  hmm_confidence: 0.9549690453532658
+  hmm_confidence: 0.9913743540925172
   hmm_transition:
-    bear: 0.1787173189884194
-    bull: 0.8212826810115672
-    sideways: 1.3339585882737403e-14
-market_confidence: 0.231
+    bear: 0.1739871469015951
+    bull: 0.8260128530983546
+    sideways: 5.026048409874497e-14
+market_confidence: 0.227
 strong_sectors:
-- 2차전지
 - IT
 overnight_signal:
+  nasdaq_change: -1.47
+  sp500_change: -0.51
   direction: bearish
+  strength: 0.36
+  confidence_boost: -0.043
   recommended_action: reduce_size
-  nasdaq_change: -1.86
-  sp500_change: -0.65
-  strength: 0.42
-  confidence_boost: -0.08
-  source: us_post_learning
 dynamic_universe:
-- symbol: '305720'
-  name: KODEX 2차전지
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.447
-  trades: 34
+  win_rate: 0.488
+  trades: 37
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - '114800'
