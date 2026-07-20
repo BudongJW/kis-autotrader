@@ -310,12 +310,13 @@ strong_sectors:
 - IT
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: -1.4
-  sp500_change: -1.01
-  direction: bearish
-  strength: 0.41
-  confidence_boost: -0.05
-  recommended_action: reduce_size
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: -0.13
+  sp500_change: -0.28
+  strength: 0.07
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
