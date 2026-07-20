@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.65
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -295,27 +295,27 @@ risk:
   - 나스닥
 market_regime:
   trend: up
-  volatility: high
-  trend_score: 0.222
-  vol_percentile: 82.0
-  analyzed_at: 2026-07-17 09:57
-  hmm_state: bear
-  hmm_confidence: 0.9913743540925172
+  volatility: normal
+  trend_score: 0.185
+  vol_percentile: 56.0
+  analyzed_at: 2026-07-20 10:00
+  hmm_state: sideways
+  hmm_confidence: 0.7045747216286263
   hmm_transition:
-    bear: 0.1739871469015951
-    bull: 0.8260128530983546
-    sideways: 5.026048409874497e-14
-market_confidence: 0.147
+    sideways: 0.0038419847296628814
+    bear: 0.9960463236097777
+    bull: 0.00011169166055936419
+market_confidence: 0.39
 strong_sectors:
 - IT
+- 미국나스닥
 overnight_signal:
+  nasdaq_change: -1.4
+  sp500_change: -1.01
   direction: bearish
+  strength: 0.41
+  confidence_boost: -0.05
   recommended_action: reduce_size
-  nasdaq_change: -1.59
-  sp500_change: -1.0
-  strength: 0.43
-  confidence_boost: -0.08
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT

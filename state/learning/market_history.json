@@ -203,5 +203,23 @@
       "IT"
     ],
     "k_value": 0.7
+  },
+  {
+    "date": "2026-07-20",
+    "regime_trend": "up",
+    "regime_volatility": "normal",
+    "trend_score": 0.185,
+    "vol_percentile": 56.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.7045747216286263,
+    "breadth": "weak",
+    "kospi_5d": -1.78,
+    "kosdaq_5d": -5.91,
+    "confidence": 0.39024000000000003,
+    "strong_sectors": [
+      "IT",
+      "미국나스닥"
+    ],
+    "k_value": 0.65
   }
 ]
