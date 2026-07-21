@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.6
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -17,14 +17,14 @@ strategies:
     backtest_mdd: -1.85
   ta_weights:
     rsi: 0.049
-    macd: 0.19
-    bb: 0.071
-    stoch: 0.095
-    adx: 0.071
-    ma: 0.19
-    obv: 0.19
+    macd: 0.193
+    bb: 0.064
+    stoch: 0.107
+    adx: 0.064
+    ma: 0.193
+    obv: 0.193
     mfi: 0.049
-    atr: 0.095
+    atr: 0.086
 day_plan:
   force_stance: null
 costs:
@@ -294,36 +294,34 @@ risk:
   - KOSDAQ150
   - 나스닥
 market_regime:
-  trend: up
+  trend: sideways
   volatility: normal
-  trend_score: 0.185
-  vol_percentile: 56.0
-  analyzed_at: 2026-07-20 10:00
+  trend_score: 0.147
+  vol_percentile: 66.0
+  analyzed_at: 2026-07-21 09:56
   hmm_state: sideways
-  hmm_confidence: 0.7045747216286263
+  hmm_confidence: 0.9074471868114078
   hmm_transition:
-    sideways: 0.0038419847296628814
-    bear: 0.9960463236097777
-    bull: 0.00011169166055936419
-market_confidence: 0.39
+    bear: 0.8517121705908884
+    sideways: 0.0017832725312554012
+    bull: 0.14650455687785616
+market_confidence: 0.27
 strong_sectors:
 - IT
-- 미국나스닥
 overnight_signal:
+  nasdaq_change: -0.05
+  sp500_change: -0.19
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -0.13
-  sp500_change: -0.28
-  strength: 0.07
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.488
-  trades: 37
+  win_rate: 0.477
+  trades: 40
 sector_momentum_effective: true
 eod_liquidation_exempt:
 - '114800'
