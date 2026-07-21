@@ -1,16 +1,16 @@
 {
-  "trained_at": "2026-07-21T18:33:11.565917",
+  "trained_at": "2026-07-22T07:26:36.406272",
   "mode": "daily_warm_start",
-  "accuracy": 0.8611,
-  "auc": 0.9352,
-  "n_samples": 180,
+  "accuracy": 0.8333,
+  "auc": 0.9383,
+  "n_samples": 177,
   "feature_importance": {
     "momentum_accel_3d": 311.25,
     "body_ratio": 182.11,
+    "upper_shadow": 180.67,
     "ma60_ratio": 180.32,
-    "upper_shadow": 179.69,
     "obv_slope_10": 174.5,
-    "ret_3d": 155.72,
+    "ret_3d": 156.84,
     "di_plus": 152.63,
     "momentum_accel": 145.94,
     "vol_ma5_ratio": 113.53,
@@ -18,12 +18,12 @@
     "ret_10d": 111.48,
     "bb_width": 105.21,
     "bb_pos": 103.76,
-    "vol_trend_5d": 100.59,
+    "vol_trend_5d": 102.13,
     "stoch_k": 95.43,
     "mfi_14": 84.26,
     "vol_ratio": 84.22,
     "adx": 79.77,
-    "vol_5d": 77.03,
+    "vol_5d": 77.71,
     "rsi_14": 77.01
   }
 }
