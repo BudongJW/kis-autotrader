@@ -79,5 +79,14 @@
     "action": "reduce_size",
     "kospi_gap": -4.5,
     "correct": true
+  },
+  {
+    "date": "2026-07-22",
+    "nasdaq_change": 1.29,
+    "sp500_change": 0.89,
+    "direction": "bullish",
+    "action": "aggressive_buy",
+    "kospi_gap": 0.16,
+    "correct": true
   }
 ]
