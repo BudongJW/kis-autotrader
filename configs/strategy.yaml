@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.6
+    k: 0.55
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -295,28 +295,30 @@ risk:
   - 나스닥
 market_regime:
   trend: sideways
-  volatility: normal
-  trend_score: 0.147
-  vol_percentile: 66.0
-  analyzed_at: 2026-07-21 09:56
+  volatility: high
+  trend_score: 0.12
+  vol_percentile: 90.0
+  analyzed_at: 2026-07-22 09:13
   hmm_state: sideways
-  hmm_confidence: 0.9074471868114078
+  hmm_confidence: 0.999296724330697
   hmm_transition:
-    bear: 0.8517121705908884
-    sideways: 0.0017832725312554012
-    bull: 0.14650455687785616
-market_confidence: 0.32
+    bear: 0.9999610316104848
+    sideways: 3.896838951525766e-05
+    bull: 0.0
+market_confidence: 0.208
 strong_sectors:
+- 자동차
 - IT
 overnight_signal:
+  nasdaq_change: 1.29
+  sp500_change: 0.89
   direction: bullish
-  recommended_action: normal
-  nasdaq_change: 1.72
-  sp500_change: 0.79
-  strength: 0.42
-  confidence_boost: 0.05
-  source: us_post_learning
+  strength: 0.38
+  confidence_boost: 0.068
+  recommended_action: aggressive_buy
 dynamic_universe:
+- symbol: 091180
+  name: KODEX 자동차
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:

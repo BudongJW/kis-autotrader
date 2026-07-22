@@ -238,5 +238,23 @@
       "IT"
     ],
     "k_value": 0.6
+  },
+  {
+    "date": "2026-07-22",
+    "regime_trend": "sideways",
+    "regime_volatility": "high",
+    "trend_score": 0.12,
+    "vol_percentile": 90.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.999296724330697,
+    "breadth": "weak",
+    "kospi_5d": -1.82,
+    "kosdaq_5d": -7.25,
+    "confidence": 0.2078,
+    "strong_sectors": [
+      "자동차",
+      "IT"
+    ],
+    "k_value": 0.55
   }
 ]
