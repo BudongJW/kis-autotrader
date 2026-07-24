@@ -347,7 +347,7 @@ adaptive_allocation:
   etf: 1.0
   win_rate: 0.477
   trades: 40
-sector_momentum_effective: true
+sector_momentum_effective: false
 eod_liquidation_exempt:
 - '114800'
 gap_adaptive_thresholds:
