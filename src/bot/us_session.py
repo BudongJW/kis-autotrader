@@ -344,6 +344,88 @@ def is_quote_stale() -> bool:
     return quote_lag_min() >= STALE_QUOTE_THRESHOLD_MIN
 
 
+def measure_quote_lag(client: KISClient, symbol: str = "SPLG",
+                      exchange: str = "AMEX") -> tuple[float | None, dict]:
+    """KIS 시세가 몇 분 지연되는지 **실측**. (지연분, 상세) — 판정 불가면 (None, 상세).
+
+    KIS 응답에는 지연 여부를 알려주는 필드가 없다. 그래서 독립 소스(yfinance
+    1분봉)를 참조로 삼아, KIS `last`가 최근 어느 분봉의 종가와 가장 가까운지를
+    보고 그 분봉까지의 거리를 지연으로 추정한다.
+
+    정규장 중에만 의미가 있다(장외에는 양쪽 다 마지막 종가로 고정).
+    best-effort — 실패해도 예외를 올리지 않는다.
+    """
+    detail: dict = {"symbol": symbol}
+    try:
+        _, kis_last = _us_quote(client, symbol, exchange)
+        detail["kis_last"] = kis_last
+        if kis_last <= 0:
+            detail["error"] = "kis_quote_empty"
+            return None, detail
+
+        import yfinance as yf
+
+        df = yf.download(symbol, period="1d", interval="1m",
+                         auto_adjust=False, progress=False)
+        if df is None or df.empty:
+            detail["error"] = "yf_empty"
+            return None, detail
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.index = pd.to_datetime(df.index)
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        df.index = df.index.tz_convert(ET)
+
+        closes = df["Close"].dropna()
+        if closes.empty:
+            detail["error"] = "yf_no_close"
+            return None, detail
+
+        ref_last = float(closes.iloc[-1])
+        best_ts = (closes - kis_last).abs().idxmin()
+        lag_min = (closes.index[-1] - best_ts).total_seconds() / 60.0
+
+        detail.update({
+            "ref_last": ref_last,
+            "ref_bar_et": f"{closes.index[-1]:%H:%M}",
+            "matched_bar_et": f"{best_ts:%H:%M}",
+            "price_gap_pct": round((kis_last - ref_last) / ref_last * 100, 4) if ref_last else 0.0,
+            "lag_min": round(lag_min, 1),
+        })
+        return lag_min, detail
+    except Exception as e:  # noqa: BLE001
+        detail["error"] = str(e)[:200]
+        return None, detail
+
+
+def report_quote_lag(client: KISClient) -> None:
+    """세션 시작 시 시세 지연을 실측해 로그·콘솔에 남긴다 (매매 동작은 바꾸지 않음).
+
+    측정값으로 자동 매매를 바꾸지는 않는다 — 단발 측정은 노이즈가 있고, 조용히
+    동작이 바뀌는 편이 더 위험하다. 실측치를 보여주고, 반영은 사용자가
+    execution.quote_lag_min에 명시하는 방식.
+    """
+    lag, detail = measure_quote_lag(client)
+    if lag is None:
+        print(f"  시세 지연 실측: 판정 불가 ({detail.get('error', 'unknown')})")
+        log.info("us_quote_lag_probe_inconclusive", **detail)
+        return
+
+    configured = quote_lag_min()
+    print(f"  시세 지연 실측: 약 {lag:.0f}분 "
+          f"(KIS ${detail.get('kis_last', 0):.2f} vs 참조 ${detail.get('ref_last', 0):.2f}, "
+          f"차이 {detail.get('price_gap_pct', 0):+.3f}%)")
+    log.info("us_quote_lag_measured", configured_lag_min=configured, **detail)
+
+    if lag >= STALE_QUOTE_THRESHOLD_MIN and configured < STALE_QUOTE_THRESHOLD_MIN:
+        print(f"  ⚠️  실측 지연 {lag:.0f}분인데 설정은 {configured:.0f}분이다. "
+              f"configs/strategy.yaml us_session.execution.quote_lag_min을 "
+              f"{int(round(lag))}로 올려 방어 모드를 켜는 것을 검토할 것.")
+        log.warning("us_quote_lag_config_mismatch",
+                    measured_lag_min=lag, configured_lag_min=configured)
+
+
 def _block_scalp_on_stale() -> bool:
     """지연 시세일 때 인트라데이 스캘프 신규 진입을 막을지 (기본 True)."""
     return bool(load_us_execution_config().get("block_scalp_on_stale", True))

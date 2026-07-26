@@ -36,6 +36,7 @@ from src.bot.us_session import (
     load_us_positions,
     quote_lag_min,
     is_quote_stale,
+    report_quote_lag,
 )
 from src.utils.logger import log
 from src.utils.clock import KST, now_kst, is_us_dst, us_session_date_et
@@ -251,6 +252,12 @@ def run_loop(dry_run: bool) -> None:
             if waited_min >= 1:
                 print(f"[{now:%H:%M:%S}] 개장 — 대기 {waited_min:.0f}분 종료. "
                       f"실행시간 예산({MAX_LOOP_RUNTIME_SEC // 60}분) 시작.")
+            # 시세 지연 실측 — 장중에만 의미가 있어 개장 직후 1회. 로그만 남기고
+            # 매매 동작은 바꾸지 않는다(반영은 execution.quote_lag_min 설정으로).
+            try:
+                report_quote_lag(client)
+            except Exception as e:  # noqa: BLE001
+                log.warning("us_quote_lag_probe_failed", error=str(e))
 
         # ── 폐장 직전 청산 ──
         close_dt = _get_close_datetime(now, close_t)

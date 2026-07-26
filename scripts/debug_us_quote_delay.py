@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
+from src.bot.us_session import measure_quote_lag
 from src.kis_client import KISClient
 from src.utils.clock import ET, now_et, now_kst
 from src.utils.market_calendar import is_us_trading_day, us_market_times_kst
@@ -78,19 +79,8 @@ def _yf_minute_bars(symbol: str):
         return None
 
 
-def _estimate_lag(kis_last: float, bars) -> tuple[float | None, float]:
-    """(추정 지연 분, 최근접 분봉과의 가격차%). 판정 불가면 (None, 0)."""
-    if bars is None or bars.empty or kis_last <= 0:
-        return None, 0.0
-    closes = bars["Close"].dropna()
-    if closes.empty:
-        return None, 0.0
-    diffs = (closes - kis_last).abs()
-    best_ts = diffs.idxmin()
-    best_close = float(closes.loc[best_ts])
-    lag_min = (closes.index[-1] - best_ts).total_seconds() / 60.0
-    price_gap = abs(best_close - kis_last) / kis_last if kis_last else 0.0
-    return lag_min, price_gap
+# 지연 추정 본체는 봇과 동일 구현을 쓴다(us_session.measure_quote_lag) —
+# 진단 결과와 실제 봇 동작이 갈리지 않도록.
 
 
 def main() -> None:
@@ -130,27 +120,23 @@ def main() -> None:
         # 지연 표시 필드가 있는지 전체 키 덤프 (KIS 문서에 명시된 플래그가 없어 육안 확인)
         print(f"  원시 output 키: {sorted(out.keys())}")
 
-        bars = _yf_minute_bars(symbol)
-        if bars is None or bars.empty:
-            print("  yfinance 1분봉 없음 → 지연 추정 불가")
-            continue
-
-        ref_last = float(bars["Close"].dropna().iloc[-1])
-        ref_vol = float(bars["Volume"].sum())
-        last_bar_ts = bars.index[-1]
-        print(f"  참조 yfinance last=${ref_last:,.2f} (마지막 분봉 {last_bar_ts:%H:%M} ET)  "
-              f"누적거래량={ref_vol:,.0f}")
-
-        gap_pct = (kis_last - ref_last) / ref_last if ref_last else 0.0
-        lag_min, match_gap = _estimate_lag(kis_last, bars)
-        print(f"  가격차(KIS-참조): {gap_pct:+.3%}")
-        if lag_min is not None:
-            print(f"  최근접 분봉 기준 추정 지연: 약 {lag_min:.0f}분 "
-                  f"(그 분봉과의 가격차 {match_gap:.3%})")
+        lag_min, detail = measure_quote_lag(client, symbol, exchange)
+        if lag_min is None:
+            print(f"  지연 추정 불가: {detail.get('error', 'unknown')}")
+        else:
+            print(f"  참조 yfinance last=${detail['ref_last']:,.2f} "
+                  f"(마지막 분봉 {detail['ref_bar_et']} ET, "
+                  f"최근접 분봉 {detail['matched_bar_et']} ET)")
+            print(f"  가격차(KIS-참조): {detail['price_gap_pct']:+.3f}%")
+            print(f"  → 추정 지연: 약 {lag_min:.0f}분")
             verdict_lags.append(lag_min)
-        if ref_vol > 0 and kis_tvol > 0:
-            print(f"  거래량비(KIS/참조): {kis_tvol / ref_vol:.2f} "
-                  f"(1.0에 가까우면 실시간, 뚜렷이 작으면 지연 의심)")
+
+        bars = _yf_minute_bars(symbol)
+        if bars is not None and not bars.empty:
+            ref_vol = float(bars["Volume"].sum())
+            if ref_vol > 0 and kis_tvol > 0:
+                print(f"  거래량비(KIS/참조): {kis_tvol / ref_vol:.2f} "
+                      f"(1.0에 가까우면 실시간, 뚜렷이 작으면 지연 의심)")
 
     print("=" * 68)
     if not verdict_lags:
