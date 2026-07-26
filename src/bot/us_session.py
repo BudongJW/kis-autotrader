@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import json
+import math
+import time as time_mod
 from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 
@@ -208,6 +210,162 @@ def _fetch_us_history_yf(symbol: str, days: int = 70) -> pd.DataFrame | None:
     except Exception as e:  # noqa: BLE001
         log.warning("us_daily_yf_failed", symbol=symbol, error=str(e))
         return None
+
+
+# ──────────────────────────────────────────────────────────
+# 체결 품질 — 마켓터블 지정가 + 실체결 확인
+# ──────────────────────────────────────────────────────────
+
+DEFAULT_LIMIT_BUFFER_PCT = 0.0015   # 0.15% — 유동성 좋은 ETF 스프레드(0.01~0.03%)의 5~10배 여유
+DEFAULT_FILL_WAIT_SEC = 6.0
+DEFAULT_FILL_POLL_SEC = 1.5
+
+
+def load_us_execution_config() -> dict:
+    return load_us_config().get("execution", {}) or {}
+
+
+def marketable_limit_price(side: str, last: float, buffer_pct: float | None = None) -> float:
+    """스프레드를 건너 즉시 체결되도록 만든 지정가 (센트 단위 정규화).
+
+    **왜 필요한가** — 예전엔 최종체결가(last)에 지정가를 그대로 걸었다. KIS 해외는
+    호가(bid/ask) 조회가 없어 스프레드를 볼 수 없는데, last에 건 지정가는
+    호가창 안쪽에 수동으로 얹히는 주문이라 **역선택**에 그대로 노출된다:
+
+      - 매수: ask가 내 가격까지 **내려와야** 체결 → 하락 중에만 체결 → 체결 직후
+        더 하락. 결과적으로 "비싸게 산" 모양이 된다.
+      - 매도: bid가 내 가격까지 **올라와야** 체결 → 상승 중에만 체결 → 체결 직후
+        더 상승. "싸게 판" 모양이 된다.
+      - 즉 **판단이 틀렸을 때만 체결되고, 맞았을 땐 미체결**로 남는 구조다.
+
+    지정가는 **내 한도가 아니라 호가창의 최우선 가격에 체결**되므로, 한도를
+    스프레드 너머로 걸어도 실제 체결가는 ask(매수)/bid(매도)다. buffer는 지불
+    가격이 아니라 **최악 체결가의 상한**이다. 유동성 좋은 ETF에서 이 비용은
+    한 틱(≈0.01~0.03%) 수준으로, 역선택 비용보다 훨씬 싸다.
+
+    Args:
+        side: "buy" / "sell"
+        last: KIS 최종체결가 (USD)
+        buffer_pct: 상한 여유. None이면 설정값 → 기본 0.15%
+    """
+    if last <= 0:
+        return 0.0
+    if buffer_pct is None:
+        buffer_pct = float(load_us_execution_config()
+                           .get("limit_buffer_pct", DEFAULT_LIMIT_BUFFER_PCT))
+    buffer_pct = max(0.0, float(buffer_pct))
+
+    if side == "buy":
+        raw = last * (1.0 + buffer_pct)
+        # 센트 올림 — 내림하면 ask에 못 닿아 다시 수동 주문이 될 수 있다
+        return math.ceil(raw * 100 - 1e-9) / 100
+    if side == "sell":
+        raw = last * (1.0 - buffer_pct)
+        return max(0.01, math.floor(raw * 100 + 1e-9) / 100)
+    raise ValueError(f"side는 'buy' 또는 'sell': {side}")
+
+
+def _held_qty(client: KISClient, symbol: str) -> tuple[int, float]:
+    """브로커 잔고 기준 (보유수량, 평단). 조회 실패 시 (-1, 0.0)."""
+    try:
+        info = (get_us_holdings(client) or {}).get(symbol)
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_holdings_lookup_failed", symbol=symbol, error=str(e))
+        return -1, 0.0
+    if not info:
+        return 0, 0.0
+    try:
+        return int(float(info.get("qty", 0) or 0)), float(info.get("avg_price", 0) or 0)
+    except (TypeError, ValueError):
+        return 0, 0.0
+
+
+def confirm_us_fill(client: KISClient, symbol: str, side: str, qty_before: int,
+                    expected_qty: int) -> tuple[int, float]:
+    """주문 후 브로커 잔고를 폴링해 **실제 체결 수량·평단**을 확인.
+
+    `rt_cd == "0"`은 "주문 접수"일 뿐 체결이 아니다. 예전엔 접수만 보고 요청가로
+    포지션·거래기록을 남겨서 (a) 미체결인데 보유로 잡히는 유령 포지션, (b) 실제
+    체결가와 다른 손절 기준, (c) 저널 손익 왜곡이 생겼다.
+
+    Returns:
+        (체결수량, 평단USD). 확인 실패 시 (-1, 0.0) — 호출부가 요청값으로 폴백.
+    """
+    cfg = load_us_execution_config()
+    wait_total = float(cfg.get("fill_wait_sec", DEFAULT_FILL_WAIT_SEC))
+    poll = float(cfg.get("fill_poll_sec", DEFAULT_FILL_POLL_SEC))
+
+    deadline = time_mod.monotonic() + max(0.0, wait_total)
+    last_qty, last_avg = -1, 0.0
+    while True:
+        cur_qty, avg = _held_qty(client, symbol)
+        if cur_qty >= 0:
+            last_qty, last_avg = cur_qty, avg
+            filled = (cur_qty - qty_before) if side == "buy" else (qty_before - cur_qty)
+            if filled >= expected_qty:          # 전량 체결
+                return filled, avg
+            if time_mod.monotonic() >= deadline:
+                return max(0, filled), avg      # 부분/미체결
+        if time_mod.monotonic() >= deadline:
+            break
+        time_mod.sleep(min(poll, max(0.1, deadline - time_mod.monotonic())))
+
+    if last_qty < 0:
+        return -1, 0.0
+    filled = (last_qty - qty_before) if side == "buy" else (qty_before - last_qty)
+    return max(0, filled), last_avg
+
+
+DEFAULT_EOD_LIMIT_BUFFER_PCT = 0.004   # 0.4% — 마감청산 미체결 = 오버나이트 캐리라 더 공격적
+
+
+def _eod_buffer_pct() -> float:
+    return float(load_us_execution_config()
+                 .get("eod_limit_buffer_pct", DEFAULT_EOD_LIMIT_BUFFER_PCT))
+
+
+def _sell_and_record(client: KISClient, symbol: str, exchange: str, qty: int,
+                     ref_price: float, limit_px: float, reason: str,
+                     eod: bool = False) -> bool:
+    """US 매도 주문 → 실체결 확인 → 기록. 전량 체결 시에만 포지션을 제거한다.
+
+    예전엔 rt_cd=0(접수)만 보고 곧바로 remove_us_position()을 호출했다. 미체결이면
+    실제로는 계속 보유 중인데 봇의 장부에서 사라져 **손절·마감청산 관리 대상에서
+    빠지는 유령 포지션**이 됐다.
+    """
+    qty_before, _ = _held_qty(client, symbol)
+    resp = client.order_overseas(symbol, qty, price=limit_px,
+                                 side="sell", exchange=exchange, order_type="00")
+    rt = resp.get("rt_cd")
+    print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
+    if rt != "0":
+        log.warning("us_sell_rejected", symbol=symbol, qty=qty,
+                    msg=resp.get("msg1", ""), eod=eod)
+        return False
+
+    filled, _ = confirm_us_fill(client, symbol, "sell", max(0, qty_before), qty)
+    if filled < 0:                      # 확인 실패 → 기존 동작(접수=성공)으로 폴백
+        log.warning("us_sell_fill_check_failed", symbol=symbol, qty=qty)
+        filled = qty
+    if filled <= 0:
+        print(f"      ⚠️ 미체결 — 포지션 유지(다음 주기 재시도)")
+        log.warning("us_sell_unfilled", symbol=symbol, qty=qty,
+                    limit=limit_px, eod=eod)
+        return False
+
+    px = limit_px if ref_price <= 0 else ref_price
+    log_trade(symbol, f"US_{symbol}", "sell", filled, int(px * 100),
+              market="US", reason=reason)
+    if filled < qty:
+        # 부분체결 — 남은 수량은 계속 관리해야 한다
+        positions = load_us_positions()
+        if symbol in positions:
+            positions[symbol]["qty"] = max(0, qty - filled)
+            save_us_positions(positions)
+        print(f"      부분체결 {filled}/{qty}주 — 잔여 {qty - filled}주 계속 관리")
+        return False
+    remove_us_position(symbol)
+    return True
 
 
 def get_us_price(client: KISClient, symbol: str, exchange: str = "NASD") -> float:
@@ -818,8 +976,12 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             except Exception:
                 pass
 
+            # 마켓터블 지정가 — 스프레드를 건너 즉시 체결. 사이징도 이 가격 기준으로
+            # 해야 한도 상향분만큼 예수금이 모자라 거부되는 일이 없다.
+            buy_px = marketable_limit_price("buy", cur_price)
+
             # 매수 수량 계산
-            qty = int(budget // cur_price)
+            qty = int(budget // buy_px)
             if qty <= 0:
                 continue
 
@@ -827,31 +989,52 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             _min_usd = float(strat_cfg.get("min_position_usd", 0) or 0)
             if _min_usd > 0:
                 _avail_usd = get_us_available_cash(client)
-                _q2 = apply_min_position(qty, cur_price, _avail_usd, _min_usd)
+                _q2 = apply_min_position(qty, buy_px, _avail_usd, _min_usd)
                 if _q2 > qty:
                     print(f"    [최소포지션] {qty}주→{_q2}주 (≥${_min_usd:.0f}, 단타 수수료 대비 이득)")
                     qty = _q2
 
-            total_usd = qty * cur_price
-            print(f"    [US BUY] {name} {qty}주 @ ${cur_price:.2f} = ${total_usd:.2f} "
-                  f"(TA={ta.total:+.0f})")
+            total_usd = qty * buy_px
+            print(f"    [US BUY] {name} {qty}주 @ 한도 ${buy_px:.2f} "
+                  f"(현재가 ${cur_price:.2f}) ≤ ${total_usd:.2f} (TA={ta.total:+.0f})")
 
             if not dry_run:
+                qty_before, _ = _held_qty(client, symbol)
                 resp = client.order_overseas(
-                    symbol, qty, price=cur_price,
+                    symbol, qty, price=buy_px,
                     side="buy", exchange=exchange, order_type="00",
                 )
                 rt = resp.get("rt_cd")
                 print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, name, "buy", qty, int(cur_price * 100),  # cents로 기록
+                    # rt_cd=0은 '접수'일 뿐 체결이 아니다. 실제 체결수량·평단을
+                    # 확인해 그 값으로 기록해야 손절 기준·저널 손익이 맞는다.
+                    filled, avg_px = confirm_us_fill(client, symbol, "buy",
+                                                     max(0, qty_before), qty)
+                    if filled == 0:
+                        print(f"      ⚠️ 미체결 — 포지션 기록 안 함 (다음 주기 재시도)")
+                        log.warning("us_buy_unfilled", symbol=symbol, qty=qty,
+                                    limit=buy_px)
+                        continue
+                    if filled < 0:                    # 확인 실패 → 요청값으로 폴백
+                        filled, avg_px = qty, buy_px
+                        log.warning("us_fill_check_failed_fallback",
+                                    symbol=symbol, assumed_qty=qty, assumed_px=buy_px)
+                    elif avg_px <= 0:
+                        avg_px = buy_px
+                    if filled < qty:
+                        print(f"      부분체결 {filled}/{qty}주")
+                    print(f"      체결: {filled}주 @ ${avg_px:.2f} "
+                          f"(슬리피지 {(avg_px - cur_price) / cur_price:+.2%})")
+
+                    log_trade(symbol, name, "buy", filled, int(avg_px * 100),  # cents로 기록
                               market="US",
                               reason=f"US 매수: 변동성 돌파 + TA {ta.total:+.0f}")
-                    record_us_buy(symbol, cur_price, qty, exchange, asset_type)
+                    record_us_buy(symbol, avg_px, filled, exchange, asset_type)
                     log_decision(symbol, name, "buy",
                                  f"US 매수 (TA={ta.total:+.0f})",
-                                 cur_price, qty=qty, strategy="us_etf")
-                    return int(total_usd * 100)
+                                 avg_px, qty=filled, strategy="us_etf")
+                    return int(filled * avg_px * 100)
                 elif rt == "E":
                     log.warning("us_buy_error", symbol=symbol, msg=resp.get("msg1", ""))
             else:
@@ -885,18 +1068,12 @@ def check_us_risk(client: KISClient, dry_run: bool) -> None:
         should_sell, reason = check_us_stop_loss(symbol, cur_price, cfg)
         if should_sell:
             qty = pos.get("qty", 0)
-            print(f"  [US 리스크] {symbol} {qty}주 @ ${cur_price:.2f} — {reason}")
+            sell_px = marketable_limit_price("sell", cur_price)
+            print(f"  [US 리스크] {symbol} {qty}주 @ 한도 ${sell_px:.2f} "
+                  f"(현재가 ${cur_price:.2f}) — {reason}")
             if not dry_run:
-                resp = client.order_overseas(
-                    symbol, qty, price=cur_price,
-                    side="sell", exchange=exchange, order_type="00",
-                )
-                rt = resp.get("rt_cd")
-                print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
-                if rt == "0":
-                    log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100),
-                              market="US", reason=f"매도: {reason}")
-                    remove_us_position(symbol)
+                _sell_and_record(client, symbol, exchange, qty, cur_price, sell_px,
+                                 f"매도: {reason}")
             else:
                 print("    (dry-run)")
                 remove_us_position(symbol)
@@ -925,18 +1102,13 @@ def close_us_positions(client: KISClient, dry_run: bool) -> None:
             print(f"  [US 마감보유] {symbol} {qty}주 @ ${cur_price:.2f} — {why}")
             continue
 
-        print(f"  [US 마감청산] {symbol} {qty}주 @ ${cur_price:.2f} — {why}")
+        # 마감청산은 미체결이 곧 의도치 않은 오버나이트 캐리다 → 더 공격적인 한도.
+        sell_px = marketable_limit_price("sell", cur_price, _eod_buffer_pct())
+        print(f"  [US 마감청산] {symbol} {qty}주 @ 한도 ${sell_px:.2f} "
+              f"(현재가 ${cur_price:.2f}) — {why}")
         if not dry_run:
-            resp = client.order_overseas(
-                symbol, qty, price=cur_price,
-                side="sell", exchange=exchange, order_type="00",
-            )
-            rt = resp.get("rt_cd")
-            print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
-            if rt == "0":
-                log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100),
-                          market="US", reason="매도: 미국장 마감 청산")
-                remove_us_position(symbol)
+            _sell_and_record(client, symbol, exchange, qty, cur_price, sell_px,
+                             "매도: 미국장 마감 청산", eod=True)
         else:
             print("      (dry-run)")
             remove_us_position(symbol)
@@ -1132,19 +1304,17 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
         qty = int(pos["qty"])
         print(f"  [US-MOM] {sym} 청산: {why}")
         if not dry_run:
-            resp = client.order_overseas(sym, qty, price=cur, side="sell",
-                                         exchange=exch, order_type="00")
-            if resp.get("rt_cd") == "0":
-                log_trade(sym, sym, "sell", qty, int(cur * 100), market="US",
-                          reason=f"US모멘텀 청산: {why}")
-                remove_us_position(sym)
+            # 세션말 강제청산은 미체결이 곧 오버나이트 캐리 → 더 공격적인 한도
+            _buf = _eod_buffer_pct() if force_eod else None
+            _px = marketable_limit_price("sell", cur, _buf)
+            if _sell_and_record(client, sym, exch, qty, cur, _px,
+                                f"US모멘텀 청산: {why}", eod=force_eod):
                 del state[sym]
                 meta["cycles"] = int(meta.get("cycles", 0)) + 1
                 meta["last_exit_hhmm"] = now_hhmm
                 acted = True
             else:
-                print(f"      매도 실패 rt_cd={resp.get('rt_cd')} {resp.get('msg1', '')}")
-                state[sym] = pos
+                state[sym] = pos      # 미체결/거부 → 계속 관리
         else:
             print("      (dry-run 매도)")
             del state[sym]
@@ -1182,26 +1352,44 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
                 if tprice > 0:
                     avail = get_us_available_cash(client)
                     pos_usd = min(float(cfg.get("position_usd", 300)), avail)
-                    qty = int(pos_usd // tprice)
-                    if qty < 1 and avail >= tprice:
+                    tbuy_px = marketable_limit_price("buy", tprice)
+                    qty = int(pos_usd // tbuy_px)
+                    if qty < 1 and avail >= tbuy_px:
                         qty = 1  # 최소 1주 (가용이 1주는 감당할 때)
                     if qty >= 1:
-                        cost = qty * tprice
-                        print(f"    [US-MOM BUY] {tsym} {qty}주 @ ${tprice:.2f} "
-                              f"= ${cost:.2f} ({tdir})")
+                        cost = qty * tbuy_px
+                        print(f"    [US-MOM BUY] {tsym} {qty}주 @ 한도 ${tbuy_px:.2f} "
+                              f"(현재가 ${tprice:.2f}) ≤ ${cost:.2f} ({tdir})")
                         if not dry_run:
-                            resp = client.order_overseas(tsym, qty, price=tprice,
+                            _qb, _ = _held_qty(client, tsym)
+                            resp = client.order_overseas(tsym, qty, price=tbuy_px,
                                                          side="buy", exchange=texch,
                                                          order_type="00")
                             if resp.get("rt_cd") == "0":
-                                log_trade(tsym, tsym, "buy", qty, int(tprice * 100),
-                                          market="US",
-                                          reason=f"US모멘텀 {tdir}: {sig.reason}")
-                                record_us_buy(tsym, tprice, qty, texch, atype)
-                                state[tsym] = {"entry": tprice, "qty": qty,
-                                               "peak": tprice, "direction": tdir,
-                                               "exchange": texch}
-                                acted = True
+                                # 접수 != 체결. 실체결 수량·평단으로 기록해야
+                                # 트레일/본전 기준과 저널 손익이 맞는다.
+                                _f, _avg = confirm_us_fill(client, tsym, "buy",
+                                                           max(0, _qb), qty)
+                                if _f == 0:
+                                    print("      ⚠️ 미체결 — 진입 취소(다음 틱 재시도)")
+                                    log.warning("us_mom_buy_unfilled", symbol=tsym,
+                                                qty=qty, limit=tbuy_px)
+                                    _f = 0
+                                else:
+                                    if _f < 0:
+                                        _f, _avg = qty, tbuy_px
+                                    elif _avg <= 0:
+                                        _avg = tbuy_px
+                                    print(f"      체결: {_f}주 @ ${_avg:.2f} "
+                                          f"(슬리피지 {(_avg - tprice) / tprice:+.2%})")
+                                    log_trade(tsym, tsym, "buy", _f, int(_avg * 100),
+                                              market="US",
+                                              reason=f"US모멘텀 {tdir}: {sig.reason}")
+                                    record_us_buy(tsym, _avg, _f, texch, atype)
+                                    state[tsym] = {"entry": _avg, "qty": _f,
+                                                   "peak": _avg, "direction": tdir,
+                                                   "exchange": texch}
+                                    acted = True
                             else:
                                 print(f"      매수 실패 rt_cd={resp.get('rt_cd')} "
                                       f"{resp.get('msg1', '')}")

@@ -250,6 +250,17 @@ us_session:
     breakeven_buffer_pct: 0.001
     reentry_cooldown_days: 2
     inverse_requires_bearish: true
+  # 체결 품질 — 마켓터블 지정가(스프레드를 건너 즉시 체결).
+  # KIS 해외는 호가(bid/ask) 조회가 없어, 최종체결가에 지정가를 그대로 걸면
+  # 호가창 안쪽에 수동으로 얹혀 '틀렸을 때만 체결'되는 역선택이 생긴다
+  # (매수는 하락 중에만, 매도는 상승 중에만 체결 → 비싸게 사고 싸게 판 모양).
+  # 지정가는 내 한도가 아니라 호가창 최우선가에 체결되므로, buffer는 지불 가격이
+  # 아니라 '최악 체결가의 상한'이다.
+  execution:
+    limit_buffer_pct: 0.0015      # 0.15% — 유동성 좋은 ETF 스프레드의 5~10배 여유
+    eod_limit_buffer_pct: 0.004   # 0.4% — 마감청산 미체결 = 오버나이트 캐리라 더 공격적
+    fill_wait_sec: 6              # 체결 확인 폴링 최대 대기
+    fill_poll_sec: 1.5
   eod_hold_winners: true
   # 개장·폐장 시각은 src/utils/clock.py가 ET 09:30/16:00을 KST로 변환해 자동 계산한다.
   # (서머 22:30~05:00 / 동절 23:30~06:00) DST 전환일에 자동으로 따라가므로
