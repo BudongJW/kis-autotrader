@@ -128,10 +128,12 @@ def test_us_loss_limit_aggregates_whole_session_across_midnight(us_trades, monke
     ])
     monkeypatch.setattr(us, "now_kst", lambda: _kst("2026-07-28T04:50:00"))
 
+    # client=None → 미실현·자산 조회 없이 실현손익 / 당일원가 폴백
     blocked, reason = us.check_us_daily_loss_limit()
     assert blocked is True, reason
     assert "-100.00 USD" in reason
     assert "2026-07-27" in reason      # 세션 날짜로 보고
+    assert "당일원가" in reason
 
 
 def test_us_loss_limit_ignores_kr_trades(us_trades, monkeypatch):
@@ -211,3 +213,81 @@ def test_is_kr_symbol_discriminates():
     assert is_kr_symbol("QQQM") is False
     assert is_kr_symbol("SPLG") is False
     assert is_kr_symbol("") is False
+
+
+# ──────────────────────────────────────────────────────────
+# 한도 의미가 국내판과 일치하는지 (분모=평가자산, 미실현 포함)
+# ──────────────────────────────────────────────────────────
+
+class _StubClient:
+    """US 보유·현금 조회 스텁."""
+
+    def __init__(self, holdings=None, cash=0.0):
+        self._holdings = holdings or {}
+        self._cash = cash
+
+
+def _patch_us_account(monkeypatch, holdings, cash):
+    import src.bot.us_session as us
+    monkeypatch.setattr(us, "get_us_holdings", lambda _c: holdings)
+    monkeypatch.setattr(us, "get_us_available_cash", lambda _c: cash)
+
+
+def test_us_loss_limit_uses_equity_denominator(us_trades, monkeypatch):
+    """분모가 평가자산이어야 국내판의 daily_loss_limit_pct와 같은 뜻이 된다.
+
+    당일원가($500) 대비로는 20% 손실이지만, 평가자산($10,000) 대비로는 1%라
+    5% 한도에 걸리면 안 된다.
+    """
+    import src.bot.us_session as us
+
+    us_trades([
+        _row("2026-07-27T22:40:00", "QQQM", "buy", 10, 5000),    # 원가 $500
+        _row("2026-07-28T04:40:00", "QQQM", "sell", 10, 4000),   # 실현 -$100
+    ])
+    monkeypatch.setattr(us, "now_kst", lambda: _kst("2026-07-28T04:50:00"))
+    _patch_us_account(monkeypatch, holdings={}, cash=10_000.0)
+
+    blocked, reason = us.check_us_daily_loss_limit(_StubClient())
+    assert blocked is False, reason
+    assert "평가자산" in reason
+    assert "1.0%" in reason
+
+
+def test_us_loss_limit_includes_unrealized(us_trades, monkeypatch):
+    """미실현 손실도 반영해야 국내판과 동일한 기준이 된다."""
+    import src.bot.us_session as us
+
+    us_trades([])   # 실현 거래 없음
+    monkeypatch.setattr(us, "now_kst", lambda: _kst("2026-07-28T02:00:00"))
+    # 평가액 $900, 평단 $100 × 10주 → 미실현 -$100. 자산 = 900 + 0 = $900 → 11%
+    _patch_us_account(
+        monkeypatch,
+        holdings={"QQQM": {"qty": 10, "avg_price": 100.0, "current_price": 90.0}},
+        cash=0.0,
+    )
+
+    blocked, reason = us.check_us_daily_loss_limit(_StubClient())
+    assert blocked is True, reason
+    assert "미실현 -100.00" in reason
+
+
+def test_us_loss_limit_falls_back_when_account_lookup_fails(us_trades, monkeypatch):
+    """자산 조회가 실패해도 죽지 않고 당일원가 기준으로 폴백한다."""
+    import src.bot.us_session as us
+
+    us_trades([
+        _row("2026-07-27T22:40:00", "QQQM", "buy", 10, 5000),
+        _row("2026-07-28T04:40:00", "QQQM", "sell", 10, 4000),
+    ])
+    monkeypatch.setattr(us, "now_kst", lambda: _kst("2026-07-28T04:50:00"))
+
+    def _boom(_c):
+        raise RuntimeError("KIS 조회 실패")
+
+    monkeypatch.setattr(us, "get_us_holdings", _boom)
+    monkeypatch.setattr(us, "get_us_available_cash", _boom)
+
+    blocked, reason = us.check_us_daily_loss_limit(_StubClient())
+    assert blocked is True          # 원가 대비 20% → 차단
+    assert "당일원가" in reason

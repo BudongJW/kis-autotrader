@@ -517,16 +517,22 @@ def eod_us_hold_decision(buy_price: float, cur_price: float,
 # 미국장 전략 실행
 # ──────────────────────────────────────────────────────────
 
-def check_us_daily_loss_limit() -> tuple[bool, str]:
-    """US 세션 당일 실현손실이 한도를 넘었는지. True면 신규 매수 차단.
+def check_us_daily_loss_limit(client: KISClient | None = None) -> tuple[bool, str]:
+    """US 세션 당일 손실이 한도를 넘었는지. True면 신규 매수 차단.
 
     한국장에는 check_daily_loss_limit이 있었지만 US 세션에는 아무 한도가 없었다.
     원인은 시간대다 — 기존 함수는 KST 날짜로 trades.csv를 필터링하는데, US 세션은
     KST 자정을 가로지르므로 **세션 도중 00:00에 당일 손익이 리셋**된다.
     여기서는 US 거래일(ET)로 키잉해 세션 전체를 하나로 집계한다.
 
-    금액은 trades.csv에 센트로 기록돼 있고(=int(price*100)), 비율만 쓰므로
-    통화 환산은 필요 없다. 한도는 risk.daily_loss_limit_pct를 공유한다.
+    한도 의미는 국내판과 동일하게 맞춘다 — 같은 risk.daily_loss_limit_pct를
+    공유하는데 분모가 다르면 "5%"가 시장마다 다른 뜻이 되기 때문이다:
+      - 실현 + 미실현 손익 합계를
+      - **US 평가자산(보유 평가액 + 가용 현금)** 으로 나눈다.
+    client가 없으면 미실현·자산 조회를 건너뛰고 실현손익만 원가 대비로 본다
+    (보수적 폴백).
+
+    trades.csv의 US 금액은 센트(=int(price*100)) 단위다.
     """
     import csv
     from src.tracker import TRADE_LOG_PATH, is_kr_symbol
@@ -542,8 +548,8 @@ def check_us_daily_loss_limit() -> tuple[bool, str]:
 
     session = us_session_date_et(now_kst()).isoformat()
     buys: dict[str, list[int]] = {}
-    realized = 0      # 센트
-    cost = 0          # 센트 (매수 원가 합 — 손실률 분모)
+    realized_cents = 0
+    cost_cents = 0
 
     try:
         with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
@@ -561,21 +567,50 @@ def check_us_daily_loss_limit() -> tuple[bool, str]:
                     continue
                 if row.get("side") == "buy":
                     buys.setdefault(sym, []).append(price * qty)
-                    cost += price * qty
+                    cost_cents += price * qty
                 elif row.get("side") == "sell" and buys.get(sym):
-                    realized += price * qty - buys[sym].pop(0)
+                    realized_cents += price * qty - buys[sym].pop(0)
     except Exception as e:  # noqa: BLE001
         log.warning("us_daily_loss_check_failed", error=str(e))
         return False, "집계 실패"
 
-    if realized >= 0 or cost <= 0:
-        return False, f"당일 실현손익 {realized / 100:+.2f} USD"
+    realized = realized_cents / 100.0        # USD
 
-    loss_pct = abs(realized) / cost
+    # 미실현 + 평가자산 (국내판과 동일하게 미실현 손실도 반영)
+    unrealized = 0.0
+    equity = 0.0
+    if client is not None:
+        try:
+            for info in (get_us_holdings(client) or {}).values():
+                qty = float(info.get("qty", 0) or 0)
+                avg = float(info.get("avg_price", 0) or 0)
+                cur = float(info.get("current_price", 0) or 0)
+                if qty > 0 and cur > 0:
+                    equity += qty * cur
+                    if avg > 0:
+                        unrealized += (cur - avg) * qty
+            equity += get_us_available_cash(client)
+        except Exception as e:  # noqa: BLE001
+            log.warning("us_equity_lookup_failed", error=str(e))
+            equity = 0.0
+
+    total_loss = realized + min(0.0, unrealized)
+    if total_loss >= 0:
+        return False, f"당일 손익 {total_loss:+.2f} USD (이익 중)"
+
+    # 분모: 평가자산 우선, 조회 실패 시 당일 투입원가로 폴백
+    denom = equity if equity > 0 else cost_cents / 100.0
+    if denom <= 0:
+        return False, f"당일 손익 {total_loss:+.2f} USD (기준자산 미상)"
+
+    loss_pct = abs(total_loss) / denom
+    basis = "평가자산" if equity > 0 else "당일원가"
     if loss_pct >= limit_pct:
-        return True, (f"US 일일 손실 한도 초과: {realized / 100:+.2f} USD "
-                      f"({loss_pct:.1%} ≥ {limit_pct:.1%}, 세션 {session})")
-    return False, f"당일 실현손익 {realized / 100:+.2f} USD ({loss_pct:.1%})"
+        return True, (f"US 일일 손실 한도 초과: {total_loss:+.2f} USD "
+                      f"(실현 {realized:+.2f} / 미실현 {unrealized:+.2f}, "
+                      f"{loss_pct:.1%} ≥ {limit_pct:.1%} of {basis}, 세션 {session})")
+    return False, (f"당일 손익 {total_loss:+.2f} USD "
+                   f"({loss_pct:.1%} / 한도 {limit_pct:.1%}, {basis})")
 
 
 def run_us_strategy(client: KISClient, dry_run: bool) -> int:
@@ -598,7 +633,7 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
     strategy = VolatilityBreakoutStrategy(k=k, trend_ma=ma)
 
     # 일일 손실 한도 — 초과 시 신규 매수만 차단(청산·손절은 계속)
-    loss_exceeded, loss_reason = check_us_daily_loss_limit()
+    loss_exceeded, loss_reason = check_us_daily_loss_limit(client)
     if loss_exceeded:
         print(f"  [US] ⚠️  {loss_reason} → 신규 매수 차단")
         log.warning("us_daily_loss_limit_hit", reason=loss_reason)

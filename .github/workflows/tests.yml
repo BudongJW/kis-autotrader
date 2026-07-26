@@ -45,15 +45,11 @@ jobs:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
         run: |
-          pytest tests/ -v --tb=short \
-            --ignore=tests/test_golden_cross.py \
-            --ignore=tests/test_rate_limit.py
+          pytest tests/ -v --tb=short
 
       - name: Coverage report
         env:
           PYTHONPATH: '.'
         run: |
           pytest tests/ --cov=src --cov-report=term-missing \
-            --ignore=tests/test_golden_cross.py \
-            --ignore=tests/test_rate_limit.py \
           || true  # coverage 실패는 무시 (테스트 통과가 중요)
