@@ -181,7 +181,11 @@ def run_loop(dry_run: bool) -> None:
             return
 
     wait_start = time_mod.time()
-    loop_start_epoch = wait_start  # 하드 타임아웃 전 자체 종료 기준
+    # 하드 타임아웃 전 자체 종료 기준. **개장 시점에 리셋**한다 —
+    # pre-open cron은 동절기에 개장(23:30 KST)까지 최대 2시간을 대기하는데,
+    # 그 대기가 예산을 먹으면 세션 한복판에서 불필요하게 핸드오프가 일어난다.
+    loop_start_epoch = wait_start
+    session_started = False
     MAX_WAIT_SECONDS = 7200  # 개장 대기 최대 2시간
 
     while True:
@@ -230,6 +234,15 @@ def run_loop(dry_run: bool) -> None:
             print(f"[{now:%H:%M:%S}] 미국장 개장 대기 ({open_t.strftime('%H:%M')} KST)")
             time_mod.sleep(60)
             continue
+
+        # ── 개장 확인 → 실행시간 예산 시작 ──
+        if not session_started:
+            session_started = True
+            loop_start_epoch = epoch_now
+            waited_min = (epoch_now - wait_start) / 60
+            if waited_min >= 1:
+                print(f"[{now:%H:%M:%S}] 개장 — 대기 {waited_min:.0f}분 종료. "
+                      f"실행시간 예산({MAX_LOOP_RUNTIME_SEC // 60}분) 시작.")
 
         # ── 폐장 직전 청산 ──
         close_dt = _get_close_datetime(now, close_t)

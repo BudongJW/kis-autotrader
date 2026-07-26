@@ -1984,7 +1984,12 @@ def run_loop(dry_run: bool) -> None:
     universe_syms = {s["symbol"] for s in universe}
     twap = TWAPEngine()
 
-    loop_start_epoch = time_mod.time()  # 하드 타임아웃 전 자체 종료 기준
+    # 하드 타임아웃 전 자체 종료 기준. **개장(09:00) 시점에 리셋**한다 —
+    # pre-market cron은 08:00부터 뜨는데, 그 1시간 대기가 예산을 먹으면
+    # 세션 한복판에서 불필요하게 핸드오프가 일어난다.
+    loop_start_epoch = time_mod.time()
+    wait_start_epoch = loop_start_epoch
+    session_started = False
     last_strategy_check = 0.0     # epoch. 전략 체크 마지막 시각
     last_turbulence_check = 0.0   # epoch. 터뷸런스 체크 마지막 시각
     last_adopt_check = 0.0        # epoch. 보유분 흡수 재동기화 마지막 시각
@@ -2054,6 +2059,15 @@ def run_loop(dry_run: bool) -> None:
                 print(f"[{now:%H:%M:%S}] 장 시작 대기 ({wait:.0f}초)")
             time_mod.sleep(max(1, wait))
             continue
+
+        # ── 개장 확인 → 실행시간 예산 시작 ──
+        if not session_started:
+            session_started = True
+            loop_start_epoch = epoch_now
+            waited_min = (epoch_now - wait_start_epoch) / 60
+            if waited_min >= 1:
+                print(f"[{now:%H:%M:%S}] 개장 — 대기 {waited_min:.0f}분 종료. "
+                      f"실행시간 예산({MAX_LOOP_RUNTIME_SEC // 60}분) 시작.")
 
         # ── 보유 현황 조회 ──
         holdings = get_all_holdings(client)
