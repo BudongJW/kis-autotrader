@@ -42,6 +42,29 @@ def today_kst() -> date:
     return now_kst().date()
 
 
+def kst_stamp(now: datetime | None = None) -> str:
+    """상태 파일·CSV에 기록할 KST 타임스탬프 문자열.
+
+    **naive 표기**를 유지하는 게 의도적이다: trades.csv·positions.json 등 기존
+    기록이 전부 offset 없는 "YYYY-MM-DDTHH:MM:SS"라, 여기서 "+09:00"을 붙이기
+    시작하면 날짜 prefix 매칭·외부 저널 소비자와의 호환이 깨진다.
+    값은 항상 KST로 정확하고, 읽을 땐 parse_kst()가 tz를 붙여준다.
+    """
+    return (now or now_kst()).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def parse_kst(value: str | datetime) -> datetime:
+    """저장된 타임스탬프를 **aware KST datetime**으로 정규화.
+
+    기록 시점에 따라 naive("...T09:00:00")와 aware("...T09:00:00+09:00")가
+    섞여 있다. 정규화 없이 now_kst()와 빼면
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`가 난다.
+    (tests/test_regression_bugs.py가 이미 한 번 잡은 버그 클래스)
+    """
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    return dt.replace(tzinfo=KST) if dt.tzinfo is None else dt.astimezone(KST)
+
+
 def now_et() -> datetime:
     """미국 동부 기준 현재 시각 (tz-aware). DST 자동 반영."""
     return datetime.now(ET)

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 from src.utils.logger import log
+from src.utils.clock import kst_stamp
 
 KILLSWITCH_PATH = Path("logs/killswitch.json")
 
@@ -75,7 +76,7 @@ def set_active(mode: Mode = "full_stop", reason: str = "manual", set_by: str = "
         "active": True,
         "mode": mode,
         "reason": reason,
-        "set_at": datetime.now().isoformat(timespec="seconds"),
+        "set_at": kst_stamp(),
         "set_by": set_by,
     }
     with KILLSWITCH_PATH.open("w", encoding="utf-8") as f:

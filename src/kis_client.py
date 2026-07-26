@@ -13,6 +13,7 @@ import requests
 from src.config import settings
 from src.kis_auth import auth_headers
 from src.utils.rate_limit import rate_limiter
+from src.utils.clock import now_kst, today_kst
 
 # 일시적 네트워크 장애(타임아웃·연결오류·5xx) 재시도 정책.
 # 검은 월요일처럼 KIS 서버가 과부하로 타임아웃될 때, 한 번 실패로 봇이
@@ -255,7 +256,7 @@ class KISClient:
             raise ValueError(f"side는 'buy' 또는 'sell'이어야 함: {side}")
 
         # 15:20 이후 시장가 → 지정가 자동 전환
-        now_time = datetime.now().time()
+        now_time = now_kst().time()
         if order_type == "01" and now_time >= dtime(15, 20):
             if price <= 0:
                 # 현재가 조회해서 지정가로 전환
@@ -326,7 +327,7 @@ class KISClient:
         # 시세 endpoint는 3글자 코드 요구. 4글자(NASD)는 rt_cd=0이지만 빈 데이터.
         excd = _to_quote_excd(exchange)
         # BYMD(조회 기준일)는 미국 동부 기준 오늘로 설정.
-        # KST date.today()는 한국 야간 세션 동안 미국보다 하루 앞서가서
+        # KST 기준 오늘 날짜는 한국 야간 세션 동안 미국보다 하루 앞서가서
         # KIS가 "미래 일자"로 인식 → rt_cd=0인데 output2 빈 데이터(nrec=0) 반환.
         bymd = _dt.now(_ZI("America/New_York")).strftime("%Y%m%d")
         return self._get(

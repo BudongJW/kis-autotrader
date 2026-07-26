@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.utils.logger import log
+from src.utils.clock import now_kst, today_kst
 
 FLOW_CACHE_PATH = Path("logs/flow_cache.json")
 
@@ -39,7 +40,7 @@ def fetch_flow_data(symbol: str, days: int = 5) -> list[dict] | None:
         log.warning("pykrx_not_installed")
         return None
 
-    end = datetime.now()
+    end = now_kst()
     start = end - timedelta(days=days * 2)
 
     try:
@@ -137,7 +138,7 @@ def save_flow_cache(flows: dict[str, FlowSignal]) -> None:
     """수급 데이터 캐시 저장 (일 1회)."""
     FLOW_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     cache = {
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "data": {
             sym: {
                 "inst_net": f.inst_net,
@@ -159,7 +160,7 @@ def load_flow_cache() -> dict:
         return {}
     try:
         cache = json.loads(FLOW_CACHE_PATH.read_text(encoding="utf-8"))
-        if cache.get("date") == datetime.now().strftime("%Y-%m-%d"):
+        if cache.get("date") == today_kst().isoformat():
             return cache.get("data", {})
     except Exception:
         pass

@@ -27,6 +27,7 @@ from src.risk_manager import (
     compute_atr_for_position,
 )
 from src.utils.logger import log
+from src.utils.clock import kst_stamp, today_kst
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 BRIEFING_PATH = Path("logs/pre_briefing.json")
@@ -421,7 +422,7 @@ def generate_action_plan(
     top_candidates = buy_candidates[:3]
 
     return {
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "market_summary": {
             "regime": regime.get("trend", "unknown"),
             "bear_regime": bear_regime,
@@ -534,7 +535,7 @@ def run_pre_briefing(client: KISClient) -> dict:
 
     # 결과 저장
     briefing = {
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": kst_stamp(),
         "targets": targets,
         "multi_timeframe": mtf,
         "risk_snapshot": risk,
@@ -558,7 +559,7 @@ def load_briefing() -> dict | None:
             data = json.load(f)
         # 오늘 생성된 브리핑만 유효
         gen_date = data.get("generated_at", "")[:10]
-        if gen_date != datetime.now().strftime("%Y-%m-%d"):
+        if gen_date != today_kst().isoformat():
             return None
         return data
     except Exception:

@@ -27,6 +27,7 @@ import yaml
 
 from src.safety import killswitch
 from src.utils.logger import log
+from src.utils.clock import today_kst
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 TRADE_LOG_PATH = Path("logs/trades.csv")
@@ -50,7 +51,7 @@ def _today_trade_count() -> int:
     if not TRADE_LOG_PATH.exists():
         return 0
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = today_kst().isoformat()
         count = 0
         with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
             next(f, None)  # header skip

@@ -29,6 +29,7 @@ from src.bot.runner import fetch_recent_history
 from src.bot.single_run import load_universe, get_all_holdings, get_available_cash
 from src.tracker import get_summary
 from src.risk_manager import get_kelly_position_size, get_strategy_expectancy
+from src.utils.clock import now_kst
 
 DAILY_LOG_PATH = Path("logs/daily_report.csv")
 CONFIG_PATH = Path("configs/strategy.yaml")
@@ -42,7 +43,7 @@ DAILY_FIELDS = [
 
 
 def main() -> None:
-    now = datetime.now()
+    now = now_kst()
     print(f"[{now:%Y-%m-%d %H:%M}] 일일 실적 기록")
 
     client = KISClient()

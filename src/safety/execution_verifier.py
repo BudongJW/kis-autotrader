@@ -22,11 +22,12 @@ from typing import Optional
 
 from src.tracker import TRADE_LOG_PATH
 from src.utils.logger import log
+from src.utils.clock import now_kst, today_kst
 
 
 def fetch_today_ccld(client) -> dict:
     """오늘자 KIS 체결·미체결 조회 → {(symbol, ord_time): {qty, ccld_qty, status}}."""
-    today = datetime.now().strftime("%Y%m%d")
+    today = now_kst().strftime("%Y%m%d")
     try:
         resp = client.inquire_daily_ccld(today, today, ccld_type="00")
         if resp.get("rt_cd") != "0":
@@ -82,7 +83,7 @@ def reconcile_trades(client) -> dict:
     if not TRADE_LOG_PATH.exists():
         return result
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = today_kst().isoformat()
     ccld = fetch_today_ccld(client)
     if not ccld:
         return result
@@ -172,7 +173,7 @@ def _mark_order_rejected(symbol: str, side: str, qty: int, price: int,
         import sqlite3
         if not LEDGER_PATH.exists():
             return
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = today_kst().isoformat()
         with sqlite3.connect(LEDGER_PATH) as conn:
             # 오늘자 같은 종목·사이드의 'executed' 상태를 'rejected'로 정정
             conn.execute(

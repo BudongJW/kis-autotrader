@@ -36,6 +36,7 @@ from src.market_learner import (
 )
 from src.strategies.ta_composite import compute_ta_score, DEFAULT_WEIGHTS
 from src.utils.logger import log
+from src.utils.clock import kst_stamp, now_kst, today_kst
 
 
 JOURNAL_DIR = Path("journal")
@@ -47,7 +48,7 @@ LGBM_FEATURES_PATH = Path("logs/lgbm_features.json")
 
 def get_todays_trades() -> list[dict]:
     """오늘 날짜의 거래 내역을 반환."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = today_kst().isoformat()
     trades = []
     if not TRADE_LOG_PATH.exists():
         return trades
@@ -61,7 +62,7 @@ def get_todays_trades() -> list[dict]:
 
 def get_todays_slippage() -> list[dict]:
     """오늘의 TWAP 슬리피지 데이터."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = today_kst().isoformat()
     if not SLIPPAGE_PATH.exists():
         return []
     try:
@@ -222,7 +223,7 @@ def build_portfolio_json(client: KISClient) -> dict:
             existing = {}
 
     daily_history = existing.get("daily_history", [])
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
     prev_value = daily_history[-1]["total_value"] if daily_history else 500000
     day_pnl = total_value - prev_value
     cumul_pnl = total_value - 500000
@@ -249,7 +250,7 @@ def build_portfolio_json(client: KISClient) -> dict:
         daily_history[-1] = today_entry
 
     return {
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": kst_stamp(),
         "initial_capital": 500000,
         "cash": cash,
         "holdings": holdings,
@@ -277,7 +278,7 @@ def build_portfolio_json(client: KISClient) -> dict:
 
 def generate_daily_note(portfolio: dict) -> str:
     """시장 대응 학습용 상세 일일 투자 노트 생성."""
-    now = datetime.now()
+    now = now_kst()
     today = now.strftime("%Y-%m-%d")
     trades = get_todays_trades()
     slippage = get_todays_slippage()
@@ -664,7 +665,7 @@ def generate_daily_note(portfolio: dict) -> str:
 
 
 def main() -> None:
-    now = datetime.now()
+    now = now_kst()
     today = now.strftime("%Y-%m-%d")
     print(f"[{now:%Y-%m-%d %H:%M}] 투자 일지 생성 (상세 버전)")
 

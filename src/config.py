@@ -2,15 +2,39 @@
 
 .env 파일을 읽어 타입 검증된 Settings 객체로 노출한다.
 실전·모의투자 분기는 MODE 환경변수로 결정.
+
+이 모듈은 사실상 모든 코드가 import하므로, 프로세스 타임존을 KST로 고정하는
+안전장치도 여기에 둔다 (아래 _ensure_kst_timezone 참고).
 """
 
 from __future__ import annotations
 
+import os
+import time as _time
 from enum import Enum
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _ensure_kst_timezone() -> None:
+    """프로세스 타임존을 Asia/Seoul로 고정 (이미 지정돼 있으면 존중).
+
+    코드 곳곳에 timezone-naive `datetime.now()`가 남아 있고, 이들이 KST를
+    반환하는 유일한 근거는 워크플로의 `env: TZ=Asia/Seoul` 한 줄이었다.
+    새 워크플로에서 그 줄을 빠뜨리면 예외 하나 없이 전 시스템이 9시간 밀린다
+    (일일 손실 한도·쿨다운·리포트 날짜가 전부 어긋남).
+
+    신규 코드는 `src.utils.clock`의 now_kst()/today_kst()를 쓰는 게 원칙이고,
+    이건 남아 있는 naive 호출부에 대한 2차 방어선이다.
+    """
+    os.environ.setdefault("TZ", "Asia/Seoul")
+    if hasattr(_time, "tzset"):      # POSIX 전용 (Windows에는 없음)
+        _time.tzset()
+
+
+_ensure_kst_timezone()
 
 
 class Mode(str, Enum):

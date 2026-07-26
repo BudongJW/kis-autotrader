@@ -31,6 +31,7 @@ from src.bot.us_session import (
 from src.experience import _load_experience
 from src.strategies.r_multiple import get_r_summary, R_LOG_PATH
 from src.utils.logger import log
+from src.utils.clock import now_kst, parse_kst, today_kst
 
 
 JOURNAL_DIR = Path("journal")
@@ -65,7 +66,7 @@ def _trade_cost(t: dict) -> int:
 
 def _compute_today_summary(trades: list[dict], realized: list[dict]) -> dict:
     """오늘 매매 요약. 일일 PnL·수수료·세금·최고/최악 거래 등."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = today_kst().isoformat()
 
     today_trades = [t for t in trades if t.get("date") == today]
     today_realized = [r for r in realized if r.get("sell_date") == today]
@@ -166,8 +167,8 @@ def _compute_realized_trades(trades: list[dict]) -> list[dict]:
                 hold_days = 0
                 try:
                     if buy["timestamp"] and t["timestamp"]:
-                        hold_days = (datetime.fromisoformat(t["timestamp"]) -
-                                     datetime.fromisoformat(buy["timestamp"])).days
+                        hold_days = (parse_kst(t["timestamp"]) -
+                                     parse_kst(buy["timestamp"])).days
                 except ValueError:
                     pass
                 realized.append({
@@ -361,7 +362,7 @@ def main() -> None:
         print("  journal/ 디렉토리 없음. 스킵.")
         return
 
-    now = datetime.now()
+    now = now_kst()
     client = KISClient()
     universe = load_universe()
     universe_syms = {s["symbol"] for s in universe}

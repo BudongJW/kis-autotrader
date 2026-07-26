@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+from src.utils.clock import now_kst, today_kst
 
 
 @dataclass
@@ -87,7 +88,7 @@ def compute_vaa_signal(
             score = 0.0
         defensive_scores[sym] = round(score, 4)
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
 
     if bad_count > 0:
         if defensive_scores:
@@ -131,7 +132,7 @@ def compute_vaa_signal(
 
 def is_rebalance_day() -> bool:
     """매월 첫 영업일인지 판단 (월초 1~5일, 평일)."""
-    now = datetime.now()
+    now = now_kst()
     if now.day > 5:
         return False
     return now.weekday() < 5  # 월~금

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from src.utils.clock import now_kst, today_kst
 
 DIARY_PATH = Path("logs/learning_diary.json")
 MAX_ENTRIES = 180  # ~60일 × 3회
@@ -37,8 +38,8 @@ class LearningDiary:
 
     def __init__(self, phase: str):
         self.phase = phase
-        self.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.date = datetime.now().strftime("%Y-%m-%d")
+        self.timestamp = now_kst().strftime("%Y-%m-%d %H:%M:%S")
+        self.date = today_kst().isoformat()
         self.changes: list[dict] = []
         self.metrics: dict = {}
         self.decisions: list[str] = []
@@ -108,7 +109,7 @@ class LearningDiary:
 
 
 def get_today_diary() -> list[dict]:
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = today_kst().isoformat()
     entries = _load_diary()
     return [e for e in entries if e.get("date") == today]
 

@@ -13,6 +13,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from src.utils.clock import now_kst, today_kst
 
 ROTATION_STATE_PATH = Path("logs/sector_rotation.json")
 
@@ -156,7 +157,7 @@ def run_sector_rotation(
     detail = f"로테이션: {top_detail}" if top_detail else "로테이션 대상 없음"
 
     signal = RotationSignal(
-        date=datetime.now().strftime("%Y-%m-%d"),
+        date=today_kst().isoformat(),
         sectors=scores,
         top_sectors=top,
         excluded_sectors=excluded,
@@ -169,7 +170,7 @@ def run_sector_rotation(
 
 def is_rotation_day() -> bool:
     """월요일인지 판단 (주 1회 로테이션)."""
-    return datetime.now().weekday() == 0
+    return now_kst().weekday() == 0
 
 
 def check_sector_concentration(

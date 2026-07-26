@@ -43,6 +43,7 @@ from src.strategies.signal_fusion import learn_fusion_weights
 from src.pre_briefing import run_pre_briefing
 from src.learning_diary import LearningDiary
 from src.utils.logger import log
+from src.utils.clock import now_kst, today_kst
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 MARKET_LOG_PATH = Path("logs/market_history.json")
@@ -331,7 +332,7 @@ def compute_market_confidence(regime, breadth: dict, sectors: dict) -> float:
 def pre_market(client: KISClient) -> None:
     """장 전 학습: 시장 분석 → 파라미터 업데이트."""
     print("=" * 60)
-    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 장 전 시장 학습 시작")
+    print(f"[{now_kst():%Y-%m-%d %H:%M}] 장 전 시장 학습 시작")
     print("=" * 60)
 
     diary = LearningDiary("pre")
@@ -470,7 +471,7 @@ def pre_market(client: KISClient) -> None:
             "volatility": regime.volatility,
             "trend_score": regime.trend_score,
             "vol_percentile": regime.vol_percentile,
-            "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "analyzed_at": now_kst().strftime("%Y-%m-%d %H:%M"),
         }
 
         if hmm_regime:
@@ -542,7 +543,7 @@ def pre_market(client: KISClient) -> None:
                                 rotation.detail)
             diary.record_decision(f"섹터 로테이션: {rotation.detail}")
         else:
-            print(f"\n  [로테이션] 월요일에만 실행 (오늘: {datetime.now().strftime('%A')})")
+            print(f"\n  [로테이션] 월요일에만 실행 (오늘: {now_kst().strftime('%A')})")
     except Exception as e:
         print(f"\n  [로테이션] 실패: {e}")
         diary.record_error(f"섹터 로테이션 실패: {e}")
@@ -600,7 +601,7 @@ def pre_market(client: KISClient) -> None:
 
     # 시장 로그 축적
     market_entry = {
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "regime_trend": regime.trend if regime else "unknown",
         "regime_volatility": regime.volatility if regime else "unknown",
         "trend_score": regime.trend_score if regime else 0,
@@ -676,7 +677,7 @@ def evaluate_ta_signals(client: KISClient) -> None:
     ta_accuracy = load_ta_accuracy()
 
     # 오늘 거래한 종목 추출
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
     traded_symbols = set()
     trade_results = {}  # symbol -> pnl_pct
 
@@ -794,7 +795,7 @@ def analyze_market_patterns(market_log: list[dict]) -> dict:
 def post_market(client: KISClient) -> None:
     """장 후 학습: 거래 결과 평가 → 모델 피드백."""
     print("=" * 60)
-    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 장 후 학습 시작")
+    print(f"[{now_kst():%Y-%m-%d %H:%M}] 장 후 학습 시작")
     print("=" * 60)
 
     diary = LearningDiary("post")
@@ -818,7 +819,7 @@ def post_market(client: KISClient) -> None:
     print("\n[3] 경험 평가...")
     try:
         # 오늘 거래 결과 수집
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = today_kst().isoformat()
         today_trades: dict[str, dict] = {}
         buys_today: dict[str, int] = {}
 
@@ -1026,7 +1027,7 @@ def post_us_market(client: KISClient) -> None:
     06:30 KST에 실행 — 미국장 폐장 직후.
     """
     print("=" * 60)
-    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 미국장 후 학습 시작")
+    print(f"[{now_kst():%Y-%m-%d %H:%M}] 미국장 후 학습 시작")
     print("=" * 60)
 
     diary = LearningDiary("post_us")

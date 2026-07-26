@@ -35,7 +35,7 @@ from src.risk_manager import (load_positions, save_positions, record_buy,
 from src.tracker import log_trade
 from src.experience import log_decision
 from src.utils.logger import log
-from src.utils.clock import KST, ET, now_kst, us_session_date_et, is_us_dst
+from src.utils.clock import KST, ET, now_kst, kst_stamp, us_session_date_et, is_us_dst
 # 캘린더 인식 버전(조기 폐장 반영) — clock.us_market_times_kst의 정규장 전용
 # 버전이 아니라 이쪽을 써야 조기 폐장일에 강제청산 타이밍이 맞는다.
 from src.utils.market_calendar import us_market_times_kst, is_us_trading_day
@@ -354,7 +354,7 @@ def record_us_buy(symbol: str, price: float, qty: int, exchange: str = "NASD",
     positions = load_us_positions()
     positions[symbol] = {
         "buy_price": price,
-        "buy_time": datetime.now(KST).isoformat(),
+        "buy_time": kst_stamp(),
         "qty": qty,
         "exchange": exchange,
         "asset_type": asset_type,
@@ -402,7 +402,7 @@ def adopt_us_carried_positions(broker_holdings: dict, universe_symbols: set,
         cur = float(info.get("current_price", buy_p) or buy_p)
         positions[sym] = {
             "buy_price": buy_p,
-            "buy_time": datetime.now(KST).isoformat(),
+            "buy_time": kst_stamp(),
             "qty": qty,
             "exchange": info.get("exchange", "NASD"),
             "asset_type": "us_long",

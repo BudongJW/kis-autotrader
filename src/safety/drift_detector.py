@@ -24,6 +24,7 @@ import numpy as np
 
 from src.safety.ledger import LEDGER_PATH
 from src.utils.logger import log
+from src.utils.clock import kst_stamp, now_kst
 
 
 WINDOW_DAYS = 14
@@ -35,7 +36,7 @@ def _fetch_actual_trades(window_days: int = WINDOW_DAYS) -> list[dict]:
     """SQLite ledger에서 최근 N일 체결 데이터."""
     if not LEDGER_PATH.exists():
         return []
-    cutoff = (datetime.now() - timedelta(days=window_days)).isoformat()
+    cutoff = (now_kst() - timedelta(days=window_days)).isoformat()
     try:
         conn = sqlite3.connect(LEDGER_PATH)
         conn.row_factory = sqlite3.Row
@@ -128,7 +129,7 @@ def _compute_backtest_metrics(window_days: int = WINDOW_DAYS) -> Optional[dict]:
         if not universe:
             return None
 
-        end = datetime.now()
+        end = now_kst()
         start = end - timedelta(days=window_days + 30)  # MA 워밍업 여유
         start_str = start.strftime("%Y-%m-%d")
         end_str = end.strftime("%Y-%m-%d")
@@ -209,7 +210,7 @@ def detect_drift(window_days: int = WINDOW_DAYS) -> dict:
         "drift_pct": round(drift_pct, 3),
         "threshold": DRIFT_THRESHOLD,
         "window_days": window_days,
-        "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+        "analyzed_at": kst_stamp(),
     }
     _log_event(result, "warning" if is_drift else "info")
     return result
@@ -225,7 +226,7 @@ def _log_event(result: dict, severity: str) -> None:
 
 def main() -> None:
     """CLI 진입점 — workflow에서 호출."""
-    print(f"[{datetime.now():%Y-%m-%d %H:%M}] Drift 감지 시작 (창 {WINDOW_DAYS}일)")
+    print(f"[{now_kst():%Y-%m-%d %H:%M}] Drift 감지 시작 (창 {WINDOW_DAYS}일)")
     result = detect_drift()
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

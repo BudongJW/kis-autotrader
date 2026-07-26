@@ -14,6 +14,7 @@ from pathlib import Path
 
 from src.risk_manager import load_positions
 from src.utils.logger import log
+from src.utils.clock import now_kst
 
 R_LOG_PATH = Path("logs/r_multiples.json")
 
@@ -42,7 +43,7 @@ def compute_r_multiple(symbol: str, sell_price: float) -> dict | None:
 
     return {
         "symbol": symbol,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "date": now_kst().strftime("%Y-%m-%d %H:%M"),
         "buy_price": buy_price,
         "sell_price": int(sell_price),
         "pnl": round(pnl, 2),
@@ -92,7 +93,7 @@ def log_r_multiple(symbol: str, sell_price: float) -> float | None:
         ) if rs else 0,
         "best_r": round(max(rs), 2) if rs else 0,
         "worst_r": round(min(rs), 2) if rs else 0,
-        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "last_updated": now_kst().strftime("%Y-%m-%d %H:%M"),
     }
 
     R_LOG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

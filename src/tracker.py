@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 from datetime import datetime
 from pathlib import Path
+from src.utils.clock import kst_stamp
 
 TRADE_LOG_PATH = Path("logs/trades.csv")
 FIELDS = ["timestamp", "symbol", "name", "side", "qty", "price", "amount",
@@ -52,7 +53,7 @@ def log_trade(
     _ensure_file()
     with TRADE_LOG_PATH.open("a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
-            datetime.now().isoformat(timespec="seconds"),
+            kst_stamp(),
             symbol, name, side, qty, int(price),
             int(qty * price), int(balance_after), reason,
         ])
