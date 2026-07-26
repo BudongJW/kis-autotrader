@@ -92,16 +92,32 @@ def get_us_market_times(now: datetime | None = None) -> tuple[dtime, dtime]:
     조기 폐장일(13:00 ET)이면 폐장이 3시간 앞당겨진다.
     """
     open_t, close_t = us_market_times_kst(now)
-
-    cfg_summer = load_us_config().get("summer_time")
-    if cfg_summer is not None and bool(cfg_summer) != is_us_dst(now):
-        log.warning("us_summer_time_flag_stale",
-                    config_value=bool(cfg_summer), computed_dst=is_us_dst(now),
-                    open_kst=open_t.strftime("%H:%M"),
-                    close_kst=close_t.strftime("%H:%M"),
-                    hint="configs/strategy.yaml us_session.summer_time은 더 이상 "
-                         "사용되지 않습니다(ET 기준 자동 계산). 제거해도 됩니다.")
+    _warn_stale_summer_flag_once(now, open_t, close_t)
     return open_t, close_t
+
+
+_summer_flag_warned = False
+
+
+def _warn_stale_summer_flag_once(now, open_t, close_t) -> None:
+    """yaml의 summer_time이 계산값과 어긋나면 경고 (프로세스당 1회).
+
+    get_us_market_times()는 루프에서 분당 여러 번 호출되므로 매번 찍으면
+    DST 전환 후 로그가 경고로 도배된다.
+    """
+    global _summer_flag_warned
+    if _summer_flag_warned:
+        return
+    cfg_summer = load_us_config().get("summer_time")
+    if cfg_summer is None or bool(cfg_summer) == is_us_dst(now):
+        return
+    _summer_flag_warned = True
+    log.warning("us_summer_time_flag_stale",
+                config_value=bool(cfg_summer), computed_dst=is_us_dst(now),
+                open_kst=open_t.strftime("%H:%M"),
+                close_kst=close_t.strftime("%H:%M"),
+                hint="configs/strategy.yaml us_session.summer_time은 더 이상 "
+                     "사용되지 않습니다(ET 기준 자동 계산). 제거해도 됩니다.")
 
 
 # ──────────────────────────────────────────────────────────
