@@ -3,6 +3,10 @@
 작성일: 2026-07-26
 대상 커밋: `claude/korea-timezone-workflow-analysis-rna1a1` 기준 main 스냅샷
 
+> **처리 현황 (2026-07-26)**: 아래 P0~P3 전 항목 수정 완료.
+> 문서 본문은 **수정 전 상태의 분석 기록**으로 그대로 둔다 (왜 이렇게 고쳤는지의
+> 근거). 각 항목에 적용된 수정은 [§4 적용된 수정](#4-적용된-수정)에 정리했다.
+
 ---
 
 ## 1. KST 24시간 작동 흐름 맵
@@ -207,3 +211,54 @@ _today = _dt.now().strftime("%Y-%m-%d")
 
 1번과 2번은 같은 실패 모드(폐장 시각 오인 → 강제 청산 실패 → 오버나이트 캐리)를
 공유하므로 함께 처리하는 것이 효율적이다.
+
+---
+
+## 4. 적용된 수정
+
+전 항목 수정 완료. 전체 테스트 **363 passed, 4 skipped**
+(`test_rate_limit.py`는 실시간 sleep이 있어 별도 실행 — 통과 확인).
+
+| # | 항목 | 커밋 | 핵심 변경 |
+|---|---|---|---|
+| P0 | US 서머타임 수동 플래그 | `fix(us): ... ET 기준 자동 계산` | `src/utils/clock.py` 신설. ET 09:30/16:00을 KST로 변환해 DST 자동 추종. `summer_time`은 값 무시 + 불일치 시 경고만 |
+| P0 | 휴장일 캘린더 부재 | `feat(calendar): ...` | `src/utils/market_calendar.py` 신설. `exchange_calendars`(XKRX/XNYS)로 KRX 음력 공휴일 + NYSE 조기폐장 판정. 봇 루프에 휴장일 가드 |
+| P1 | naive `datetime.now()` 56곳 | `refactor(time): ...` | 전량 `now_kst()/today_kst()/kst_stamp()`로 치환. `config.py` import 시 TZ 고정(2차 방어). 워크플로 TZ 누락 검사 테스트 |
+| P1 | US 쿨다운 KST 자정 어긋남 | `fix(us): ... US 거래일(ET) 키잉` | 거래 기록·기준 날짜를 모두 US 거래일로 정규화. `cooldown_days=2`가 정확히 2일치만 차단 |
+| P2 | US 일일 손실 한도 부재 | 〃 | `check_us_daily_loss_limit()` 추가. US 거래일 키잉으로 자정 리셋 해소 |
+| P3 | 주석 오류·낭비 cron | `chore(workflows): ...` | `optimize.yml` 주석 정정, 낭비 기동 6회/일 제거, 실행시간 예산을 개장 시점부터 계산 |
+
+### 작업 중 추가로 발견한 것들
+
+분석 시점에는 안 보였다가 수정하면서 드러난 문제들.
+
+1. **토큰 캐시 aware/naive 충돌 (잠재 → 실제)**
+   `kis_auth.TokenBundle.expires_at`을 aware로 바꾸는 순간, 구버전이 남긴 naive
+   캐시와 비교에서 `TypeError`가 나 **인증이 통째로 죽는다**. 토큰 캐시는
+   artifact로 run 간에 넘어오므로 배포 직후 첫 run에서 바로 터졌을 것이다.
+   → `parse_kst()`로 정규화.
+
+2. **KR 일일 손실 한도가 US 체결에 오염 (기존 버그)**
+   `trades.csv`에 KR(원)과 US(**센트**, `int(price*100)`)가 한 파일에 섞여 있는데
+   `log_trade`의 `market` 인자는 CSV에 기록되지 않는다(`FIELDS`에 컬럼 없음).
+   그래서 KST 저녁의 US 체결이 원화 손익으로 둔갑해 국내 한도 계산에 들어갔다.
+   → `tracker.is_kr_symbol()`(KRX=6자리 숫자 / 美=알파벳)로 분리. 스키마 변경이
+   없어 레거시 행에도 그대로 적용된다.
+
+3. **pre-open 대기가 실행시간 예산을 잠식**
+   340분 예산이 프로세스 시작 시점부터 계산돼, 동절기 US는 21:30 기동 → 120분
+   대기 → 03:10 KST에 자체 종료(폐장 06:00까지 한참 남음)로 세션 한복판에서
+   핸드오프가 났다. → 개장 확인 시점에 예산 리셋.
+
+### 남은 것 (이번 범위 밖)
+
+- **KRX 임시 장시간 변경**: 수능일 개장 1시간 지연(10:00~16:30), 연말 폐장일 등.
+  `MARKET_OPEN`/`MARKET_CLOSE`가 여전히 상수다. `exchange_calendars`의
+  `session_open/session_close`를 KR에도 쓰면 해결 가능하나, KR 로직 전반이
+  상수 기반이라 변경 범위가 크다.
+- **임시공휴일**: `exchange_calendars` 릴리스 후 지정된 날짜는 라이브러리가
+  모른다. `configs/strategy.yaml`의 `calendar.extra_holidays_kr` /
+  `extra_holidays_us`로 수동 보완할 수 있게만 열어뒀다.
+- **Kelly·drawdown 스케일의 KR/US 혼재**: 비율 계산이라 통화 단위 오류는 없지만,
+  국내 포지션 사이징이 US 성과에 영향받는 게 의도인지는 설계 판단이 필요해
+  건드리지 않았다.
