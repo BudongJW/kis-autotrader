@@ -253,7 +253,8 @@ def marketable_limit_price(side: str, last: float, buffer_pct: float | None = No
     if buffer_pct is None:
         buffer_pct = float(load_us_execution_config()
                            .get("limit_buffer_pct", DEFAULT_LIMIT_BUFFER_PCT))
-    buffer_pct = max(0.0, float(buffer_pct))
+    # 지연 시세면 그 사이 가격이 움직였을 수 있어 한도를 그만큼 넓혀야 체결된다
+    buffer_pct = lag_adjusted_buffer(max(0.0, float(buffer_pct)))
 
     if side == "buy":
         raw = last * (1.0 + buffer_pct)
@@ -318,10 +319,52 @@ def confirm_us_fill(client: KISClient, symbol: str, side: str, qty_before: int,
 
 DEFAULT_EOD_LIMIT_BUFFER_PCT = 0.004   # 0.4% — 마감청산 미체결 = 오버나이트 캐리라 더 공격적
 
+# 지연 시세 방어
+DEFAULT_QUOTE_LAG_MIN = 0.0            # 실측값을 설정에 넣기 전까지는 '실시간 가정'
+STALE_QUOTE_THRESHOLD_MIN = 3.0        # 이 이상이면 지연 시세로 간주
+# 지연 1분당 지정가 buffer에 더할 여유. 지연 동안 가격이 움직였을 수 있으므로
+# 그만큼 한도를 넓혀야 체결된다. 15분 지연이면 +0.3% (0.0002×15).
+LAG_BUFFER_PER_MIN = 0.0002
+MAX_LAG_BUFFER_PCT = 0.005             # 지연 보정 상한 0.5% — 무한정 벌리지 않는다
+
+
+def quote_lag_min() -> float:
+    """설정된 US 시세 지연(분). scripts/debug_us_quote_delay.py로 실측해 넣는다.
+
+    KIS 해외 시세는 계정에 실시간 시세가 신청돼 있지 않으면 지연(보통 15분)으로
+    내려온다. KIS 응답에는 이를 알려주는 필드가 없어 자동 판정이 불가능하므로
+    **실측값을 설정에 명시**하는 방식을 쓴다. 0이면 실시간으로 간주(기존 동작).
+    """
+    return max(0.0, float(load_us_execution_config()
+                          .get("quote_lag_min", DEFAULT_QUOTE_LAG_MIN)))
+
+
+def is_quote_stale() -> bool:
+    """지연 시세 방어 모드를 켤지."""
+    return quote_lag_min() >= STALE_QUOTE_THRESHOLD_MIN
+
+
+def _block_scalp_on_stale() -> bool:
+    """지연 시세일 때 인트라데이 스캘프 신규 진입을 막을지 (기본 True)."""
+    return bool(load_us_execution_config().get("block_scalp_on_stale", True))
+
+
+def lag_adjusted_buffer(base_buffer: float) -> float:
+    """지연분만큼 넓힌 지정가 buffer.
+
+    지연 시세 기준으로 한도를 잡으면 실제 호가는 그 사이 움직여 있어, 좁은
+    한도로는 다시 미체결(=역선택 재발)이 된다. 지연에 비례해 넓히되 상한을 둔다.
+    """
+    lag = quote_lag_min()
+    if lag <= 0:
+        return base_buffer
+    return base_buffer + min(MAX_LAG_BUFFER_PCT, lag * LAG_BUFFER_PER_MIN)
+
 
 def _eod_buffer_pct() -> float:
-    return float(load_us_execution_config()
-                 .get("eod_limit_buffer_pct", DEFAULT_EOD_LIMIT_BUFFER_PCT))
+    return lag_adjusted_buffer(
+        float(load_us_execution_config()
+              .get("eod_limit_buffer_pct", DEFAULT_EOD_LIMIT_BUFFER_PCT)))
 
 
 def _sell_and_record(client: KISClient, symbol: str, exchange: str, qty: int,
@@ -1328,7 +1371,17 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
         print(f"  [US-MOM] 진입창 밖 (개장 후 {mins_since_open:.0f}분 > {entry_window_min:.0f}분)")
     elif not holding_now and not force_eod:
         ok, why = can_reenter(meta=meta, now_hhmm=now_hhmm, cfg=cfg)
-        if not ok:
+        stale_block = is_quote_stale() and _block_scalp_on_stale()
+        if stale_block:
+            # 지연 시세에서 인트라데이 스캘프는 구조적으로 성립하지 않는다.
+            # 진입창 90분·트레일 0.8%·손절 2.5%인데 시세가 15분 늦으면 신호를 본
+            # 시점엔 이미 그 움직임이 끝나 있다. **진입만** 막고 청산은 계속한다
+            # (보유분 리스크 관리는 지연 시세로라도 해야 하므로).
+            print(f"  [US-MOM] 시세 지연 {quote_lag_min():.0f}분 — 신규 진입 차단"
+                  f" (청산은 계속). execution.block_scalp_on_stale=false로 해제 가능")
+            log.warning("us_mom_entry_blocked_stale_quote",
+                        lag_min=quote_lag_min())
+        elif not ok:
             print(f"  [US-MOM] 재진입 보류: {why}")
         else:
             prev_close, cur = _us_quote(client, long_sym, long_exch)

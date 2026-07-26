@@ -199,3 +199,84 @@ def test_buy_ignores_preexisting_holding(fast_fill):
     fast_fill(client)
     filled, _ = confirm_us_fill(client, "QQQM", "buy", qty_before=10, expected_qty=5)
     assert filled == 5
+
+
+# ──────────────────────────────────────────────────────────
+# 지연 시세 방어
+# ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def exec_cfg(monkeypatch):
+    """us_session.execution 설정을 임의 값으로 바꿔치기."""
+    import src.bot.us_session as us
+
+    def _set(**kw):
+        monkeypatch.setattr(us, "load_us_execution_config", lambda: kw)
+
+    return _set
+
+
+def test_realtime_quote_needs_no_extra_buffer(exec_cfg):
+    from src.bot.us_session import is_quote_stale, marketable_limit_price, quote_lag_min
+
+    exec_cfg(limit_buffer_pct=0.0015, quote_lag_min=0)
+    assert quote_lag_min() == 0
+    assert is_quote_stale() is False
+    assert marketable_limit_price("buy", 100.0) == pytest.approx(100.15, abs=0.011)
+
+
+def test_delayed_quote_widens_buffer(exec_cfg):
+    """지연 시세면 그 사이 가격이 움직였을 수 있어 한도를 넓혀야 체결된다."""
+    from src.bot.us_session import marketable_limit_price
+
+    exec_cfg(limit_buffer_pct=0.0015, quote_lag_min=15)
+    px = marketable_limit_price("buy", 100.0)
+    assert px > 100.15                      # 실시간 대비 더 넓다
+    assert px == pytest.approx(100.45, abs=0.011)   # 0.15% + 15×0.02%
+
+
+def test_lag_buffer_is_capped(exec_cfg):
+    """지연이 아무리 커도 buffer를 무한정 벌리지 않는다."""
+    from src.bot.us_session import MAX_LAG_BUFFER_PCT, lag_adjusted_buffer
+
+    exec_cfg(quote_lag_min=600)
+    assert lag_adjusted_buffer(0.0015) == pytest.approx(0.0015 + MAX_LAG_BUFFER_PCT)
+
+
+def test_stale_threshold(exec_cfg):
+    from src.bot.us_session import STALE_QUOTE_THRESHOLD_MIN, is_quote_stale
+
+    exec_cfg(quote_lag_min=STALE_QUOTE_THRESHOLD_MIN - 0.1)
+    assert is_quote_stale() is False
+    exec_cfg(quote_lag_min=STALE_QUOTE_THRESHOLD_MIN)
+    assert is_quote_stale() is True
+
+
+def test_eod_buffer_also_lag_adjusted(exec_cfg):
+    """마감청산 한도에도 지연 보정이 걸려야 미체결(=캐리)을 막는다."""
+    import src.bot.us_session as us
+
+    exec_cfg(eod_limit_buffer_pct=0.004, quote_lag_min=0)
+    base = us._eod_buffer_pct()
+    exec_cfg(eod_limit_buffer_pct=0.004, quote_lag_min=15)
+    assert us._eod_buffer_pct() > base
+
+
+def test_scalp_block_flag_defaults_on(exec_cfg):
+    """지연 시세에서 스캘프 진입 차단이 기본값이어야 한다."""
+    import src.bot.us_session as us
+
+    exec_cfg(quote_lag_min=15)              # block_scalp_on_stale 미지정
+    assert us._block_scalp_on_stale() is True
+    exec_cfg(quote_lag_min=15, block_scalp_on_stale=False)
+    assert us._block_scalp_on_stale() is False
+
+
+def test_config_default_assumes_realtime():
+    """실측 전 기본값은 실시간(0) — 임의로 지연을 가정해 매매를 바꾸지 않는다."""
+    import yaml
+
+    with open("configs/strategy.yaml", encoding="utf-8") as f:
+        ex = yaml.safe_load(f)["us_session"]["execution"]
+    assert ex["quote_lag_min"] == 0
+    assert ex["block_scalp_on_stale"] is True

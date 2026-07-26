@@ -34,6 +34,8 @@ from src.bot.us_session import (
     check_us_risk,
     close_us_positions,
     load_us_positions,
+    quote_lag_min,
+    is_quote_stale,
 )
 from src.utils.logger import log
 from src.utils.clock import KST, now_kst, is_us_dst, us_session_date_et
@@ -159,6 +161,12 @@ def run_loop(dry_run: bool) -> None:
           f"{' | ⚠️ 조기 폐장일(13:00 ET)' if early else ''}")
     print(f"  US 거래일: {session_et}")
     print(f"  개장: {open_t.strftime('%H:%M')} KST | 폐장: {close_t.strftime('%H:%M')} KST")
+    _lag = quote_lag_min()
+    if _lag > 0:
+        print(f"  ⚠️  시세 지연 {_lag:.0f}분 설정됨 — 지정가 buffer 확대"
+              f"{', 스캘프 신규진입 차단' if is_quote_stale() else ''}")
+    else:
+        print(f"  시세: 실시간 가정 (지연 실측은 scripts/debug_us_quote_delay.py)")
     print(f"  리스크 체크: {RISK_CHECK_INTERVAL}초 | 전략 체크: {STRATEGY_CHECK_INTERVAL}초")
     print(f"{'=' * 60}")
 
