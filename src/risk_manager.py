@@ -389,7 +389,7 @@ def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
     """
     import csv
     import yaml
-    from src.tracker import TRADE_LOG_PATH
+    from src.tracker import TRADE_LOG_PATH, is_kr_symbol
 
     try:
         config_path = Path("configs/strategy.yaml")
@@ -412,6 +412,9 @@ def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
             if not row.get("timestamp", "").startswith(today_str):
                 continue
             symbol = row.get("symbol", "")
+            # US 체결은 센트 단위라 원화 집계에 섞이면 안 된다 (별도 한도로 관리)
+            if not is_kr_symbol(symbol):
+                continue
             price = int(row.get("price", 0))
             qty = int(row.get("qty", 0))
             side = row.get("side", "")
@@ -485,7 +488,7 @@ def check_daily_profit_target(client: KISClient) -> tuple[bool, str]:
     """
     import csv
     import yaml
-    from src.tracker import TRADE_LOG_PATH
+    from src.tracker import TRADE_LOG_PATH, is_kr_symbol
 
     try:
         with Path("configs/strategy.yaml").open(encoding="utf-8") as f:
@@ -506,6 +509,8 @@ def check_daily_profit_target(client: KISClient) -> tuple[bool, str]:
             if not row.get("timestamp", "").startswith(today_str):
                 continue
             sym = row.get("symbol", "")
+            if not is_kr_symbol(sym):      # US 체결(센트)은 제외
+                continue
             price = int(row.get("price", 0) or 0)
             qty = int(row.get("qty", 0) or 0)
             side = row.get("side", "")

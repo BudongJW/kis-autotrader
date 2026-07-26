@@ -35,7 +35,9 @@ from src.risk_manager import (load_positions, save_positions, record_buy,
 from src.tracker import log_trade
 from src.experience import log_decision
 from src.utils.logger import log
-from src.utils.clock import KST, ET, now_kst, kst_stamp, us_session_date_et, is_us_dst
+from src.utils.clock import (
+    KST, ET, now_kst, kst_stamp, parse_kst, us_session_date_et, is_us_dst,
+)
 # 캘린더 인식 버전(조기 폐장 반영) — clock.us_market_times_kst의 정규장 전용
 # 버전이 아니라 이쪽을 써야 조기 폐장일에 강제청산 타이밍이 맞는다.
 from src.utils.market_calendar import us_market_times_kst, is_us_trading_day
@@ -515,6 +517,67 @@ def eod_us_hold_decision(buy_price: float, cur_price: float,
 # 미국장 전략 실행
 # ──────────────────────────────────────────────────────────
 
+def check_us_daily_loss_limit() -> tuple[bool, str]:
+    """US 세션 당일 실현손실이 한도를 넘었는지. True면 신규 매수 차단.
+
+    한국장에는 check_daily_loss_limit이 있었지만 US 세션에는 아무 한도가 없었다.
+    원인은 시간대다 — 기존 함수는 KST 날짜로 trades.csv를 필터링하는데, US 세션은
+    KST 자정을 가로지르므로 **세션 도중 00:00에 당일 손익이 리셋**된다.
+    여기서는 US 거래일(ET)로 키잉해 세션 전체를 하나로 집계한다.
+
+    금액은 trades.csv에 센트로 기록돼 있고(=int(price*100)), 비율만 쓰므로
+    통화 환산은 필요 없다. 한도는 risk.daily_loss_limit_pct를 공유한다.
+    """
+    import csv
+    from src.tracker import TRADE_LOG_PATH, is_kr_symbol
+
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as f:
+            limit_pct = (yaml.safe_load(f).get("risk", {})
+                         .get("daily_loss_limit_pct", 0.05))
+    except Exception:
+        limit_pct = 0.05
+    if not limit_pct or limit_pct <= 0 or not TRADE_LOG_PATH.exists():
+        return False, "한도 비활성 또는 거래 기록 없음"
+
+    session = us_session_date_et(now_kst()).isoformat()
+    buys: dict[str, list[int]] = {}
+    realized = 0      # 센트
+    cost = 0          # 센트 (매수 원가 합 — 손실률 분모)
+
+    try:
+        with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                sym = row.get("symbol", "")
+                if is_kr_symbol(sym):          # 국내 체결(원)은 제외
+                    continue
+                try:
+                    if us_session_date_et(parse_kst(row.get("timestamp", ""))) \
+                            .isoformat() != session:
+                        continue
+                    price = int(row.get("price", 0) or 0)
+                    qty = int(row.get("qty", 0) or 0)
+                except Exception:  # noqa: BLE001
+                    continue
+                if row.get("side") == "buy":
+                    buys.setdefault(sym, []).append(price * qty)
+                    cost += price * qty
+                elif row.get("side") == "sell" and buys.get(sym):
+                    realized += price * qty - buys[sym].pop(0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_daily_loss_check_failed", error=str(e))
+        return False, "집계 실패"
+
+    if realized >= 0 or cost <= 0:
+        return False, f"당일 실현손익 {realized / 100:+.2f} USD"
+
+    loss_pct = abs(realized) / cost
+    if loss_pct >= limit_pct:
+        return True, (f"US 일일 손실 한도 초과: {realized / 100:+.2f} USD "
+                      f"({loss_pct:.1%} ≥ {limit_pct:.1%}, 세션 {session})")
+    return False, f"당일 실현손익 {realized / 100:+.2f} USD ({loss_pct:.1%})"
+
+
 def run_us_strategy(client: KISClient, dry_run: bool) -> int:
     """미국 ETF 변동성 돌파 전략 1회 실행.
 
@@ -534,6 +597,13 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
 
     strategy = VolatilityBreakoutStrategy(k=k, trend_ma=ma)
 
+    # 일일 손실 한도 — 초과 시 신규 매수만 차단(청산·손절은 계속)
+    loss_exceeded, loss_reason = check_us_daily_loss_limit()
+    if loss_exceeded:
+        print(f"  [US] ⚠️  {loss_reason} → 신규 매수 차단")
+        log.warning("us_daily_loss_limit_hit", reason=loss_reason)
+        return 0
+
     # 현재 보유 확인
     us_positions = load_us_positions()
     if len(us_positions) >= max_pos:
@@ -551,16 +621,22 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
     print(f"  [US] 예산: ${budget:.2f} (총 ${cash_usd:.2f}) | K={k}, MA={ma}")
 
     # 재진입 쿨다운: 최근 마감청산된 종목 재진입 금지(US 일일 churn 방지, 6-10~12 SCHG)
-    from datetime import datetime as _dt
+    #
+    # 날짜는 반드시 **US 거래일(ET)** 공간에서 비교한다. 거래 기록은 KST 타임스탬프인데
+    # US 마감청산은 항상 KST 자정 이후(04:45/05:45)에 일어나므로, KST 날짜로 비교하면
+    # 청산 기록이 세션 날짜보다 하루 뒤로 찍힌다. 그 결과 cooldown_days=2가 실제로는
+    # 3개 세션을 막았다. 게다가 기준 날짜를 함수 진입 시 한 번만 잡아서, 세션이 자정을
+    # 넘으면 이후 호출에서 쿨다운 창이 하루 밀렸다.
     cooldown_days = int(strat_cfg.get("reentry_cooldown_days", 2) or 0)
     _recent_sells = []
     if cooldown_days > 0:
         try:
             from src.merge_trades import _read
-            _recent_sells = [t for t in _read("logs/trades.csv") if t.get("side") == "sell"]
+            _recent_sells = [_to_us_session_row(t) for t in _read("logs/trades.csv")
+                             if t.get("side") == "sell"]
         except Exception:
             _recent_sells = []
-    _today = _dt.now().strftime("%Y-%m-%d")
+    _today = us_session_date_et(now_kst()).isoformat()
 
     # 레짐 연동: 한국장 bear면 인버스 우선
     regime_linked = cfg.get("regime_linked", True)
@@ -884,6 +960,20 @@ def _us_current_regime() -> str | None:
         return bs.get("regime")
     except Exception:
         return None
+
+
+def _to_us_session_row(trade: dict) -> dict:
+    """거래 기록의 KST 타임스탬프를 **US 거래일(ET)** 로 바꾼 사본을 반환.
+
+    US 마감청산은 항상 KST 자정 이후에 찍히므로, KST 날짜 그대로 비교하면 같은
+    세션의 청산이 하루 뒤 날짜로 잡혀 쿨다운이 한 세션 더 길어진다.
+    """
+    raw = trade.get("timestamp") or trade.get("date") or ""
+    try:
+        session = us_session_date_et(parse_kst(raw)).isoformat()
+    except Exception:  # noqa: BLE001
+        return trade
+    return {**trade, "date": session, "timestamp": session}
 
 
 def _minutes_until_us_close(now_: datetime, close_str: str) -> float:
