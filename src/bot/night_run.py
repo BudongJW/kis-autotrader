@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import time as time_mod
 from datetime import datetime, time as dtime, timedelta
-from zoneinfo import ZoneInfo
 
 from src.config import settings
 from src.kis_client import KISClient
@@ -37,8 +36,7 @@ from src.bot.us_session import (
     load_us_positions,
 )
 from src.utils.logger import log
-
-KST = ZoneInfo("Asia/Seoul")
+from src.utils.clock import KST, now_kst, is_us_dst
 
 # 루프 간격 (초)
 RISK_CHECK_INTERVAL = 60        # 리스크 체크: 1분
@@ -59,7 +57,7 @@ MAX_LOOP_RUNTIME_SEC = 340 * 60
 
 
 def _now() -> datetime:
-    return datetime.now(KST)
+    return now_kst()
 
 
 def _time_in_range(t: dtime, start: dtime, end: dtime) -> bool:
@@ -143,7 +141,7 @@ def run_loop(dry_run: bool) -> None:
     us_mom_on = bool(load_us_momentum_config().get("enabled", False))
 
     open_t, close_t = get_us_market_times()
-    summer = cfg.get("summer_time", False)
+    summer = is_us_dst()
 
     print(f"\n{'=' * 60}")
     print(f"[US Night Loop] 미국장 야간 매매 시작")

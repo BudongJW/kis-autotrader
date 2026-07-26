@@ -1,6 +1,6 @@
 """미국 ETF 야간 매매 전략 — 한국 밤 시간대 미국장 운영.
 
-시간대 (KST 기준):
+시간대 (KST 기준) — src/utils/clock.py가 ET 09:30/16:00을 변환해 자동 판정:
   서머타임: 22:30~05:00  (3월 둘째 일요일 ~ 11월 첫째 일요일)
   동절기:   23:30~06:00
 
@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yaml
@@ -36,9 +35,9 @@ from src.risk_manager import (load_positions, save_positions, record_buy,
 from src.tracker import log_trade
 from src.experience import log_decision
 from src.utils.logger import log
-
-KST = ZoneInfo("Asia/Seoul")
-EST = ZoneInfo("America/New_York")
+from src.utils.clock import (
+    KST, ET, now_kst, us_market_times_kst, us_session_date_et, is_us_dst,
+)
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 US_STATE_PATH = Path("logs/us_session_state.json")
@@ -61,19 +60,11 @@ def load_us_universe() -> list[dict]:
 
 def is_us_market_hours() -> bool:
     """미국 정규장 시간인지 확인 (KST 기준)."""
-    cfg = load_us_config()
-    if not cfg.get("enabled", False):
+    if not load_us_config().get("enabled", False):
         return False
 
-    now = datetime.now(KST).time()
-    summer = cfg.get("summer_time", False)
-
-    if summer:
-        open_t = dtime(22, 30)
-        close_t = dtime(5, 0)
-    else:
-        open_t = dtime(23, 30)
-        close_t = dtime(6, 0)
+    now = now_kst().time()
+    open_t, close_t = get_us_market_times()
 
     # 자정 넘어가는 시간 처리
     if open_t > close_t:
@@ -81,13 +72,28 @@ def is_us_market_hours() -> bool:
     return open_t <= now <= close_t
 
 
-def get_us_market_times() -> tuple[dtime, dtime]:
-    """(open_kst, close_kst) 반환."""
-    cfg = load_us_config()
-    summer = cfg.get("summer_time", False)
-    if summer:
-        return dtime(22, 30), dtime(5, 0)
-    return dtime(23, 30), dtime(6, 0)
+def get_us_market_times(now: datetime | None = None) -> tuple[dtime, dtime]:
+    """(open_kst, close_kst) 반환. 서머타임은 ET 기준으로 자동 판정.
+
+    예전엔 configs/strategy.yaml의 `summer_time` 불리언을 사람이 연 2회 직접
+    뒤집어야 했다. 놓치면 폐장 시각을 오인해 (a) 실제 폐장 1시간 전에 강제 청산하고
+    (b) 장이 열린 마지막 1시간 동안 손절이 멈추거나, 반대 방향에선 이미 닫힌 장에
+    청산 주문을 넣어 실패 → 의도치 않은 오버나이트 캐리가 났다.
+    이제 ET 09:30/16:00을 KST로 변환해 DST 전환을 자동으로 따라간다.
+
+    `summer_time` 키는 남겨두되 계산값과 어긋나면 경고만 남긴다(값은 무시).
+    """
+    open_t, close_t = us_market_times_kst(now)
+
+    cfg_summer = load_us_config().get("summer_time")
+    if cfg_summer is not None and bool(cfg_summer) != is_us_dst(now):
+        log.warning("us_summer_time_flag_stale",
+                    config_value=bool(cfg_summer), computed_dst=is_us_dst(now),
+                    open_kst=open_t.strftime("%H:%M"),
+                    close_kst=close_t.strftime("%H:%M"),
+                    hint="configs/strategy.yaml us_session.summer_time은 더 이상 "
+                         "사용되지 않습니다(ET 기준 자동 계산). 제거해도 됩니다.")
+    return open_t, close_t
 
 
 # ──────────────────────────────────────────────────────────
@@ -874,19 +880,19 @@ def _us_current_regime() -> str | None:
         return None
 
 
-def _minutes_until_us_close(now_kst: datetime, close_str: str) -> float:
+def _minutes_until_us_close(now_: datetime, close_str: str) -> float:
     """폐장까지 남은 분(KST). 자정 넘는 폐장(예 05:00)은 다음날로 보정."""
     try:
         ch, cm = int(close_str[:2]), int(close_str[3:5])
     except Exception:
         ch, cm = 5, 0
-    close_dt = now_kst.replace(hour=ch, minute=cm, second=0, microsecond=0)
-    if ch < 12 and now_kst.hour >= 12:
+    close_dt = now_.replace(hour=ch, minute=cm, second=0, microsecond=0)
+    if ch < 12 and now_.hour >= 12:
         close_dt += timedelta(days=1)
-    return (close_dt - now_kst).total_seconds() / 60.0
+    return (close_dt - now_).total_seconds() / 60.0
 
 
-def _minutes_since_us_open(now_kst: datetime, open_str: str) -> float:
+def _minutes_since_us_open(now_: datetime, open_str: str) -> float:
     """US 개장 후 경과 분(KST). 자정 넘는 세션이라 개장시각보다 이른 새벽이면 개장은 전날.
 
     진입창을 문자열 시각("01:00" ∉ "22:30~23:59")으로 판정하던 게 버그 —
@@ -896,10 +902,10 @@ def _minutes_since_us_open(now_kst: datetime, open_str: str) -> float:
         oh, om = int(open_str[:2]), int(open_str[3:5])
     except Exception:
         oh, om = 22, 30
-    open_dt = now_kst.replace(hour=oh, minute=om, second=0, microsecond=0)
-    if now_kst < open_dt:                      # 01:00 < 22:30 → 개장은 전날 밤
+    open_dt = now_.replace(hour=oh, minute=om, second=0, microsecond=0)
+    if now_ < open_dt:                      # 01:00 < 22:30 → 개장은 전날 밤
         open_dt -= timedelta(days=1)
-    return (now_kst - open_dt).total_seconds() / 60.0
+    return (now_ - open_dt).total_seconds() / 60.0
 
 
 def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
@@ -917,11 +923,17 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
     long_exch = str(cfg.get("long_exchange", "NASD"))
     inv_sym = str(cfg.get("inverse_symbol", "PSQ"))
     inv_exch = str(cfg.get("inverse_exchange", "AMEX"))
-    close_str = str(load_us_config().get("market_close_kst", "05:00"))
+    now = now_kst()
+    # 개장/폐장은 ET 기준 자동 계산 — yaml의 market_open_kst/market_close_kst는
+    # DST 전환 때 같이 썩는 하드코딩이라 더 이상 읽지 않는다.
+    open_t, close_t = get_us_market_times(now)
+    open_str = open_t.strftime("%H:%M")
+    close_str = close_t.strftime("%H:%M")
 
-    now_kst = datetime.now(KST)
-    now_hhmm = now_kst.strftime("%H:%M")
-    today = now_kst.strftime("%Y-%m-%d")
+    now_hhmm = now.strftime("%H:%M")
+    # 세션 상태는 KST 날짜가 아니라 US 거래일(ET)로 키잉 — US 세션은 KST 자정을
+    # 가로지르므로 KST 날짜로 잡으면 세션 도중에 상태가 리셋된다.
+    today = us_session_date_et(now).isoformat()
 
     state = _load_us_mom()
     meta = state.get("_meta", {})
@@ -930,12 +942,11 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
         state = {"_meta": meta}
     session_open = meta.setdefault("session_open", {})
 
-    mins_left = _minutes_until_us_close(now_kst, close_str)
+    mins_left = _minutes_until_us_close(now, close_str)
     force_eod = mins_left <= float(cfg.get("session_exit_min_before", 15))
 
     # 진입창: 개장 후 N분 이내(개장경과분 기준 — 자정 넘김/루프지연에도 정상 동작)
-    open_str = str(load_us_config().get("market_open_kst", "22:30"))
-    mins_since_open = _minutes_since_us_open(now_kst, open_str)
+    mins_since_open = _minutes_since_us_open(now, open_str)
     entry_window_min = float(cfg.get("entry_window_min", 180))
     in_entry_window = 0 <= mins_since_open <= entry_window_min
 

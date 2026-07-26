@@ -251,8 +251,10 @@ us_session:
     reentry_cooldown_days: 2
     inverse_requires_bearish: true
   eod_hold_winners: true
-  market_open_kst: '22:30'
-  market_close_kst: 05:00
+  # 개장·폐장 시각은 src/utils/clock.py가 ET 09:30/16:00을 KST로 변환해 자동 계산한다.
+  # (서머 22:30~05:00 / 동절 23:30~06:00) DST 전환일에 자동으로 따라가므로
+  # market_open_kst·market_close_kst 하드코딩은 제거했다.
+  # summer_time은 하위호환용 잔존 키 — 값은 무시되고, 계산값과 어긋나면 경고만 남는다.
   summer_time: true
   max_positions: 3
   budget_pct: 0.4
