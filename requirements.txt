@@ -9,6 +9,11 @@ pandas>=2.2.0
 numpy>=1.26.0
 pyarrow>=15.0.0
 
+# --- 거래일 캘린더 ---
+# KRX 음력 공휴일·대체공휴일 + NYSE 조기폐장(13:00 ET) 판정.
+# 없으면 주말 체크로 폴백하지만 공휴일에 봇이 헛돈다.
+exchange_calendars>=4.5
+
 # --- 시각화·노트북 ---
 matplotlib>=3.8.0
 seaborn>=0.13.0

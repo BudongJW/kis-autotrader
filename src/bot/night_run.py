@@ -36,7 +36,8 @@ from src.bot.us_session import (
     load_us_positions,
 )
 from src.utils.logger import log
-from src.utils.clock import KST, now_kst, is_us_dst
+from src.utils.clock import KST, now_kst, is_us_dst, us_session_date_et
+from src.utils.market_calendar import is_us_trading_day, is_us_early_close
 
 # 루프 간격 (초)
 RISK_CHECK_INTERVAL = 60        # 리스크 체크: 1분
@@ -140,13 +141,23 @@ def run_loop(dry_run: bool) -> None:
 
     us_mom_on = bool(load_us_momentum_config().get("enabled", False))
 
+    # ── 휴장일 가드 ──
+    # 미국 공휴일에 루프를 돌리면 전일 종가로 매매 판단을 내리고 거부될 주문을 낸다.
+    session_et = us_session_date_et()
+    if not is_us_trading_day(session_et):
+        print(f"[US Night] {session_et} 미국장 휴장일. 루프 진입 안 함.")
+        return
+
     open_t, close_t = get_us_market_times()
     summer = is_us_dst()
+    early = is_us_early_close(session_et)
 
     print(f"\n{'=' * 60}")
     print(f"[US Night Loop] 미국장 야간 매매 시작")
     print(f"  mode={settings.mode.value} | dry_run={dry_run}")
-    print(f"  시간대: {'서머타임' if summer else '동절기'}")
+    print(f"  시간대: {'서머타임' if summer else '동절기'}"
+          f"{' | ⚠️ 조기 폐장일(13:00 ET)' if early else ''}")
+    print(f"  US 거래일: {session_et}")
     print(f"  개장: {open_t.strftime('%H:%M')} KST | 폐장: {close_t.strftime('%H:%M')} KST")
     print(f"  리스크 체크: {RISK_CHECK_INTERVAL}초 | 전략 체크: {STRATEGY_CHECK_INTERVAL}초")
     print(f"{'=' * 60}")

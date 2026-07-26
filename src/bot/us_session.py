@@ -35,9 +35,10 @@ from src.risk_manager import (load_positions, save_positions, record_buy,
 from src.tracker import log_trade
 from src.experience import log_decision
 from src.utils.logger import log
-from src.utils.clock import (
-    KST, ET, now_kst, us_market_times_kst, us_session_date_et, is_us_dst,
-)
+from src.utils.clock import KST, ET, now_kst, us_session_date_et, is_us_dst
+# 캘린더 인식 버전(조기 폐장 반영) — clock.us_market_times_kst의 정규장 전용
+# 버전이 아니라 이쪽을 써야 조기 폐장일에 강제청산 타이밍이 맞는다.
+from src.utils.market_calendar import us_market_times_kst, is_us_trading_day
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 US_STATE_PATH = Path("logs/us_session_state.json")
@@ -59,12 +60,16 @@ def load_us_universe() -> list[dict]:
 
 
 def is_us_market_hours() -> bool:
-    """미국 정규장 시간인지 확인 (KST 기준)."""
+    """미국 정규장 시간인지 확인 (KST 기준). 휴장일·조기폐장 반영."""
     if not load_us_config().get("enabled", False):
         return False
 
-    now = now_kst().time()
-    open_t, close_t = get_us_market_times()
+    now_dt = now_kst()
+    if not is_us_trading_day(us_session_date_et(now_dt)):
+        return False
+
+    now = now_dt.time()
+    open_t, close_t = get_us_market_times(now_dt)
 
     # 자정 넘어가는 시간 처리
     if open_t > close_t:
@@ -82,6 +87,7 @@ def get_us_market_times(now: datetime | None = None) -> tuple[dtime, dtime]:
     이제 ET 09:30/16:00을 KST로 변환해 DST 전환을 자동으로 따라간다.
 
     `summer_time` 키는 남겨두되 계산값과 어긋나면 경고만 남긴다(값은 무시).
+    조기 폐장일(13:00 ET)이면 폐장이 3시간 앞당겨진다.
     """
     open_t, close_t = us_market_times_kst(now)
 
