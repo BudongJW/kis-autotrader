@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.66
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -17,14 +17,14 @@ strategies:
     backtest_mdd: -1.85
   ta_weights:
     rsi: 0.049
-    macd: 0.193
-    bb: 0.064
-    stoch: 0.107
-    adx: 0.064
-    ma: 0.193
-    obv: 0.193
-    mfi: 0.049
-    atr: 0.086
+    macd: 0.178
+    bb: 0.079
+    stoch: 0.119
+    adx: 0.079
+    ma: 0.178
+    obv: 0.178
+    mfi: 0.06
+    atr: 0.079
 day_plan:
   force_stance: null
 costs:
@@ -296,58 +296,44 @@ risk:
 market_regime:
   trend: sideways
   volatility: high
-  trend_score: 0.054
+  trend_score: 0.018
   vol_percentile: 78.0
-  analyzed_at: 2026-07-24 09:16
-  hmm_state: bear
-  hmm_confidence: 0.5603845921967435
+  analyzed_at: 2026-07-27 10:04
+  hmm_state: sideways
+  hmm_confidence: 0.6903522807019982
   hmm_transition:
-    bear: 0.005081645095355265
-    sideways: 0.994743459705723
-    bull: 0.00017489519892186474
-market_confidence: 0.423
+    bear: 0.8149046198004223
+    sideways: 0.053081276345412175
+    bull: 0.13201410385416534
+market_confidence: 0.3
 strong_sectors:
-- 반도체
 - 2차전지
 - 바이오
-- 자동차
-- 금융
 - IT
 - 철강
-- KOSPI200
 - KOSDAQ150
-- 미국나스닥
 overnight_signal:
+  nasdaq_change: -0.64
+  sp500_change: 0.05
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -1.05
-  sp500_change: 0.12
-  strength: 0.16
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
-- symbol: 091160
-  name: KODEX 반도체
 - symbol: '305720'
   name: KODEX 2차전지
 - symbol: '244580'
   name: KODEX 바이오
-- symbol: 091180
-  name: KODEX 자동차
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
 - symbol: '117700'
   name: KODEX 철강
-- symbol: 069500
-  name: KODEX KOSPI200
 - symbol: '229200'
   name: KODEX KOSDAQ150
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.477
-  trades: 40
+  win_rate: 0.5
+  trades: 44
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - '114800'
