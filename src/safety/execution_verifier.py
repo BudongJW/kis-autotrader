@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from src.tracker import TRADE_LOG_PATH
+from src.tracker import TRADE_LOG_PATH, is_kr_symbol
 from src.utils.logger import log
 from src.utils.clock import now_kst, today_kst
 
@@ -72,29 +72,54 @@ def fetch_today_ccld(client) -> dict:
 
 
 def reconcile_trades(client) -> dict:
-    """trades.csv의 오늘 entry vs KIS ccld 비교. 불일치 발견 시 ledger 정정.
+    """trades.csv의 오늘 **국내** entry vs KIS ccld 비교. 불일치 발견 시 ledger 정정.
+
+    **국내 전용인 이유** — 비교 대상인 fetch_today_ccld()는
+    `/uapi/domestic-stock/v1/trading/inquire-daily-ccld`(TTTC8001R), 즉 국내 체결
+    조회다. 해외 체결은 이 응답에 절대 들어오지 않는다. 그런데 trades.csv에는
+    KR·US가 한 파일에 섞여 기록되므로, 예전엔 **모든 미국 거래가 영구적으로
+    `ccld_not_found`로 잡혔다**. 실제 운영 로그(2026-07-28):
+
+        [체결 검증] reviewed=9, executed=7, rejected=0, pending=0
+          ⚠️ {'symbol': 'PSQ', 'time': '003211', 'side': 'buy',  'issue': 'ccld_not_found'}
+          ⚠️ {'symbol': 'PSQ', 'time': '044507', 'side': 'sell', 'issue': 'ccld_not_found'}
+
+    PSQ는 미국 인버스 ETF로, 정상 체결됐는데도 오탐이 난 것이다. 오탐이 일상이
+    되면 진짜 불일치가 묻히고, rejected/pending이 잡히면 텔레그램 오류 알림까지
+    나간다. 그래서 국내 종목만 검증 대상으로 삼고 해외분은 따로 센다.
 
     Returns:
-        {'reviewed': N, 'executed': N, 'rejected': N, 'pending': N, 'mismatches': [...]}
+        {'reviewed': N, 'executed': N, 'rejected': N, 'pending': N,
+         'skipped_overseas': N, 'mismatches': [...]}
+        reviewed는 **검증한 국내 건수**다 (skipped_overseas는 별도).
     """
     result = {"reviewed": 0, "executed": 0, "rejected": 0,
-              "pending": 0, "mismatches": []}
+              "pending": 0, "skipped_overseas": 0, "mismatches": []}
 
     if not TRADE_LOG_PATH.exists():
         return result
 
     today = today_kst().isoformat()
-    ccld = fetch_today_ccld(client)
-    if not ccld:
-        return result
 
-    # trades.csv에서 오늘자 entry 추출
+    # trades.csv에서 오늘자 entry 추출 — 국내/해외 분리
     today_trades = []
     with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row.get("timestamp", "").startswith(today):
+            if not row.get("timestamp", "").startswith(today):
+                continue
+            if is_kr_symbol(row.get("symbol", "")):
                 today_trades.append(row)
+            else:
+                # 해외 체결은 국내 ccld로 검증 불가 (해외 체결내역 조회 미구현)
+                result["skipped_overseas"] += 1
+
+    if not today_trades:
+        return result
+
+    ccld = fetch_today_ccld(client)
+    if not ccld:
+        return result
 
     # 각 trade를 ccld와 매칭
     for t in today_trades:
@@ -157,7 +182,9 @@ def reconcile_trades(client) -> dict:
             from src.safety.notifier import notify_error
             notify_error(
                 f"체결 불일치 — 거부 {result['rejected']}건, 대기 {result['pending']}건",
-                context=f"reviewed={result['reviewed']}, executed={result['executed']}",
+                context=(f"reviewed={result['reviewed']}(국내), "
+                         f"executed={result['executed']}, "
+                         f"해외 {result['skipped_overseas']}건 검증제외"),
             )
         except Exception:
             pass

@@ -842,13 +842,18 @@ def main() -> None:
     try:
         from src.safety.execution_verifier import reconcile_trades
         recon_trades = reconcile_trades(client)
+        _skipped = recon_trades.get("skipped_overseas", 0)
         if recon_trades.get("rejected", 0) > 0 or recon_trades.get("mismatches"):
-            print(f"  [체결 검증] reviewed={recon_trades['reviewed']}, "
+            print(f"  [체결 검증] 국내 reviewed={recon_trades['reviewed']}, "
                   f"executed={recon_trades['executed']}, "
                   f"rejected={recon_trades['rejected']}, "
-                  f"pending={recon_trades.get('pending', 0)}")
+                  f"pending={recon_trades.get('pending', 0)}"
+                  + (f" | 해외 {_skipped}건 검증제외" if _skipped else ""))
             for m in recon_trades.get("mismatches", [])[:5]:
                 print(f"    ⚠️ {m}")
+        elif _skipped:
+            print(f"  [체결 검증] 국내 {recon_trades['reviewed']}건 정상 "
+                  f"| 해외 {_skipped}건 검증제외(국내 ccld 조회로는 확인 불가)")
     except Exception as e:
         log.warning("execution_verify_failed", error=str(e))
         recon_trades = {}
