@@ -250,32 +250,14 @@ us_session:
     breakeven_buffer_pct: 0.001
     reentry_cooldown_days: 2
     inverse_requires_bearish: true
-  # 체결 품질 — 마켓터블 지정가(스프레드를 건너 즉시 체결).
-  # KIS 해외는 호가(bid/ask) 조회가 없어, 최종체결가에 지정가를 그대로 걸면
-  # 호가창 안쪽에 수동으로 얹혀 '틀렸을 때만 체결'되는 역선택이 생긴다
-  # (매수는 하락 중에만, 매도는 상승 중에만 체결 → 비싸게 사고 싸게 판 모양).
-  # 지정가는 내 한도가 아니라 호가창 최우선가에 체결되므로, buffer는 지불 가격이
-  # 아니라 '최악 체결가의 상한'이다.
   execution:
-    limit_buffer_pct: 0.0015      # 0.15% — 유동성 좋은 ETF 스프레드의 5~10배 여유
-    eod_limit_buffer_pct: 0.004   # 0.4% — 마감청산 미체결 = 오버나이트 캐리라 더 공격적
-    fill_wait_sec: 6              # 체결 확인 폴링 최대 대기
+    limit_buffer_pct: 0.0015
+    eod_limit_buffer_pct: 0.004
+    fill_wait_sec: 6
     fill_poll_sec: 1.5
-    # ── 지연 시세 방어 ──
-    # KIS 해외 시세는 계정에 실시간 시세가 신청돼 있지 않으면 지연(보통 15분)으로
-    # 내려온다. KIS 응답에 이를 알려주는 필드가 없어 자동 판정이 불가능하므로
-    # 실측값을 여기에 명시한다. 측정: python -m scripts.debug_us_quote_delay
-    # (정규장 중 실행. GitHub Actions는 debug-once.yml 워크플로 사용)
-    #
-    # 0  = 실시간 (기존 동작)
-    # 15 = 15분 지연 → 지정가 buffer 자동 확대(+0.3%) + 스캘프 신규진입 차단
     quote_lag_min: 0
-    block_scalp_on_stale: true    # 지연 시 인트라데이 스캘프 진입 차단(청산은 계속)
+    block_scalp_on_stale: true
   eod_hold_winners: true
-  # 개장·폐장 시각은 src/utils/clock.py가 ET 09:30/16:00을 KST로 변환해 자동 계산한다.
-  # (서머 22:30~05:00 / 동절 23:30~06:00) DST 전환일에 자동으로 따라가므로
-  # market_open_kst·market_close_kst 하드코딩은 제거했다.
-  # summer_time은 하위호환용 잔존 키 — 값은 무시되고, 계산값과 어긋나면 경고만 남는다.
   summer_time: true
   max_positions: 3
   budget_pct: 0.4
