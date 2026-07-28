@@ -316,12 +316,13 @@ strong_sectors:
 - IT
 - 철강
 overnight_signal:
-  nasdaq_change: -0.18
-  sp500_change: 0.02
   direction: neutral
-  strength: 0.1
-  confidence_boost: 0
   recommended_action: normal
+  nasdaq_change: -1.02
+  sp500_change: 0.13
+  strength: 0.15
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: '244580'
   name: KODEX 바이오
