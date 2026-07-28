@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from src.utils.logger import log
+from src.utils.clock import kst_stamp, today_kst
 
 LEDGER_PATH = Path("logs/ledger.db")
 
@@ -137,7 +138,7 @@ def record_order_attempt(
                     status, gate_reason, strategy, reason)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    datetime.now().isoformat(timespec="seconds"),
+                    kst_stamp(),
                     market, side, symbol, name, qty, price, qty * price,
                     status, gate_reason, strategy, reason,
                 ),
@@ -167,7 +168,7 @@ def record_execution(
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     order_id,
-                    datetime.now().isoformat(timespec="seconds"),
+                    kst_stamp(),
                     market, side, symbol, name, qty, price, qty * price, broker_ref,
                 ),
             )
@@ -186,7 +187,7 @@ def snapshot_positions(
     """현재 보유 포지션 스냅샷 저장. journal_quick에서 호출."""
     if not holdings:
         return
-    snapshot_at = datetime.now().isoformat(timespec="seconds")
+    snapshot_at = kst_stamp()
     try:
         with _connect() as conn:
             for h in holdings:
@@ -221,7 +222,7 @@ def log_event(
             conn.execute(
                 "INSERT INTO events (occurred_at, type, severity, payload) VALUES (?, ?, ?, ?)",
                 (
-                    datetime.now().isoformat(timespec="seconds"),
+                    kst_stamp(),
                     event_type, severity,
                     json.dumps(payload or {}, ensure_ascii=False),
                 ),
@@ -326,7 +327,7 @@ def get_recent_orders(limit: int = 50, status: str | None = None) -> list[dict]:
 
 def get_blocked_orders_today() -> list[dict]:
     """오늘 안전장치가 차단한 주문 목록."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = today_kst().isoformat()
     try:
         with _connect() as conn:
             rows = conn.execute(

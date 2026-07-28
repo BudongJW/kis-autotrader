@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from src.utils.logger import log
+from src.utils.clock import kst_stamp, now_kst, today_kst
 
 TWAP_STATE_PATH = Path("logs/twap_state.json")
 
@@ -124,7 +125,7 @@ class TWAPEngine:
         """디스크에서 미완료 주문 복원. 전일 주문은 폐기."""
         if not TWAP_STATE_PATH.exists():
             return
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = today_kst().isoformat()
         try:
             with TWAP_STATE_PATH.open("r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -185,7 +186,7 @@ class TWAPEngine:
             signal_price=signal_price,
             reason=reason,
             tranches=tranches,
-            created_at=datetime.now().isoformat(timespec="seconds"),
+            created_at=kst_stamp(),
             last_tranche_time=0.0,
         )
         self.orders.append(order)
@@ -210,10 +211,8 @@ class TWAPEngine:
         # 동시호가 시간 진입 시 매수 트랜치 차단 (15:15 이후 신규 매수 거부됨)
         # KIS는 15:20부터 동시호가 처리. 15:15 이후 매수 주문은 거부될 가능성 큼.
         # 5-27 사례: 13:48 매수 결정 → TWAP 분할 → 15:20:34 트랜치 실행 → KIS 거부.
-        from datetime import datetime, time as dtime
-        from zoneinfo import ZoneInfo
-        _kst = ZoneInfo("Asia/Seoul")
-        _now_t = datetime.now(_kst).time()
+        from datetime import time as dtime
+        _now_t = now_kst().time()
         _CUTOFF = dtime(15, 15)
         _block_buy_late = _now_t >= _CUTOFF
 
@@ -279,7 +278,7 @@ class TWAPEngine:
                 if rt == "0":
                     tranche.executed = True
                     tranche.fill_price = current_price
-                    tranche.executed_at = datetime.now().isoformat(timespec="seconds")
+                    tranche.executed_at = kst_stamp()
                     order.last_tranche_time = now
 
                     log_trade(order.symbol, order.name, order.side,
@@ -302,7 +301,7 @@ class TWAPEngine:
             else:
                 tranche.executed = True
                 tranche.fill_price = current_price
-                tranche.executed_at = datetime.now().isoformat(timespec="seconds")
+                tranche.executed_at = kst_stamp()
                 order.last_tranche_time = now
                 print("    (dry-run)")
                 executed.append({
@@ -366,7 +365,7 @@ def _log_slippage(order: TWAPOrder) -> None:
             records = []
 
     records.append({
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "timestamp": kst_stamp(),
         "symbol": order.symbol,
         "name": order.name,
         "side": order.side,

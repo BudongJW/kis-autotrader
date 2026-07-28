@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import time as time_mod
 from datetime import datetime, time as dtime, timedelta
-from zoneinfo import ZoneInfo
 
 from src.config import settings
 from src.kis_client import KISClient
@@ -35,10 +34,13 @@ from src.bot.us_session import (
     check_us_risk,
     close_us_positions,
     load_us_positions,
+    quote_lag_min,
+    is_quote_stale,
+    report_quote_lag,
 )
 from src.utils.logger import log
-
-KST = ZoneInfo("Asia/Seoul")
+from src.utils.clock import KST, now_kst, is_us_dst, us_session_date_et
+from src.utils.market_calendar import is_us_trading_day, is_us_early_close
 
 # 루프 간격 (초)
 RISK_CHECK_INTERVAL = 60        # 리스크 체크: 1분
@@ -59,7 +61,7 @@ MAX_LOOP_RUNTIME_SEC = 340 * 60
 
 
 def _now() -> datetime:
-    return datetime.now(KST)
+    return now_kst()
 
 
 def _time_in_range(t: dtime, start: dtime, end: dtime) -> bool:
@@ -142,14 +144,30 @@ def run_loop(dry_run: bool) -> None:
 
     us_mom_on = bool(load_us_momentum_config().get("enabled", False))
 
+    # ── 휴장일 가드 ──
+    # 미국 공휴일에 루프를 돌리면 전일 종가로 매매 판단을 내리고 거부될 주문을 낸다.
+    session_et = us_session_date_et()
+    if not is_us_trading_day(session_et):
+        print(f"[US Night] {session_et} 미국장 휴장일. 루프 진입 안 함.")
+        return
+
     open_t, close_t = get_us_market_times()
-    summer = cfg.get("summer_time", False)
+    summer = is_us_dst()
+    early = is_us_early_close(session_et)
 
     print(f"\n{'=' * 60}")
     print(f"[US Night Loop] 미국장 야간 매매 시작")
     print(f"  mode={settings.mode.value} | dry_run={dry_run}")
-    print(f"  시간대: {'서머타임' if summer else '동절기'}")
+    print(f"  시간대: {'서머타임' if summer else '동절기'}"
+          f"{' | ⚠️ 조기 폐장일(13:00 ET)' if early else ''}")
+    print(f"  US 거래일: {session_et}")
     print(f"  개장: {open_t.strftime('%H:%M')} KST | 폐장: {close_t.strftime('%H:%M')} KST")
+    _lag = quote_lag_min()
+    if _lag > 0:
+        print(f"  ⚠️  시세 지연 {_lag:.0f}분 설정됨 — 지정가 buffer 확대"
+              f"{', 스캘프 신규진입 차단' if is_quote_stale() else ''}")
+    else:
+        print(f"  시세: 실시간 가정 (지연 실측은 scripts/debug_us_quote_delay.py)")
     print(f"  리스크 체크: {RISK_CHECK_INTERVAL}초 | 전략 체크: {STRATEGY_CHECK_INTERVAL}초")
     print(f"{'=' * 60}")
 
@@ -172,7 +190,11 @@ def run_loop(dry_run: bool) -> None:
             return
 
     wait_start = time_mod.time()
-    loop_start_epoch = wait_start  # 하드 타임아웃 전 자체 종료 기준
+    # 하드 타임아웃 전 자체 종료 기준. **개장 시점에 리셋**한다 —
+    # pre-open cron은 동절기에 개장(23:30 KST)까지 최대 2시간을 대기하는데,
+    # 그 대기가 예산을 먹으면 세션 한복판에서 불필요하게 핸드오프가 일어난다.
+    loop_start_epoch = wait_start
+    session_started = False
     MAX_WAIT_SECONDS = 7200  # 개장 대기 최대 2시간
 
     while True:
@@ -221,6 +243,21 @@ def run_loop(dry_run: bool) -> None:
             print(f"[{now:%H:%M:%S}] 미국장 개장 대기 ({open_t.strftime('%H:%M')} KST)")
             time_mod.sleep(60)
             continue
+
+        # ── 개장 확인 → 실행시간 예산 시작 ──
+        if not session_started:
+            session_started = True
+            loop_start_epoch = epoch_now
+            waited_min = (epoch_now - wait_start) / 60
+            if waited_min >= 1:
+                print(f"[{now:%H:%M:%S}] 개장 — 대기 {waited_min:.0f}분 종료. "
+                      f"실행시간 예산({MAX_LOOP_RUNTIME_SEC // 60}분) 시작.")
+            # 시세 지연 실측 — 장중에만 의미가 있어 개장 직후 1회. 로그만 남기고
+            # 매매 동작은 바꾸지 않는다(반영은 execution.quote_lag_min 설정으로).
+            try:
+                report_quote_lag(client)
+            except Exception as e:  # noqa: BLE001
+                log.warning("us_quote_lag_probe_failed", error=str(e))
 
         # ── 폐장 직전 청산 ──
         close_dt = _get_close_datetime(now, close_t)

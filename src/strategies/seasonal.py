@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from src.utils.clock import now_kst
 
 
 def get_seasonal_adjustment() -> dict:
@@ -18,7 +19,7 @@ def get_seasonal_adjustment() -> dict:
             - confidence_mult: 신뢰도 곱 (0.7~1.1)
             - reason: 설명 문자열
     """
-    month = datetime.now().month
+    month = now_kst().month
 
     if month in (11, 12, 1, 2, 3, 4):
         return {

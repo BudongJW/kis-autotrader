@@ -6,13 +6,20 @@ on:
     # concurrency cancel-in-progress: false 이므로 진행 중 loop가 있으면 새 cron은 큐잉/드롭됨.
     # → 봇이 살아있으면 노이즈 없음, 죽었으면 즉시 새 loop 기동.
     #
+    # cron은 TZ와 무관하게 항상 UTC로 해석된다. 주석의 KST = UTC + 9h.
+    # 장 전 cron이 요일 0-4(일~목 UTC)인 건 +9h 하면 KST 월~금이 되기 때문.
+    # 여기에 1-5를 쓰면 KST 화~토가 된다.
+    #
     # Pre-market 3중화 (장 시작 직전 토큰 갱신 + 봇 준비)
-    - cron: '0 23 * * 0-4'    # 08:00 KST
-    - cron: '30 23 * * 0-4'   # 08:30 KST
-    - cron: '55 23 * * 0-4'   # 08:55 KST
-    # 장중 watchdog: 매 5분마다 (UTC 00:00~06:55 = KST 09:00~15:55)
-    # 진행 중 loop가 살아있으면 모두 큐잉/드롭, 죽었으면 즉시 새 loop dispatch
-    - cron: '*/5 0-6 * * 1-5'
+    - cron: '0 23 * * 0-4'    # KST 08:00 (월~금)
+    - cron: '30 23 * * 0-4'   # KST 08:30
+    - cron: '55 23 * * 0-4'   # KST 08:55
+    # 장중 watchdog: 매 5분. 진행 중 loop가 살아있으면 큐잉/드롭, 죽었으면 즉시 재기동.
+    # MARKET_END(15:30 KST = 06:30 UTC)까지만 — 그 뒤 발화는 루프가 즉시 break해서
+    # run 목록만 더럽힌다.
+    - cron: '*/5 0-5 * * 1-5'              # UTC 00:00~05:55 = KST 09:00~14:55
+    - cron: '0,5,10,15,20,25,30 6 * * 1-5' # UTC 06:00~06:30 = KST 15:00~15:30
+    # 휴장일(설·추석·대체공휴일 등)은 봇이 exchange_calendars로 판정해 즉시 종료.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -236,6 +243,11 @@ jobs:
         with:
           name: kis-token-cache
           path: logs/.kis_token_cache.json
+          # 토큰 캐시는 닷파일이라 upload-artifact@v4가 기본으로 제외한다.
+          # 이 줄이 없으면 업로드가 매번 빈손("No files were found")이 되어
+          # 캐시가 run 간에 전혀 보존되지 않고 실행마다 토큰을 재발급받는다
+          # (KIS '1분 내 재발급 금지'에 걸릴 여지 + kis_auth의 락·race 처리 무력화).
+          include-hidden-files: true
           overwrite: true
           retention-days: 1
         if: always()

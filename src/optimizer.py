@@ -25,6 +25,7 @@ from src.backtest.runner import load_history, run_backtest
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
 from src.strategies.ta_composite import DEFAULT_WEIGHTS
 from src.market_regime import analyze_regime
+from src.utils.clock import now_kst, today_kst
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 
@@ -146,7 +147,7 @@ def optimize() -> list[OptResult]:
         print("optuna 미설치 — 그리드서치 폴백")
         use_optuna = False
 
-    end = datetime.now()
+    end = now_kst()
     start = end - timedelta(days=180)
     start_str = start.strftime("%Y-%m-%d")
     end_str = end.strftime("%Y-%m-%d")
@@ -281,7 +282,7 @@ def update_config(results: list[OptResult]) -> None:
     print(f"    학습 Sharpe={best.sharpe:.2f} → 검증 Sharpe={best.val_sharpe:.2f}")
 
     # 시장 환경 분석 (최적 종목 기준)
-    end = datetime.now()
+    end = now_kst()
     start = end - timedelta(days=90)
     try:
         history = load_history(best.symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
@@ -301,7 +302,7 @@ def update_config(results: list[OptResult]) -> None:
     cfg["strategies"]["volatility_breakout"] = {
         "k": final_k,
         "trend_ma": best.ma,
-        "optimized_at": datetime.now().strftime("%Y-%m-%d"),
+        "optimized_at": today_kst().isoformat(),
         "train_sharpe": round(best.sharpe, 2),
         "train_return": round(best.total_return * 100, 2),
         "train_mdd": round(best.mdd * 100, 2),
@@ -334,7 +335,7 @@ def update_config(results: list[OptResult]) -> None:
             "volatility": regime.volatility,
             "trend_score": regime.trend_score,
             "vol_percentile": regime.vol_percentile,
-            "analyzed_at": datetime.now().strftime("%Y-%m-%d"),
+            "analyzed_at": today_kst().isoformat(),
         }
 
     with CONFIG_PATH.open("w", encoding="utf-8") as f:
@@ -357,7 +358,7 @@ def train_lgbm_model() -> None:
         return
 
     print("\n=== LightGBM 모델 학습 ===")
-    end = datetime.now()
+    end = now_kst()
     start = end - timedelta(days=365)
 
     with CONFIG_PATH.open(encoding="utf-8") as f:

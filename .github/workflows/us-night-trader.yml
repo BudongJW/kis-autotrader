@@ -5,14 +5,20 @@ on:
     # public repo라 분 한도 무제한. 매 5분 watchdog cron으로 dead time 최소화.
     # concurrency cancel-in-progress: false → 진행 중 loop가 있으면 새 cron은 큐잉/드롭.
     #
-    # Pre-open (서머/동절 모두 커버, UTC 12:30~14:30)
-    - cron: '30,50 12 * * 1-5'    # 21:30, 21:50 KST
-    - cron: '10 13 * * 1-5'       # 22:10 KST
-    # 미국장 본세션 watchdog (서머 22:30~05:00 KST = UTC 13:30~20:00)
-    # 동절 23:30~06:00 KST = UTC 14:30~21:00 → 양쪽 다 커버
-    - cron: '*/5 13-20 * * 1-5'   # UTC 13:00~20:55 매 5분
-    - cron: '*/15 21 * * 1-5'     # UTC 21:00~21:45 (동절 마감 직전)
-    # 봇 내부에서 is_us_market_hours()로 실제 개장 여부 확인 → 비개장 시 즉시 종료
+    # cron은 TZ와 무관하게 항상 UTC로 해석된다. 주석의 KST = UTC + 9h.
+    #
+    # Pre-open (서머/동절 모두 커버, UTC 12:30~13:10)
+    - cron: '30,50 12 * * 1-5'    # KST 21:30, 21:50
+    - cron: '10 13 * * 1-5'       # KST 22:10
+    # 본세션 watchdog. 서머 개장 22:30 KST(=13:30 UTC), 동절 23:30 KST(=14:30 UTC)
+    # 폐장은 서머 05:00 KST(=20:00 UTC), 동절 06:00 KST(=21:00 UTC) → 양쪽 다 커버
+    - cron: '*/5 13-20 * * 1-5'   # UTC 13:00~20:55 매 5분 (KST 22:00~익일 05:55)
+    # 동절기 폐장(06:00 KST = 21:00 UTC) 마지막 안전망 — 직전 watchdog가 05:55 KST라
+    # 그 사이에 루프가 죽으면 마감청산이 통째로 누락된다. 이 1회분이 그걸 받는다.
+    # (21:15 이후는 두 계절 모두 폐장 뒤라 무의미해서 제거)
+    - cron: '0 21 * * 1-5'        # KST 06:00
+    # 개장/폐장 시각은 봇이 ET 기준으로 자동 계산(src/utils/clock.py)하고,
+    # 휴장일·조기폐장은 exchange_calendars로 판정 → 비개장 시 즉시 종료.
 
   workflow_dispatch:
     inputs:
@@ -233,6 +239,11 @@ jobs:
         with:
           name: kis-token-cache
           path: logs/.kis_token_cache.json
+          # 토큰 캐시는 닷파일이라 upload-artifact@v4가 기본으로 제외한다.
+          # 이 줄이 없으면 업로드가 매번 빈손("No files were found")이 되어
+          # 캐시가 run 간에 전혀 보존되지 않고 실행마다 토큰을 재발급받는다
+          # (KIS '1분 내 재발급 금지'에 걸릴 여지 + kis_auth의 락·race 처리 무력화).
+          include-hidden-files: true
           overwrite: true
           retention-days: 1
         if: always()

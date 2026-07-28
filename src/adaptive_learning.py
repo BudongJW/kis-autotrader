@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.utils.logger import log
+from src.utils.clock import today_kst
 
 GAP_ACCURACY_PATH = Path("logs/gap_accuracy.json")
 HOLD_OUTCOMES_PATH = Path("logs/hold_outcomes.json")
@@ -64,7 +65,7 @@ def record_gap_signal(gap_signal: dict, kospi_open_change: float) -> None:
         correct = abs(kospi_open_change) < 0.5  # 중립 예측 + 실제 보합 → 정답
 
     records.append({
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "nasdaq_change": gap_signal.get("nasdaq_change", 0),
         "sp500_change": gap_signal.get("sp500_change", 0),
         "direction": direction,
@@ -144,7 +145,7 @@ def record_hold_outcome(
     """보유 연장 또는 시가 매도 결과를 기록."""
     records = _load_json(HOLD_OUTCOMES_PATH)
     records.append({
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "symbol": symbol,
         "hold_days": hold_days,
         "action": action_taken,
@@ -239,7 +240,7 @@ def record_sector_trade(
     """섹터 기반 매매 결과를 기록."""
     records = _load_json(SECTOR_ACCURACY_PATH)
     records.append({
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "symbol": symbol,
         "sector": sector,
         "strong_sector": was_strong_sector,
@@ -307,7 +308,7 @@ def record_us_trade_result(
     records = _load_json(US_TRADE_HISTORY_PATH)
     pnl_pct = (sell_price - buy_price) / buy_price if buy_price > 0 else 0
     records.append({
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "symbol": symbol,
         "asset_type": asset_type,
         "buy_price": buy_price,
@@ -422,7 +423,7 @@ def record_cross_market(
     """
     records = _load_json(CROSS_MARKET_PATH)
     records.append({
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": today_kst().isoformat(),
         "us_change": round(us_market_change, 3),
         "kr_gap": round(kr_next_open_change, 3),
         "us_regime": us_regime,
@@ -537,7 +538,7 @@ def run_adaptive_learning(client, cfg: dict) -> dict:
     # 경험 버퍼에서 오늘 평가된 거래의 섹터 정보 추출
     try:
         from src.experience import _load_experience
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = today_kst().isoformat()
         exp = _load_experience()
         for r in exp:
             if (r.get("date") == today_str and r.get("evaluated")
@@ -621,7 +622,7 @@ def run_us_post_learning(client, cfg: dict) -> dict:
     # ── 1. US 거래 결과 수집 및 기록 ──
     print("\n  [1] US 거래 결과 평가...")
     import csv
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
     trade_log = Path("logs/trades.csv")
     us_buys: dict[str, float] = {}
     us_trades: list[dict] = []

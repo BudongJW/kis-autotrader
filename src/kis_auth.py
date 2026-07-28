@@ -23,6 +23,7 @@ from pathlib import Path
 import requests
 
 from src.config import settings
+from src.utils.clock import now_kst, parse_kst
 
 TOKEN_CACHE_PATH = Path("logs/.kis_token_cache.json")
 TOKEN_LOCK_PATH = Path("logs/.kis_token_cache.lock")
@@ -38,12 +39,12 @@ class TokenBundle:
 
     @property
     def is_valid(self) -> bool:
-        return datetime.now() < self.expires_at - timedelta(seconds=TOKEN_REFRESH_MARGIN_SEC)
+        return now_kst() < self.expires_at - timedelta(seconds=TOKEN_REFRESH_MARGIN_SEC)
 
     @property
     def is_usable(self) -> bool:
         """만료까지 30초 이상 남았으면 일단 쓸 수 있음 (race 시 폴백용)."""
-        return datetime.now() < self.expires_at - timedelta(seconds=30)
+        return now_kst() < self.expires_at - timedelta(seconds=30)
 
     def to_dict(self) -> dict:
         return {
@@ -56,7 +57,9 @@ class TokenBundle:
     def from_dict(cls, d: dict) -> TokenBundle:
         return cls(
             access_token=d["access_token"],
-            expires_at=datetime.fromisoformat(d["expires_at"]),
+            # 이전 버전이 남긴 캐시는 naive라 그대로 두면 is_valid의 aware 비교에서
+            # TypeError가 난다. 토큰 캐시는 artifact로 run 간에 넘어오므로 반드시 정규화.
+            expires_at=parse_kst(d["expires_at"]),
             mode=d["mode"],
         )
 
@@ -182,7 +185,7 @@ def _request_new_token() -> TokenBundle:
     expires_in_sec = int(data.get("expires_in", 86400))
     return TokenBundle(
         access_token=data["access_token"],
-        expires_at=datetime.now() + timedelta(seconds=expires_in_sec),
+        expires_at=now_kst() + timedelta(seconds=expires_in_sec),
         mode=settings.mode.value,
     )
 

@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from src.utils.logger import log
+from src.utils.clock import kst_stamp, today_kst
 
 EXPERIENCE_PATH = Path("logs/experience.json")
 REGIME_MEMORY_PATH = Path("logs/regime_memory.json")
@@ -191,8 +192,8 @@ def log_decision(
     records = _load_experience()
 
     record = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "timestamp": kst_stamp(),
+        "date": today_kst().isoformat(),
         "symbol": symbol,
         "name": name,
         "action": action,
@@ -233,7 +234,7 @@ def evaluate_outcomes(holdings_pnl: dict[str, float],
         today_trades: {symbol: {"buy_price": int, "sell_price": int, "pnl_pct": float}}
     """
     records = _load_experience()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
 
     for record in records:
         if record.get("evaluated") or record.get("date") != today_str:

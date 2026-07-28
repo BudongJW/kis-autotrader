@@ -24,7 +24,6 @@ import sys
 import time as time_mod
 from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -60,6 +59,8 @@ from src.safety import killswitch
 from src.safety.order_gates import check_order
 from src.strategies.r_multiple import log_r_multiple
 from src.utils.logger import log
+from src.utils.clock import KST, now_kst, today_kst
+from src.utils.market_calendar import is_kr_trading_day
 
 
 def _safe_order_cash(client, symbol: str, qty: int, price: float, side: str) -> dict:
@@ -108,8 +109,6 @@ def _safe_order_cash(client, symbol: str, qty: int, price: float, side: str) -> 
                          reason=resp.get("msg1", "")[:200])
     return resp
 
-KST = ZoneInfo("Asia/Seoul")
-
 MARKET_OPEN = dtime(9, 0)
 MARKET_CLOSE = dtime(15, 20)
 MARKET_END = dtime(15, 30)
@@ -119,7 +118,7 @@ CONFIG_PATH = Path("configs/strategy.yaml")
 
 def _now() -> datetime:
     """KST 기준 현재 시각. GitHub Actions(UTC) 환경에서도 안전."""
-    return datetime.now(KST)
+    return now_kst()
 
 
 # ETF 전략에 전체 자본 집중 (급등주 전략 폐지)
@@ -1713,6 +1712,10 @@ def run_once(dry_run: bool) -> None:
     print(f"[{now:%Y-%m-%d %H:%M:%S}] mode={settings.mode.value} | "
           f"거래: {summary['total_trades']}건, PnL: {summary['pnl']:+,}원 ({summary['pnl_pct']:+.1f}%)")
 
+    if not is_kr_trading_day(now.date()):
+        print(f"  {now.date()} KRX 휴장일. 스킵.")
+        return
+
     if t < MARKET_OPEN or t > MARKET_END:
         print(f"  장외 시간 ({t:%H:%M}). 스킵.")
         return
@@ -1960,6 +1963,14 @@ def run_loop(dry_run: bool) -> None:
     매 5분: ETF 변동성 돌파 전략 실행
     매 3분: 터뷸런스 필터 갱신
     """
+    # ── 휴장일 가드 ──
+    # cron은 UTC 월~금이라 한국 공휴일(설·추석·대체공휴일 등)에도 발화한다.
+    # 가드가 없으면 전일 종가로 매매 판단을 내리고 거부될 주문을 낸다.
+    today = today_kst()
+    if not is_kr_trading_day(today):
+        print(f"[루프 모드] {today} KRX 휴장일. 루프 진입 안 함.")
+        return
+
     summary = get_summary()
     print(f"{'=' * 60}")
     print(f"[루프 모드] 1분 간격 연속 감시 시작")
@@ -1973,7 +1984,12 @@ def run_loop(dry_run: bool) -> None:
     universe_syms = {s["symbol"] for s in universe}
     twap = TWAPEngine()
 
-    loop_start_epoch = time_mod.time()  # 하드 타임아웃 전 자체 종료 기준
+    # 하드 타임아웃 전 자체 종료 기준. **개장(09:00) 시점에 리셋**한다 —
+    # pre-market cron은 08:00부터 뜨는데, 그 1시간 대기가 예산을 먹으면
+    # 세션 한복판에서 불필요하게 핸드오프가 일어난다.
+    loop_start_epoch = time_mod.time()
+    wait_start_epoch = loop_start_epoch
+    session_started = False
     last_strategy_check = 0.0     # epoch. 전략 체크 마지막 시각
     last_turbulence_check = 0.0   # epoch. 터뷸런스 체크 마지막 시각
     last_adopt_check = 0.0        # epoch. 보유분 흡수 재동기화 마지막 시각
@@ -2043,6 +2059,15 @@ def run_loop(dry_run: bool) -> None:
                 print(f"[{now:%H:%M:%S}] 장 시작 대기 ({wait:.0f}초)")
             time_mod.sleep(max(1, wait))
             continue
+
+        # ── 개장 확인 → 실행시간 예산 시작 ──
+        if not session_started:
+            session_started = True
+            loop_start_epoch = epoch_now
+            waited_min = (epoch_now - wait_start_epoch) / 60
+            if waited_min >= 1:
+                print(f"[{now:%H:%M:%S}] 개장 — 대기 {waited_min:.0f}분 종료. "
+                      f"실행시간 예산({MAX_LOOP_RUNTIME_SEC // 60}분) 시작.")
 
         # ── 보유 현황 조회 ──
         holdings = get_all_holdings(client)

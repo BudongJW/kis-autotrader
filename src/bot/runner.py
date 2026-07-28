@@ -33,6 +33,7 @@ from src.kis_client import KISClient
 from src.strategies.base import BaseStrategy, SignalType
 from src.strategies.volatility_breakout import VolatilityBreakoutStrategy
 from src.utils.logger import log
+from src.utils.clock import now_kst, today_kst
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "volatility_breakout": VolatilityBreakoutStrategy,
@@ -47,7 +48,7 @@ MARKET_END = dtime(15, 30)
 
 
 def is_market_hours() -> bool:
-    now = datetime.now().time()
+    now = now_kst().time()
     return MARKET_OPEN <= now <= MARKET_END
 
 
@@ -77,7 +78,7 @@ def fetch_recent_history(client: KISClient, symbol: str, days: int = 30) -> pd.D
         from datetime import date, timedelta
         rows = []
         seen_dates: set[str] = set()
-        end_d = date.today()
+        end_d = today_kst()
         # 영업일 비율 ~0.7. 안전 마진을 두고 1.6배 + 20일.
         remaining = int(days * 1.6) + 20
         # 무한 루프 방지 가드
@@ -201,7 +202,7 @@ def main() -> None:
 
     try:
         while True:
-            now = datetime.now()
+            now = now_kst()
 
             if not is_market_hours():
                 # 장외 시간: 상태 초기화 후 대기

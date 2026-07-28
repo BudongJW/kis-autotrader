@@ -1,6 +1,6 @@
 """미국 ETF 야간 매매 전략 — 한국 밤 시간대 미국장 운영.
 
-시간대 (KST 기준):
+시간대 (KST 기준) — src/utils/clock.py가 ET 09:30/16:00을 변환해 자동 판정:
   서머타임: 22:30~05:00  (3월 둘째 일요일 ~ 11월 첫째 일요일)
   동절기:   23:30~06:00
 
@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import json
+import math
+import time as time_mod
 from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yaml
@@ -36,9 +37,12 @@ from src.risk_manager import (load_positions, save_positions, record_buy,
 from src.tracker import log_trade
 from src.experience import log_decision
 from src.utils.logger import log
-
-KST = ZoneInfo("Asia/Seoul")
-EST = ZoneInfo("America/New_York")
+from src.utils.clock import (
+    KST, ET, now_kst, kst_stamp, parse_kst, us_session_date_et, is_us_dst,
+)
+# 캘린더 인식 버전(조기 폐장 반영) — clock.us_market_times_kst의 정규장 전용
+# 버전이 아니라 이쪽을 써야 조기 폐장일에 강제청산 타이밍이 맞는다.
+from src.utils.market_calendar import us_market_times_kst, is_us_trading_day
 
 CONFIG_PATH = Path("configs/strategy.yaml")
 US_STATE_PATH = Path("logs/us_session_state.json")
@@ -60,20 +64,16 @@ def load_us_universe() -> list[dict]:
 
 
 def is_us_market_hours() -> bool:
-    """미국 정규장 시간인지 확인 (KST 기준)."""
-    cfg = load_us_config()
-    if not cfg.get("enabled", False):
+    """미국 정규장 시간인지 확인 (KST 기준). 휴장일·조기폐장 반영."""
+    if not load_us_config().get("enabled", False):
         return False
 
-    now = datetime.now(KST).time()
-    summer = cfg.get("summer_time", False)
+    now_dt = now_kst()
+    if not is_us_trading_day(us_session_date_et(now_dt)):
+        return False
 
-    if summer:
-        open_t = dtime(22, 30)
-        close_t = dtime(5, 0)
-    else:
-        open_t = dtime(23, 30)
-        close_t = dtime(6, 0)
+    now = now_dt.time()
+    open_t, close_t = get_us_market_times(now_dt)
 
     # 자정 넘어가는 시간 처리
     if open_t > close_t:
@@ -81,13 +81,45 @@ def is_us_market_hours() -> bool:
     return open_t <= now <= close_t
 
 
-def get_us_market_times() -> tuple[dtime, dtime]:
-    """(open_kst, close_kst) 반환."""
-    cfg = load_us_config()
-    summer = cfg.get("summer_time", False)
-    if summer:
-        return dtime(22, 30), dtime(5, 0)
-    return dtime(23, 30), dtime(6, 0)
+def get_us_market_times(now: datetime | None = None) -> tuple[dtime, dtime]:
+    """(open_kst, close_kst) 반환. 서머타임은 ET 기준으로 자동 판정.
+
+    예전엔 configs/strategy.yaml의 `summer_time` 불리언을 사람이 연 2회 직접
+    뒤집어야 했다. 놓치면 폐장 시각을 오인해 (a) 실제 폐장 1시간 전에 강제 청산하고
+    (b) 장이 열린 마지막 1시간 동안 손절이 멈추거나, 반대 방향에선 이미 닫힌 장에
+    청산 주문을 넣어 실패 → 의도치 않은 오버나이트 캐리가 났다.
+    이제 ET 09:30/16:00을 KST로 변환해 DST 전환을 자동으로 따라간다.
+
+    `summer_time` 키는 남겨두되 계산값과 어긋나면 경고만 남긴다(값은 무시).
+    조기 폐장일(13:00 ET)이면 폐장이 3시간 앞당겨진다.
+    """
+    open_t, close_t = us_market_times_kst(now)
+    _warn_stale_summer_flag_once(now, open_t, close_t)
+    return open_t, close_t
+
+
+_summer_flag_warned = False
+
+
+def _warn_stale_summer_flag_once(now, open_t, close_t) -> None:
+    """yaml의 summer_time이 계산값과 어긋나면 경고 (프로세스당 1회).
+
+    get_us_market_times()는 루프에서 분당 여러 번 호출되므로 매번 찍으면
+    DST 전환 후 로그가 경고로 도배된다.
+    """
+    global _summer_flag_warned
+    if _summer_flag_warned:
+        return
+    cfg_summer = load_us_config().get("summer_time")
+    if cfg_summer is None or bool(cfg_summer) == is_us_dst(now):
+        return
+    _summer_flag_warned = True
+    log.warning("us_summer_time_flag_stale",
+                config_value=bool(cfg_summer), computed_dst=is_us_dst(now),
+                open_kst=open_t.strftime("%H:%M"),
+                close_kst=close_t.strftime("%H:%M"),
+                hint="configs/strategy.yaml us_session.summer_time은 더 이상 "
+                     "사용되지 않습니다(ET 기준 자동 계산). 제거해도 됩니다.")
 
 
 # ──────────────────────────────────────────────────────────
@@ -178,6 +210,287 @@ def _fetch_us_history_yf(symbol: str, days: int = 70) -> pd.DataFrame | None:
     except Exception as e:  # noqa: BLE001
         log.warning("us_daily_yf_failed", symbol=symbol, error=str(e))
         return None
+
+
+# ──────────────────────────────────────────────────────────
+# 체결 품질 — 마켓터블 지정가 + 실체결 확인
+# ──────────────────────────────────────────────────────────
+
+DEFAULT_LIMIT_BUFFER_PCT = 0.0015   # 0.15% — 유동성 좋은 ETF 스프레드(0.01~0.03%)의 5~10배 여유
+DEFAULT_FILL_WAIT_SEC = 6.0
+DEFAULT_FILL_POLL_SEC = 1.5
+
+
+def load_us_execution_config() -> dict:
+    return load_us_config().get("execution", {}) or {}
+
+
+def marketable_limit_price(side: str, last: float, buffer_pct: float | None = None) -> float:
+    """스프레드를 건너 즉시 체결되도록 만든 지정가 (센트 단위 정규화).
+
+    **왜 필요한가** — 예전엔 최종체결가(last)에 지정가를 그대로 걸었다. KIS 해외는
+    호가(bid/ask) 조회가 없어 스프레드를 볼 수 없는데, last에 건 지정가는
+    호가창 안쪽에 수동으로 얹히는 주문이라 **역선택**에 그대로 노출된다:
+
+      - 매수: ask가 내 가격까지 **내려와야** 체결 → 하락 중에만 체결 → 체결 직후
+        더 하락. 결과적으로 "비싸게 산" 모양이 된다.
+      - 매도: bid가 내 가격까지 **올라와야** 체결 → 상승 중에만 체결 → 체결 직후
+        더 상승. "싸게 판" 모양이 된다.
+      - 즉 **판단이 틀렸을 때만 체결되고, 맞았을 땐 미체결**로 남는 구조다.
+
+    지정가는 **내 한도가 아니라 호가창의 최우선 가격에 체결**되므로, 한도를
+    스프레드 너머로 걸어도 실제 체결가는 ask(매수)/bid(매도)다. buffer는 지불
+    가격이 아니라 **최악 체결가의 상한**이다. 유동성 좋은 ETF에서 이 비용은
+    한 틱(≈0.01~0.03%) 수준으로, 역선택 비용보다 훨씬 싸다.
+
+    Args:
+        side: "buy" / "sell"
+        last: KIS 최종체결가 (USD)
+        buffer_pct: 상한 여유. None이면 설정값 → 기본 0.15%
+    """
+    if last <= 0:
+        return 0.0
+    if buffer_pct is None:
+        buffer_pct = float(load_us_execution_config()
+                           .get("limit_buffer_pct", DEFAULT_LIMIT_BUFFER_PCT))
+    # 지연 시세면 그 사이 가격이 움직였을 수 있어 한도를 그만큼 넓혀야 체결된다
+    buffer_pct = lag_adjusted_buffer(max(0.0, float(buffer_pct)))
+
+    if side == "buy":
+        raw = last * (1.0 + buffer_pct)
+        # 센트 올림 — 내림하면 ask에 못 닿아 다시 수동 주문이 될 수 있다
+        return math.ceil(raw * 100 - 1e-9) / 100
+    if side == "sell":
+        raw = last * (1.0 - buffer_pct)
+        return max(0.01, math.floor(raw * 100 + 1e-9) / 100)
+    raise ValueError(f"side는 'buy' 또는 'sell': {side}")
+
+
+def _held_qty(client: KISClient, symbol: str) -> tuple[int, float]:
+    """브로커 잔고 기준 (보유수량, 평단). 조회 실패 시 (-1, 0.0)."""
+    try:
+        info = (get_us_holdings(client) or {}).get(symbol)
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_holdings_lookup_failed", symbol=symbol, error=str(e))
+        return -1, 0.0
+    if not info:
+        return 0, 0.0
+    try:
+        return int(float(info.get("qty", 0) or 0)), float(info.get("avg_price", 0) or 0)
+    except (TypeError, ValueError):
+        return 0, 0.0
+
+
+def confirm_us_fill(client: KISClient, symbol: str, side: str, qty_before: int,
+                    expected_qty: int) -> tuple[int, float]:
+    """주문 후 브로커 잔고를 폴링해 **실제 체결 수량·평단**을 확인.
+
+    `rt_cd == "0"`은 "주문 접수"일 뿐 체결이 아니다. 예전엔 접수만 보고 요청가로
+    포지션·거래기록을 남겨서 (a) 미체결인데 보유로 잡히는 유령 포지션, (b) 실제
+    체결가와 다른 손절 기준, (c) 저널 손익 왜곡이 생겼다.
+
+    Returns:
+        (체결수량, 평단USD). 확인 실패 시 (-1, 0.0) — 호출부가 요청값으로 폴백.
+    """
+    cfg = load_us_execution_config()
+    wait_total = float(cfg.get("fill_wait_sec", DEFAULT_FILL_WAIT_SEC))
+    poll = float(cfg.get("fill_poll_sec", DEFAULT_FILL_POLL_SEC))
+
+    deadline = time_mod.monotonic() + max(0.0, wait_total)
+    last_qty, last_avg = -1, 0.0
+    while True:
+        cur_qty, avg = _held_qty(client, symbol)
+        if cur_qty >= 0:
+            last_qty, last_avg = cur_qty, avg
+            filled = (cur_qty - qty_before) if side == "buy" else (qty_before - cur_qty)
+            if filled >= expected_qty:          # 전량 체결
+                return filled, avg
+            if time_mod.monotonic() >= deadline:
+                return max(0, filled), avg      # 부분/미체결
+        if time_mod.monotonic() >= deadline:
+            break
+        time_mod.sleep(min(poll, max(0.1, deadline - time_mod.monotonic())))
+
+    if last_qty < 0:
+        return -1, 0.0
+    filled = (last_qty - qty_before) if side == "buy" else (qty_before - last_qty)
+    return max(0, filled), last_avg
+
+
+DEFAULT_EOD_LIMIT_BUFFER_PCT = 0.004   # 0.4% — 마감청산 미체결 = 오버나이트 캐리라 더 공격적
+
+# 지연 시세 방어
+DEFAULT_QUOTE_LAG_MIN = 0.0            # 실측값을 설정에 넣기 전까지는 '실시간 가정'
+STALE_QUOTE_THRESHOLD_MIN = 3.0        # 이 이상이면 지연 시세로 간주
+# 지연 1분당 지정가 buffer에 더할 여유. 지연 동안 가격이 움직였을 수 있으므로
+# 그만큼 한도를 넓혀야 체결된다. 15분 지연이면 +0.3% (0.0002×15).
+LAG_BUFFER_PER_MIN = 0.0002
+MAX_LAG_BUFFER_PCT = 0.005             # 지연 보정 상한 0.5% — 무한정 벌리지 않는다
+
+
+def quote_lag_min() -> float:
+    """설정된 US 시세 지연(분). scripts/debug_us_quote_delay.py로 실측해 넣는다.
+
+    KIS 해외 시세는 계정에 실시간 시세가 신청돼 있지 않으면 지연(보통 15분)으로
+    내려온다. KIS 응답에는 이를 알려주는 필드가 없어 자동 판정이 불가능하므로
+    **실측값을 설정에 명시**하는 방식을 쓴다. 0이면 실시간으로 간주(기존 동작).
+    """
+    return max(0.0, float(load_us_execution_config()
+                          .get("quote_lag_min", DEFAULT_QUOTE_LAG_MIN)))
+
+
+def is_quote_stale() -> bool:
+    """지연 시세 방어 모드를 켤지."""
+    return quote_lag_min() >= STALE_QUOTE_THRESHOLD_MIN
+
+
+def measure_quote_lag(client: KISClient, symbol: str = "SPLG",
+                      exchange: str = "AMEX") -> tuple[float | None, dict]:
+    """KIS 시세가 몇 분 지연되는지 **실측**. (지연분, 상세) — 판정 불가면 (None, 상세).
+
+    KIS 응답에는 지연 여부를 알려주는 필드가 없다. 그래서 독립 소스(yfinance
+    1분봉)를 참조로 삼아, KIS `last`가 최근 어느 분봉의 종가와 가장 가까운지를
+    보고 그 분봉까지의 거리를 지연으로 추정한다.
+
+    정규장 중에만 의미가 있다(장외에는 양쪽 다 마지막 종가로 고정).
+    best-effort — 실패해도 예외를 올리지 않는다.
+    """
+    detail: dict = {"symbol": symbol}
+    try:
+        _, kis_last = _us_quote(client, symbol, exchange)
+        detail["kis_last"] = kis_last
+        if kis_last <= 0:
+            detail["error"] = "kis_quote_empty"
+            return None, detail
+
+        import yfinance as yf
+
+        df = yf.download(symbol, period="1d", interval="1m",
+                         auto_adjust=False, progress=False)
+        if df is None or df.empty:
+            detail["error"] = "yf_empty"
+            return None, detail
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.index = pd.to_datetime(df.index)
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        df.index = df.index.tz_convert(ET)
+
+        closes = df["Close"].dropna()
+        if closes.empty:
+            detail["error"] = "yf_no_close"
+            return None, detail
+
+        ref_last = float(closes.iloc[-1])
+        best_ts = (closes - kis_last).abs().idxmin()
+        lag_min = (closes.index[-1] - best_ts).total_seconds() / 60.0
+
+        detail.update({
+            "ref_last": ref_last,
+            "ref_bar_et": f"{closes.index[-1]:%H:%M}",
+            "matched_bar_et": f"{best_ts:%H:%M}",
+            "price_gap_pct": round((kis_last - ref_last) / ref_last * 100, 4) if ref_last else 0.0,
+            "lag_min": round(lag_min, 1),
+        })
+        return lag_min, detail
+    except Exception as e:  # noqa: BLE001
+        detail["error"] = str(e)[:200]
+        return None, detail
+
+
+def report_quote_lag(client: KISClient) -> None:
+    """세션 시작 시 시세 지연을 실측해 로그·콘솔에 남긴다 (매매 동작은 바꾸지 않음).
+
+    측정값으로 자동 매매를 바꾸지는 않는다 — 단발 측정은 노이즈가 있고, 조용히
+    동작이 바뀌는 편이 더 위험하다. 실측치를 보여주고, 반영은 사용자가
+    execution.quote_lag_min에 명시하는 방식.
+    """
+    lag, detail = measure_quote_lag(client)
+    if lag is None:
+        print(f"  시세 지연 실측: 판정 불가 ({detail.get('error', 'unknown')})")
+        log.info("us_quote_lag_probe_inconclusive", **detail)
+        return
+
+    configured = quote_lag_min()
+    print(f"  시세 지연 실측: 약 {lag:.0f}분 "
+          f"(KIS ${detail.get('kis_last', 0):.2f} vs 참조 ${detail.get('ref_last', 0):.2f}, "
+          f"차이 {detail.get('price_gap_pct', 0):+.3f}%)")
+    log.info("us_quote_lag_measured", configured_lag_min=configured, **detail)
+
+    if lag >= STALE_QUOTE_THRESHOLD_MIN and configured < STALE_QUOTE_THRESHOLD_MIN:
+        print(f"  ⚠️  실측 지연 {lag:.0f}분인데 설정은 {configured:.0f}분이다. "
+              f"configs/strategy.yaml us_session.execution.quote_lag_min을 "
+              f"{int(round(lag))}로 올려 방어 모드를 켜는 것을 검토할 것.")
+        log.warning("us_quote_lag_config_mismatch",
+                    measured_lag_min=lag, configured_lag_min=configured)
+
+
+def _block_scalp_on_stale() -> bool:
+    """지연 시세일 때 인트라데이 스캘프 신규 진입을 막을지 (기본 True)."""
+    return bool(load_us_execution_config().get("block_scalp_on_stale", True))
+
+
+def lag_adjusted_buffer(base_buffer: float) -> float:
+    """지연분만큼 넓힌 지정가 buffer.
+
+    지연 시세 기준으로 한도를 잡으면 실제 호가는 그 사이 움직여 있어, 좁은
+    한도로는 다시 미체결(=역선택 재발)이 된다. 지연에 비례해 넓히되 상한을 둔다.
+    """
+    lag = quote_lag_min()
+    if lag <= 0:
+        return base_buffer
+    return base_buffer + min(MAX_LAG_BUFFER_PCT, lag * LAG_BUFFER_PER_MIN)
+
+
+def _eod_buffer_pct() -> float:
+    return lag_adjusted_buffer(
+        float(load_us_execution_config()
+              .get("eod_limit_buffer_pct", DEFAULT_EOD_LIMIT_BUFFER_PCT)))
+
+
+def _sell_and_record(client: KISClient, symbol: str, exchange: str, qty: int,
+                     ref_price: float, limit_px: float, reason: str,
+                     eod: bool = False) -> bool:
+    """US 매도 주문 → 실체결 확인 → 기록. 전량 체결 시에만 포지션을 제거한다.
+
+    예전엔 rt_cd=0(접수)만 보고 곧바로 remove_us_position()을 호출했다. 미체결이면
+    실제로는 계속 보유 중인데 봇의 장부에서 사라져 **손절·마감청산 관리 대상에서
+    빠지는 유령 포지션**이 됐다.
+    """
+    qty_before, _ = _held_qty(client, symbol)
+    resp = client.order_overseas(symbol, qty, price=limit_px,
+                                 side="sell", exchange=exchange, order_type="00")
+    rt = resp.get("rt_cd")
+    print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
+    if rt != "0":
+        log.warning("us_sell_rejected", symbol=symbol, qty=qty,
+                    msg=resp.get("msg1", ""), eod=eod)
+        return False
+
+    filled, _ = confirm_us_fill(client, symbol, "sell", max(0, qty_before), qty)
+    if filled < 0:                      # 확인 실패 → 기존 동작(접수=성공)으로 폴백
+        log.warning("us_sell_fill_check_failed", symbol=symbol, qty=qty)
+        filled = qty
+    if filled <= 0:
+        print(f"      ⚠️ 미체결 — 포지션 유지(다음 주기 재시도)")
+        log.warning("us_sell_unfilled", symbol=symbol, qty=qty,
+                    limit=limit_px, eod=eod)
+        return False
+
+    px = limit_px if ref_price <= 0 else ref_price
+    log_trade(symbol, f"US_{symbol}", "sell", filled, int(px * 100),
+              market="US", reason=reason)
+    if filled < qty:
+        # 부분체결 — 남은 수량은 계속 관리해야 한다
+        positions = load_us_positions()
+        if symbol in positions:
+            positions[symbol]["qty"] = max(0, qty - filled)
+            save_us_positions(positions)
+        print(f"      부분체결 {filled}/{qty}주 — 잔여 {qty - filled}주 계속 관리")
+        return False
+    remove_us_position(symbol)
+    return True
 
 
 def get_us_price(client: KISClient, symbol: str, exchange: str = "NASD") -> float:
@@ -342,7 +655,7 @@ def record_us_buy(symbol: str, price: float, qty: int, exchange: str = "NASD",
     positions = load_us_positions()
     positions[symbol] = {
         "buy_price": price,
-        "buy_time": datetime.now(KST).isoformat(),
+        "buy_time": kst_stamp(),
         "qty": qty,
         "exchange": exchange,
         "asset_type": asset_type,
@@ -390,7 +703,7 @@ def adopt_us_carried_positions(broker_holdings: dict, universe_symbols: set,
         cur = float(info.get("current_price", buy_p) or buy_p)
         positions[sym] = {
             "buy_price": buy_p,
-            "buy_time": datetime.now(KST).isoformat(),
+            "buy_time": kst_stamp(),
             "qty": qty,
             "exchange": info.get("exchange", "NASD"),
             "asset_type": "us_long",
@@ -503,6 +816,102 @@ def eod_us_hold_decision(buy_price: float, cur_price: float,
 # 미국장 전략 실행
 # ──────────────────────────────────────────────────────────
 
+def check_us_daily_loss_limit(client: KISClient | None = None) -> tuple[bool, str]:
+    """US 세션 당일 손실이 한도를 넘었는지. True면 신규 매수 차단.
+
+    한국장에는 check_daily_loss_limit이 있었지만 US 세션에는 아무 한도가 없었다.
+    원인은 시간대다 — 기존 함수는 KST 날짜로 trades.csv를 필터링하는데, US 세션은
+    KST 자정을 가로지르므로 **세션 도중 00:00에 당일 손익이 리셋**된다.
+    여기서는 US 거래일(ET)로 키잉해 세션 전체를 하나로 집계한다.
+
+    한도 의미는 국내판과 동일하게 맞춘다 — 같은 risk.daily_loss_limit_pct를
+    공유하는데 분모가 다르면 "5%"가 시장마다 다른 뜻이 되기 때문이다:
+      - 실현 + 미실현 손익 합계를
+      - **US 평가자산(보유 평가액 + 가용 현금)** 으로 나눈다.
+    client가 없으면 미실현·자산 조회를 건너뛰고 실현손익만 원가 대비로 본다
+    (보수적 폴백).
+
+    trades.csv의 US 금액은 센트(=int(price*100)) 단위다.
+    """
+    import csv
+    from src.tracker import TRADE_LOG_PATH, is_kr_symbol
+
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as f:
+            limit_pct = (yaml.safe_load(f).get("risk", {})
+                         .get("daily_loss_limit_pct", 0.05))
+    except Exception:
+        limit_pct = 0.05
+    if not limit_pct or limit_pct <= 0 or not TRADE_LOG_PATH.exists():
+        return False, "한도 비활성 또는 거래 기록 없음"
+
+    session = us_session_date_et(now_kst()).isoformat()
+    buys: dict[str, list[int]] = {}
+    realized_cents = 0
+    cost_cents = 0
+
+    try:
+        with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                sym = row.get("symbol", "")
+                if is_kr_symbol(sym):          # 국내 체결(원)은 제외
+                    continue
+                try:
+                    if us_session_date_et(parse_kst(row.get("timestamp", ""))) \
+                            .isoformat() != session:
+                        continue
+                    price = int(row.get("price", 0) or 0)
+                    qty = int(row.get("qty", 0) or 0)
+                except Exception:  # noqa: BLE001
+                    continue
+                if row.get("side") == "buy":
+                    buys.setdefault(sym, []).append(price * qty)
+                    cost_cents += price * qty
+                elif row.get("side") == "sell" and buys.get(sym):
+                    realized_cents += price * qty - buys[sym].pop(0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_daily_loss_check_failed", error=str(e))
+        return False, "집계 실패"
+
+    realized = realized_cents / 100.0        # USD
+
+    # 미실현 + 평가자산 (국내판과 동일하게 미실현 손실도 반영)
+    unrealized = 0.0
+    equity = 0.0
+    if client is not None:
+        try:
+            for info in (get_us_holdings(client) or {}).values():
+                qty = float(info.get("qty", 0) or 0)
+                avg = float(info.get("avg_price", 0) or 0)
+                cur = float(info.get("current_price", 0) or 0)
+                if qty > 0 and cur > 0:
+                    equity += qty * cur
+                    if avg > 0:
+                        unrealized += (cur - avg) * qty
+            equity += get_us_available_cash(client)
+        except Exception as e:  # noqa: BLE001
+            log.warning("us_equity_lookup_failed", error=str(e))
+            equity = 0.0
+
+    total_loss = realized + min(0.0, unrealized)
+    if total_loss >= 0:
+        return False, f"당일 손익 {total_loss:+.2f} USD (이익 중)"
+
+    # 분모: 평가자산 우선, 조회 실패 시 당일 투입원가로 폴백
+    denom = equity if equity > 0 else cost_cents / 100.0
+    if denom <= 0:
+        return False, f"당일 손익 {total_loss:+.2f} USD (기준자산 미상)"
+
+    loss_pct = abs(total_loss) / denom
+    basis = "평가자산" if equity > 0 else "당일원가"
+    if loss_pct >= limit_pct:
+        return True, (f"US 일일 손실 한도 초과: {total_loss:+.2f} USD "
+                      f"(실현 {realized:+.2f} / 미실현 {unrealized:+.2f}, "
+                      f"{loss_pct:.1%} ≥ {limit_pct:.1%} of {basis}, 세션 {session})")
+    return False, (f"당일 손익 {total_loss:+.2f} USD "
+                   f"({loss_pct:.1%} / 한도 {limit_pct:.1%}, {basis})")
+
+
 def run_us_strategy(client: KISClient, dry_run: bool) -> int:
     """미국 ETF 변동성 돌파 전략 1회 실행.
 
@@ -522,6 +931,13 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
 
     strategy = VolatilityBreakoutStrategy(k=k, trend_ma=ma)
 
+    # 일일 손실 한도 — 초과 시 신규 매수만 차단(청산·손절은 계속)
+    loss_exceeded, loss_reason = check_us_daily_loss_limit(client)
+    if loss_exceeded:
+        print(f"  [US] ⚠️  {loss_reason} → 신규 매수 차단")
+        log.warning("us_daily_loss_limit_hit", reason=loss_reason)
+        return 0
+
     # 현재 보유 확인
     us_positions = load_us_positions()
     if len(us_positions) >= max_pos:
@@ -539,16 +955,22 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
     print(f"  [US] 예산: ${budget:.2f} (총 ${cash_usd:.2f}) | K={k}, MA={ma}")
 
     # 재진입 쿨다운: 최근 마감청산된 종목 재진입 금지(US 일일 churn 방지, 6-10~12 SCHG)
-    from datetime import datetime as _dt
+    #
+    # 날짜는 반드시 **US 거래일(ET)** 공간에서 비교한다. 거래 기록은 KST 타임스탬프인데
+    # US 마감청산은 항상 KST 자정 이후(04:45/05:45)에 일어나므로, KST 날짜로 비교하면
+    # 청산 기록이 세션 날짜보다 하루 뒤로 찍힌다. 그 결과 cooldown_days=2가 실제로는
+    # 3개 세션을 막았다. 게다가 기준 날짜를 함수 진입 시 한 번만 잡아서, 세션이 자정을
+    # 넘으면 이후 호출에서 쿨다운 창이 하루 밀렸다.
     cooldown_days = int(strat_cfg.get("reentry_cooldown_days", 2) or 0)
     _recent_sells = []
     if cooldown_days > 0:
         try:
             from src.merge_trades import _read
-            _recent_sells = [t for t in _read("logs/trades.csv") if t.get("side") == "sell"]
+            _recent_sells = [_to_us_session_row(t) for t in _read("logs/trades.csv")
+                             if t.get("side") == "sell"]
         except Exception:
             _recent_sells = []
-    _today = _dt.now().strftime("%Y-%m-%d")
+    _today = us_session_date_et(now_kst()).isoformat()
 
     # 레짐 연동: 한국장 bear면 인버스 우선
     regime_linked = cfg.get("regime_linked", True)
@@ -679,8 +1101,12 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             except Exception:
                 pass
 
+            # 마켓터블 지정가 — 스프레드를 건너 즉시 체결. 사이징도 이 가격 기준으로
+            # 해야 한도 상향분만큼 예수금이 모자라 거부되는 일이 없다.
+            buy_px = marketable_limit_price("buy", cur_price)
+
             # 매수 수량 계산
-            qty = int(budget // cur_price)
+            qty = int(budget // buy_px)
             if qty <= 0:
                 continue
 
@@ -688,31 +1114,52 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
             _min_usd = float(strat_cfg.get("min_position_usd", 0) or 0)
             if _min_usd > 0:
                 _avail_usd = get_us_available_cash(client)
-                _q2 = apply_min_position(qty, cur_price, _avail_usd, _min_usd)
+                _q2 = apply_min_position(qty, buy_px, _avail_usd, _min_usd)
                 if _q2 > qty:
                     print(f"    [최소포지션] {qty}주→{_q2}주 (≥${_min_usd:.0f}, 단타 수수료 대비 이득)")
                     qty = _q2
 
-            total_usd = qty * cur_price
-            print(f"    [US BUY] {name} {qty}주 @ ${cur_price:.2f} = ${total_usd:.2f} "
-                  f"(TA={ta.total:+.0f})")
+            total_usd = qty * buy_px
+            print(f"    [US BUY] {name} {qty}주 @ 한도 ${buy_px:.2f} "
+                  f"(현재가 ${cur_price:.2f}) ≤ ${total_usd:.2f} (TA={ta.total:+.0f})")
 
             if not dry_run:
+                qty_before, _ = _held_qty(client, symbol)
                 resp = client.order_overseas(
-                    symbol, qty, price=cur_price,
+                    symbol, qty, price=buy_px,
                     side="buy", exchange=exchange, order_type="00",
                 )
                 rt = resp.get("rt_cd")
                 print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
                 if rt == "0":
-                    log_trade(symbol, name, "buy", qty, int(cur_price * 100),  # cents로 기록
+                    # rt_cd=0은 '접수'일 뿐 체결이 아니다. 실제 체결수량·평단을
+                    # 확인해 그 값으로 기록해야 손절 기준·저널 손익이 맞는다.
+                    filled, avg_px = confirm_us_fill(client, symbol, "buy",
+                                                     max(0, qty_before), qty)
+                    if filled == 0:
+                        print(f"      ⚠️ 미체결 — 포지션 기록 안 함 (다음 주기 재시도)")
+                        log.warning("us_buy_unfilled", symbol=symbol, qty=qty,
+                                    limit=buy_px)
+                        continue
+                    if filled < 0:                    # 확인 실패 → 요청값으로 폴백
+                        filled, avg_px = qty, buy_px
+                        log.warning("us_fill_check_failed_fallback",
+                                    symbol=symbol, assumed_qty=qty, assumed_px=buy_px)
+                    elif avg_px <= 0:
+                        avg_px = buy_px
+                    if filled < qty:
+                        print(f"      부분체결 {filled}/{qty}주")
+                    print(f"      체결: {filled}주 @ ${avg_px:.2f} "
+                          f"(슬리피지 {(avg_px - cur_price) / cur_price:+.2%})")
+
+                    log_trade(symbol, name, "buy", filled, int(avg_px * 100),  # cents로 기록
                               market="US",
                               reason=f"US 매수: 변동성 돌파 + TA {ta.total:+.0f}")
-                    record_us_buy(symbol, cur_price, qty, exchange, asset_type)
+                    record_us_buy(symbol, avg_px, filled, exchange, asset_type)
                     log_decision(symbol, name, "buy",
                                  f"US 매수 (TA={ta.total:+.0f})",
-                                 cur_price, qty=qty, strategy="us_etf")
-                    return int(total_usd * 100)
+                                 avg_px, qty=filled, strategy="us_etf")
+                    return int(filled * avg_px * 100)
                 elif rt == "E":
                     log.warning("us_buy_error", symbol=symbol, msg=resp.get("msg1", ""))
             else:
@@ -746,18 +1193,12 @@ def check_us_risk(client: KISClient, dry_run: bool) -> None:
         should_sell, reason = check_us_stop_loss(symbol, cur_price, cfg)
         if should_sell:
             qty = pos.get("qty", 0)
-            print(f"  [US 리스크] {symbol} {qty}주 @ ${cur_price:.2f} — {reason}")
+            sell_px = marketable_limit_price("sell", cur_price)
+            print(f"  [US 리스크] {symbol} {qty}주 @ 한도 ${sell_px:.2f} "
+                  f"(현재가 ${cur_price:.2f}) — {reason}")
             if not dry_run:
-                resp = client.order_overseas(
-                    symbol, qty, price=cur_price,
-                    side="sell", exchange=exchange, order_type="00",
-                )
-                rt = resp.get("rt_cd")
-                print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
-                if rt == "0":
-                    log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100),
-                              market="US", reason=f"매도: {reason}")
-                    remove_us_position(symbol)
+                _sell_and_record(client, symbol, exchange, qty, cur_price, sell_px,
+                                 f"매도: {reason}")
             else:
                 print("    (dry-run)")
                 remove_us_position(symbol)
@@ -786,18 +1227,13 @@ def close_us_positions(client: KISClient, dry_run: bool) -> None:
             print(f"  [US 마감보유] {symbol} {qty}주 @ ${cur_price:.2f} — {why}")
             continue
 
-        print(f"  [US 마감청산] {symbol} {qty}주 @ ${cur_price:.2f} — {why}")
+        # 마감청산은 미체결이 곧 의도치 않은 오버나이트 캐리다 → 더 공격적인 한도.
+        sell_px = marketable_limit_price("sell", cur_price, _eod_buffer_pct())
+        print(f"  [US 마감청산] {symbol} {qty}주 @ 한도 ${sell_px:.2f} "
+              f"(현재가 ${cur_price:.2f}) — {why}")
         if not dry_run:
-            resp = client.order_overseas(
-                symbol, qty, price=cur_price,
-                side="sell", exchange=exchange, order_type="00",
-            )
-            rt = resp.get("rt_cd")
-            print(f"      응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
-            if rt == "0":
-                log_trade(symbol, f"US_{symbol}", "sell", qty, int(cur_price * 100),
-                          market="US", reason="매도: 미국장 마감 청산")
-                remove_us_position(symbol)
+            _sell_and_record(client, symbol, exchange, qty, cur_price, sell_px,
+                             "매도: 미국장 마감 청산", eod=True)
         else:
             print("      (dry-run)")
             remove_us_position(symbol)
@@ -874,19 +1310,33 @@ def _us_current_regime() -> str | None:
         return None
 
 
-def _minutes_until_us_close(now_kst: datetime, close_str: str) -> float:
+def _to_us_session_row(trade: dict) -> dict:
+    """거래 기록의 KST 타임스탬프를 **US 거래일(ET)** 로 바꾼 사본을 반환.
+
+    US 마감청산은 항상 KST 자정 이후에 찍히므로, KST 날짜 그대로 비교하면 같은
+    세션의 청산이 하루 뒤 날짜로 잡혀 쿨다운이 한 세션 더 길어진다.
+    """
+    raw = trade.get("timestamp") or trade.get("date") or ""
+    try:
+        session = us_session_date_et(parse_kst(raw)).isoformat()
+    except Exception:  # noqa: BLE001
+        return trade
+    return {**trade, "date": session, "timestamp": session}
+
+
+def _minutes_until_us_close(now_: datetime, close_str: str) -> float:
     """폐장까지 남은 분(KST). 자정 넘는 폐장(예 05:00)은 다음날로 보정."""
     try:
         ch, cm = int(close_str[:2]), int(close_str[3:5])
     except Exception:
         ch, cm = 5, 0
-    close_dt = now_kst.replace(hour=ch, minute=cm, second=0, microsecond=0)
-    if ch < 12 and now_kst.hour >= 12:
+    close_dt = now_.replace(hour=ch, minute=cm, second=0, microsecond=0)
+    if ch < 12 and now_.hour >= 12:
         close_dt += timedelta(days=1)
-    return (close_dt - now_kst).total_seconds() / 60.0
+    return (close_dt - now_).total_seconds() / 60.0
 
 
-def _minutes_since_us_open(now_kst: datetime, open_str: str) -> float:
+def _minutes_since_us_open(now_: datetime, open_str: str) -> float:
     """US 개장 후 경과 분(KST). 자정 넘는 세션이라 개장시각보다 이른 새벽이면 개장은 전날.
 
     진입창을 문자열 시각("01:00" ∉ "22:30~23:59")으로 판정하던 게 버그 —
@@ -896,10 +1346,10 @@ def _minutes_since_us_open(now_kst: datetime, open_str: str) -> float:
         oh, om = int(open_str[:2]), int(open_str[3:5])
     except Exception:
         oh, om = 22, 30
-    open_dt = now_kst.replace(hour=oh, minute=om, second=0, microsecond=0)
-    if now_kst < open_dt:                      # 01:00 < 22:30 → 개장은 전날 밤
+    open_dt = now_.replace(hour=oh, minute=om, second=0, microsecond=0)
+    if now_ < open_dt:                      # 01:00 < 22:30 → 개장은 전날 밤
         open_dt -= timedelta(days=1)
-    return (now_kst - open_dt).total_seconds() / 60.0
+    return (now_ - open_dt).total_seconds() / 60.0
 
 
 def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
@@ -917,11 +1367,17 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
     long_exch = str(cfg.get("long_exchange", "NASD"))
     inv_sym = str(cfg.get("inverse_symbol", "PSQ"))
     inv_exch = str(cfg.get("inverse_exchange", "AMEX"))
-    close_str = str(load_us_config().get("market_close_kst", "05:00"))
+    now = now_kst()
+    # 개장/폐장은 ET 기준 자동 계산 — yaml의 market_open_kst/market_close_kst는
+    # DST 전환 때 같이 썩는 하드코딩이라 더 이상 읽지 않는다.
+    open_t, close_t = get_us_market_times(now)
+    open_str = open_t.strftime("%H:%M")
+    close_str = close_t.strftime("%H:%M")
 
-    now_kst = datetime.now(KST)
-    now_hhmm = now_kst.strftime("%H:%M")
-    today = now_kst.strftime("%Y-%m-%d")
+    now_hhmm = now.strftime("%H:%M")
+    # 세션 상태는 KST 날짜가 아니라 US 거래일(ET)로 키잉 — US 세션은 KST 자정을
+    # 가로지르므로 KST 날짜로 잡으면 세션 도중에 상태가 리셋된다.
+    today = us_session_date_et(now).isoformat()
 
     state = _load_us_mom()
     meta = state.get("_meta", {})
@@ -930,12 +1386,11 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
         state = {"_meta": meta}
     session_open = meta.setdefault("session_open", {})
 
-    mins_left = _minutes_until_us_close(now_kst, close_str)
+    mins_left = _minutes_until_us_close(now, close_str)
     force_eod = mins_left <= float(cfg.get("session_exit_min_before", 15))
 
     # 진입창: 개장 후 N분 이내(개장경과분 기준 — 자정 넘김/루프지연에도 정상 동작)
-    open_str = str(load_us_config().get("market_open_kst", "22:30"))
-    mins_since_open = _minutes_since_us_open(now_kst, open_str)
+    mins_since_open = _minutes_since_us_open(now, open_str)
     entry_window_min = float(cfg.get("entry_window_min", 180))
     in_entry_window = 0 <= mins_since_open <= entry_window_min
 
@@ -974,19 +1429,17 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
         qty = int(pos["qty"])
         print(f"  [US-MOM] {sym} 청산: {why}")
         if not dry_run:
-            resp = client.order_overseas(sym, qty, price=cur, side="sell",
-                                         exchange=exch, order_type="00")
-            if resp.get("rt_cd") == "0":
-                log_trade(sym, sym, "sell", qty, int(cur * 100), market="US",
-                          reason=f"US모멘텀 청산: {why}")
-                remove_us_position(sym)
+            # 세션말 강제청산은 미체결이 곧 오버나이트 캐리 → 더 공격적인 한도
+            _buf = _eod_buffer_pct() if force_eod else None
+            _px = marketable_limit_price("sell", cur, _buf)
+            if _sell_and_record(client, sym, exch, qty, cur, _px,
+                                f"US모멘텀 청산: {why}", eod=force_eod):
                 del state[sym]
                 meta["cycles"] = int(meta.get("cycles", 0)) + 1
                 meta["last_exit_hhmm"] = now_hhmm
                 acted = True
             else:
-                print(f"      매도 실패 rt_cd={resp.get('rt_cd')} {resp.get('msg1', '')}")
-                state[sym] = pos
+                state[sym] = pos      # 미체결/거부 → 계속 관리
         else:
             print("      (dry-run 매도)")
             del state[sym]
@@ -1000,7 +1453,17 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
         print(f"  [US-MOM] 진입창 밖 (개장 후 {mins_since_open:.0f}분 > {entry_window_min:.0f}분)")
     elif not holding_now and not force_eod:
         ok, why = can_reenter(meta=meta, now_hhmm=now_hhmm, cfg=cfg)
-        if not ok:
+        stale_block = is_quote_stale() and _block_scalp_on_stale()
+        if stale_block:
+            # 지연 시세에서 인트라데이 스캘프는 구조적으로 성립하지 않는다.
+            # 진입창 90분·트레일 0.8%·손절 2.5%인데 시세가 15분 늦으면 신호를 본
+            # 시점엔 이미 그 움직임이 끝나 있다. **진입만** 막고 청산은 계속한다
+            # (보유분 리스크 관리는 지연 시세로라도 해야 하므로).
+            print(f"  [US-MOM] 시세 지연 {quote_lag_min():.0f}분 — 신규 진입 차단"
+                  f" (청산은 계속). execution.block_scalp_on_stale=false로 해제 가능")
+            log.warning("us_mom_entry_blocked_stale_quote",
+                        lag_min=quote_lag_min())
+        elif not ok:
             print(f"  [US-MOM] 재진입 보류: {why}")
         else:
             prev_close, cur = _us_quote(client, long_sym, long_exch)
@@ -1024,26 +1487,44 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
                 if tprice > 0:
                     avail = get_us_available_cash(client)
                     pos_usd = min(float(cfg.get("position_usd", 300)), avail)
-                    qty = int(pos_usd // tprice)
-                    if qty < 1 and avail >= tprice:
+                    tbuy_px = marketable_limit_price("buy", tprice)
+                    qty = int(pos_usd // tbuy_px)
+                    if qty < 1 and avail >= tbuy_px:
                         qty = 1  # 최소 1주 (가용이 1주는 감당할 때)
                     if qty >= 1:
-                        cost = qty * tprice
-                        print(f"    [US-MOM BUY] {tsym} {qty}주 @ ${tprice:.2f} "
-                              f"= ${cost:.2f} ({tdir})")
+                        cost = qty * tbuy_px
+                        print(f"    [US-MOM BUY] {tsym} {qty}주 @ 한도 ${tbuy_px:.2f} "
+                              f"(현재가 ${tprice:.2f}) ≤ ${cost:.2f} ({tdir})")
                         if not dry_run:
-                            resp = client.order_overseas(tsym, qty, price=tprice,
+                            _qb, _ = _held_qty(client, tsym)
+                            resp = client.order_overseas(tsym, qty, price=tbuy_px,
                                                          side="buy", exchange=texch,
                                                          order_type="00")
                             if resp.get("rt_cd") == "0":
-                                log_trade(tsym, tsym, "buy", qty, int(tprice * 100),
-                                          market="US",
-                                          reason=f"US모멘텀 {tdir}: {sig.reason}")
-                                record_us_buy(tsym, tprice, qty, texch, atype)
-                                state[tsym] = {"entry": tprice, "qty": qty,
-                                               "peak": tprice, "direction": tdir,
-                                               "exchange": texch}
-                                acted = True
+                                # 접수 != 체결. 실체결 수량·평단으로 기록해야
+                                # 트레일/본전 기준과 저널 손익이 맞는다.
+                                _f, _avg = confirm_us_fill(client, tsym, "buy",
+                                                           max(0, _qb), qty)
+                                if _f == 0:
+                                    print("      ⚠️ 미체결 — 진입 취소(다음 틱 재시도)")
+                                    log.warning("us_mom_buy_unfilled", symbol=tsym,
+                                                qty=qty, limit=tbuy_px)
+                                    _f = 0
+                                else:
+                                    if _f < 0:
+                                        _f, _avg = qty, tbuy_px
+                                    elif _avg <= 0:
+                                        _avg = tbuy_px
+                                    print(f"      체결: {_f}주 @ ${_avg:.2f} "
+                                          f"(슬리피지 {(_avg - tprice) / tprice:+.2%})")
+                                    log_trade(tsym, tsym, "buy", _f, int(_avg * 100),
+                                              market="US",
+                                              reason=f"US모멘텀 {tdir}: {sig.reason}")
+                                    record_us_buy(tsym, _avg, _f, texch, atype)
+                                    state[tsym] = {"entry": _avg, "qty": _f,
+                                                   "peak": _avg, "direction": tdir,
+                                                   "exchange": texch}
+                                    acted = True
                             else:
                                 print(f"      매수 실패 rt_cd={resp.get('rt_cd')} "
                                       f"{resp.get('msg1', '')}")

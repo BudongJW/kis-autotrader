@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils.logger import log
+from src.utils.clock import today_kst
 
 RISK_REPORT_PATH = Path("logs/tail_risk.json")
 
@@ -51,7 +52,7 @@ def compute_portfolio_var(
         window: 시뮬레이션 기간 (거래일)
         confidence: VaR 신뢰 수준
     """
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
 
     returns_dict = {}
     for sym, hist in held_histories.items():
@@ -143,7 +144,7 @@ def get_tail_risk_adjustment() -> tuple[float, str]:
     try:
         data = json.loads(RISK_REPORT_PATH.read_text(encoding="utf-8"))
         current = data.get("current", {})
-        if current.get("date") != datetime.now().strftime("%Y-%m-%d"):
+        if current.get("date") != today_kst().isoformat():
             return 1.0, "테일 리스크 미갱신 (어제 데이터)"
         return current.get("size_mult", 1.0), current.get("detail", "")
     except Exception:

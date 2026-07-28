@@ -22,6 +22,7 @@ import pandas_ta as pta
 from src.kis_client import KISClient
 from src.bot.runner import fetch_recent_history
 from src.utils.logger import log
+from src.utils.clock import now_kst, today_kst, kst_stamp, parse_kst
 
 POSITIONS_PATH = Path("logs/positions.json")
 
@@ -80,8 +81,8 @@ def record_buy(symbol: str, price: int, qty: int, atr: float = 0.0,
     positions = load_positions()
     positions[symbol] = {
         "buy_price": price,
-        "buy_time": datetime.now().isoformat(),
-        "buy_date": datetime.now().strftime("%Y-%m-%d"),
+        "buy_time": kst_stamp(),
+        "buy_date": today_kst().isoformat(),
         "qty": qty,
         "peak_price": price,  # 추적 손절용 최고가
         "hold_days": 0,       # 보유 일수 (장 시작 시 증가)
@@ -128,8 +129,8 @@ def adopt_carried_positions(broker_holdings: dict, universe_symbols: set,
         cur = int(float(info.get("current_price", buy_p) or buy_p))
         positions[sym] = {
             "buy_price": buy_p,
-            "buy_time": datetime.now().isoformat(),
-            "buy_date": datetime.now().strftime("%Y-%m-%d"),
+            "buy_time": kst_stamp(),
+            "buy_date": today_kst().isoformat(),
             "qty": qty,
             "peak_price": max(buy_p, cur),
             "hold_days": 1,
@@ -225,8 +226,9 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
     if buy_price <= 0:
         return False, "매수가 정보 없음"
     peak_price = pos.get("peak_price", buy_price)
-    buy_time = datetime.fromisoformat(pos["buy_time"])
-    now = datetime.now()
+    # 저장 시점에 따라 naive/aware가 섞여 있어 정규화 필수 (aware-naive 뺄셈 TypeError 방지)
+    buy_time = parse_kst(pos["buy_time"])
+    now = now_kst()
     hold_minutes = (now - buy_time).total_seconds() / 60
 
     pnl_pct = (current_price - buy_price) / buy_price
@@ -387,7 +389,7 @@ def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
     """
     import csv
     import yaml
-    from src.tracker import TRADE_LOG_PATH
+    from src.tracker import TRADE_LOG_PATH, is_kr_symbol
 
     try:
         config_path = Path("configs/strategy.yaml")
@@ -400,7 +402,7 @@ def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
     if not TRADE_LOG_PATH.exists():
         return False, "거래 기록 없음"
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
     buys: dict[str, list[int]] = {}
     daily_pnl = 0
 
@@ -410,6 +412,9 @@ def check_daily_loss_limit(client: KISClient) -> tuple[bool, str]:
             if not row.get("timestamp", "").startswith(today_str):
                 continue
             symbol = row.get("symbol", "")
+            # US 체결은 센트 단위라 원화 집계에 섞이면 안 된다 (별도 한도로 관리)
+            if not is_kr_symbol(symbol):
+                continue
             price = int(row.get("price", 0))
             qty = int(row.get("qty", 0))
             side = row.get("side", "")
@@ -483,7 +488,7 @@ def check_daily_profit_target(client: KISClient) -> tuple[bool, str]:
     """
     import csv
     import yaml
-    from src.tracker import TRADE_LOG_PATH
+    from src.tracker import TRADE_LOG_PATH, is_kr_symbol
 
     try:
         with Path("configs/strategy.yaml").open(encoding="utf-8") as f:
@@ -496,7 +501,7 @@ def check_daily_profit_target(client: KISClient) -> tuple[bool, str]:
     if not TRADE_LOG_PATH.exists():
         return False, "거래 기록 없음"
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_kst().isoformat()
     buys: dict[str, list[int]] = {}
     realized = 0
     with TRADE_LOG_PATH.open("r", encoding="utf-8") as f:
@@ -504,6 +509,8 @@ def check_daily_profit_target(client: KISClient) -> tuple[bool, str]:
             if not row.get("timestamp", "").startswith(today_str):
                 continue
             sym = row.get("symbol", "")
+            if not is_kr_symbol(sym):      # US 체결(센트)은 제외
+                continue
             price = int(row.get("price", 0) or 0)
             qty = int(row.get("qty", 0) or 0)
             side = row.get("side", "")
