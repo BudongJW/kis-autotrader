@@ -326,5 +326,24 @@
       "KOSDAQ150"
     ],
     "k_value": 0.66
+  },
+  {
+    "date": "2026-07-28",
+    "regime_trend": "sideways",
+    "regime_volatility": "normal",
+    "trend_score": -0.02,
+    "vol_percentile": 56.0,
+    "hmm_state": "bear",
+    "hmm_confidence": 0.5985528173368448,
+    "breadth": "weak",
+    "kospi_5d": -7.44,
+    "kosdaq_5d": -2.36,
+    "confidence": 0.31,
+    "strong_sectors": [
+      "바이오",
+      "IT",
+      "철강"
+    ],
+    "k_value": 0.7
   }
 ]
