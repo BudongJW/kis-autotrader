@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.59
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -17,14 +17,14 @@ strategies:
     backtest_mdd: -1.85
   ta_weights:
     rsi: 0.049
-    macd: 0.162
-    bb: 0.09
-    stoch: 0.125
-    adx: 0.09
-    ma: 0.162
-    obv: 0.179
-    mfi: 0.071
-    atr: 0.071
+    macd: 0.173
+    bb: 0.086
+    stoch: 0.121
+    adx: 0.086
+    ma: 0.173
+    obv: 0.173
+    mfi: 0.07
+    atr: 0.07
 day_plan:
   force_stance: null
 costs:
@@ -300,40 +300,33 @@ risk:
   - 나스닥
 market_regime:
   trend: sideways
-  volatility: normal
-  trend_score: -0.02
-  vol_percentile: 56.0
-  analyzed_at: 2026-07-28 09:15
-  hmm_state: bear
-  hmm_confidence: 0.5985528173368448
+  volatility: high
+  trend_score: -0.062
+  vol_percentile: 98.0
+  analyzed_at: 2026-07-29 09:15
+  hmm_state: bull
+  hmm_confidence: 0.9994230763714318
   hmm_transition:
-    bear: 0.005382283749436327
-    sideways: 0.9944346119769434
-    bull: 0.00018310427362037168
-market_confidence: 0.31
+    bear: 0.36348603666860624
+    bull: 0.5293393967423558
+    sideways: 0.10717456658903797
+market_confidence: 0.12
 strong_sectors:
-- 바이오
 - IT
-- 철강
 overnight_signal:
+  nasdaq_change: -0.22
+  sp500_change: 0.21
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -1.02
-  sp500_change: 0.13
-  strength: 0.15
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
-- symbol: '244580'
-  name: KODEX 바이오
 - symbol: 098560
   name: KODEX IT
-- symbol: '117700'
-  name: KODEX 철강
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.471
-  trades: 47
+  win_rate: 0.491
+  trades: 51
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - '114800'

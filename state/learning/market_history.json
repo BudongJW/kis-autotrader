@@ -345,5 +345,22 @@
       "철강"
     ],
     "k_value": 0.7
+  },
+  {
+    "date": "2026-07-29",
+    "regime_trend": "sideways",
+    "regime_volatility": "high",
+    "trend_score": -0.062,
+    "vol_percentile": 98.0,
+    "hmm_state": "bull",
+    "hmm_confidence": 0.9994230763714318,
+    "breadth": "weak",
+    "kospi_5d": -13.18,
+    "kosdaq_5d": -11.72,
+    "confidence": 0.12,
+    "strong_sectors": [
+      "IT"
+    ],
+    "k_value": 0.59
   }
 ]
