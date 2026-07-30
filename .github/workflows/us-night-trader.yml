@@ -103,6 +103,13 @@ jobs:
           path: logs/
         continue-on-error: true
 
+      - name: Download US slippage samples
+        uses: actions/download-artifact@v4
+        with:
+          name: us-slippage-log
+          path: logs/
+        continue-on-error: true
+
       - name: Download killswitch state
         uses: actions/download-artifact@v4
         with:
@@ -246,6 +253,17 @@ jobs:
           include-hidden-files: true
           overwrite: true
           retention-days: 1
+        if: always()
+
+      # 체결가 vs 기준호가 표본. -0.96%가 이틀 연속 반복된 게 지연인지 계통
+      # 오차인지 가르려면 run 간에 누적돼야 한다.
+      - name: Upload US slippage samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-slippage-log
+          path: logs/us_slippage.json
+          overwrite: true
+          retention-days: 90
         if: always()
 
       - name: Upload learning data

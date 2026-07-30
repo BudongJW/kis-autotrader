@@ -26,7 +26,8 @@
       "PowerShell(pytest*)",
       "PowerShell(git*)",
       "PowerShell(Get-ChildItem*)",
-      "PowerShell(Test-Path*)"
+      "PowerShell(Test-Path*)",
+      "mcp__Claude_Code_Remote__send_later"
     ],
     "ask": [
       "Bash(git push --force:*)",

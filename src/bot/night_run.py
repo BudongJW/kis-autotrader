@@ -37,6 +37,7 @@ from src.bot.us_session import (
     quote_lag_min,
     is_quote_stale,
     report_quote_lag,
+    reset_quote_lag_probe,
 )
 from src.utils.logger import log
 from src.utils.clock import KST, now_kst, is_us_dst, us_session_date_et
@@ -195,6 +196,8 @@ def run_loop(dry_run: bool) -> None:
     # 그 대기가 예산을 먹으면 세션 한복판에서 불필요하게 핸드오프가 일어난다.
     loop_start_epoch = wait_start
     session_started = False
+    quote_lag_done = False
+    reset_quote_lag_probe()
     MAX_WAIT_SECONDS = 7200  # 개장 대기 최대 2시간
 
     while True:
@@ -252,12 +255,18 @@ def run_loop(dry_run: bool) -> None:
             if waited_min >= 1:
                 print(f"[{now:%H:%M:%S}] 개장 — 대기 {waited_min:.0f}분 종료. "
                       f"실행시간 예산({MAX_LOOP_RUNTIME_SEC // 60}분) 시작.")
-            # 시세 지연 실측 — 장중에만 의미가 있어 개장 직후 1회. 로그만 남기고
-            # 매매 동작은 바꾸지 않는다(반영은 execution.quote_lag_min 설정으로).
+            quote_lag_done = False
+
+        # 시세 지연 실측 — 장중에만 의미가 있다. 로그만 남기고 매매 동작은 바꾸지
+        # 않는다(반영은 execution.quote_lag_min 설정으로). 개장 직후 1회만 돌리던
+        # 걸 결론이 날 때까지 재시도로 바꿨다 — 그 한 번이 실패하면 밤 전체가
+        # 측정 없이 끝나기 때문(2026-07-28·29 이틀 연속 kis_quote_empty).
+        if session_started and not quote_lag_done:
             try:
-                report_quote_lag(client)
+                quote_lag_done = report_quote_lag(client)
             except Exception as e:  # noqa: BLE001
                 log.warning("us_quote_lag_probe_failed", error=str(e))
+                quote_lag_done = True   # 예외까지 반복하진 않는다
 
         # ── 폐장 직전 청산 ──
         close_dt = _get_close_datetime(now, close_t)
