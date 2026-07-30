@@ -362,5 +362,22 @@
       "IT"
     ],
     "k_value": 0.59
+  },
+  {
+    "date": "2026-07-30",
+    "regime_trend": "sideways",
+    "regime_volatility": "normal",
+    "trend_score": -0.117,
+    "vol_percentile": 60.0,
+    "hmm_state": "bear",
+    "hmm_confidence": 0.7316084986795548,
+    "breadth": "weak",
+    "kospi_5d": -16.72,
+    "kosdaq_5d": -12.75,
+    "confidence": 0.17088000000000003,
+    "strong_sectors": [
+      "IT"
+    ],
+    "k_value": 0.7
   }
 ]
