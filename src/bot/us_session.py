@@ -457,8 +457,29 @@ def _sell_and_record(client: KISClient, symbol: str, exchange: str, qty: int,
     예전엔 rt_cd=0(접수)만 보고 곧바로 remove_us_position()을 호출했다. 미체결이면
     실제로는 계속 보유 중인데 봇의 장부에서 사라져 **손절·마감청산 관리 대상에서
     빠지는 유령 포지션**이 됐다.
+
+    주문 직전에 **브로커 보유수량을 재확인**한다. 청산 경로가 셋(리스크/모멘텀/
+    마감)이라 같은 포지션에 매도가 중복으로 나갈 수 있는데, 이미 팔린 뒤 또 팔면
+    없는 주식을 파는 것(공매도)이 된다. get_us_holdings()는 qty>0만 반환하므로
+    그렇게 생긴 **음수 포지션은 봇 눈에 영원히 안 보인다** — 손절도 마감청산도
+    안 걸리는 유령의 최악 버전이다. 조회 실패(-1)면 판단 근거가 없으므로 기존
+    동작을 유지한다.
     """
     qty_before, _ = _held_qty(client, symbol)
+    if qty_before == 0:
+        # 브로커에 없다 = 다른 경로가 먼저 팔았거나 애초에 체결이 안 됐다.
+        # 어느 쪽이든 주문을 내면 안 되고, 장부만 정리하는 게 맞다.
+        print("      건너뜀: 브로커 보유 0주 — 주문 생략, 장부만 정리")
+        log.warning("us_sell_skipped_not_held", symbol=symbol,
+                    requested=qty, reason=reason, eod=eod)
+        remove_us_position(symbol)
+        return True
+    if 0 < qty_before < qty:
+        print(f"      수량 조정: 요청 {qty}주 → 실보유 {qty_before}주")
+        log.warning("us_sell_qty_clamped", symbol=symbol,
+                    requested=qty, held=qty_before, eod=eod)
+        qty = qty_before
+
     resp = client.order_overseas(symbol, qty, price=limit_px,
                                  side="sell", exchange=exchange, order_type="00")
     rt = resp.get("rt_cd")
@@ -1177,6 +1198,30 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
     return 0
 
 
+def is_momentum_owned(symbol: str, pos: dict) -> bool:
+    """이 포지션의 청산 담당이 US-MOM인가 — 범용 리스크·마감 경로는 손대면 안 된다.
+
+    US-MOM 매수는 us_positions.json(record_us_buy)과 모멘텀 자체 state에 **동시**
+    등록된다. 그래서 예전엔 청산 엔진 둘이 서로를 모른 채 같은 포지션을 각각 팔았다.
+    2026-07-29 실전 로그:
+
+        [US 리스크] PSQ 10주 @ 한도 $27.57 — US 추적손절 (고점 $27.84에서 -0.8%)
+            응답: rt_cd=0, msg=주문 전송 완료 되었습니다.
+        [US-MOM] PSQ 청산: 본전이익 보존 (고점 +1.46%였다가 반전 → +0.55%에서 청산)
+            응답: rt_cd=0, msg=주문 전송 완료 되었습니다.
+
+    10주를 사고 10주 매도가 두 번 접수됐다.
+
+    소유권만 나누면 반대 위험이 생긴다 — 모멘텀 state가 유실되면(세션 사망·아티팩트
+    누락) 그 포지션은 **아무도** 관리하지 않는 고아가 된다. 그래서 모멘텀이 실제로
+    들고 있을 때만 소유권을 인정하고, state에 없으면 범용 경로가 다시 떠맡는다.
+    담당자는 항상 정확히 하나다.
+    """
+    if not str(pos.get("asset_type", "")).startswith("us_mom_"):
+        return False
+    return symbol in (_load_us_mom() or {})
+
+
 def check_us_risk(client: KISClient, dry_run: bool) -> None:
     """미국 보유 종목 리스크 체크 + 매도."""
     cfg = load_us_config()
@@ -1185,6 +1230,8 @@ def check_us_risk(client: KISClient, dry_run: bool) -> None:
         return
 
     for symbol, pos in list(positions.items()):
+        if is_momentum_owned(symbol, pos):
+            continue        # US-MOM이 트레일·본전·세션말청산까지 직접 관리
         exchange = pos.get("exchange", "NASD")
         cur_price = get_us_price(client, symbol, exchange)
         if cur_price <= 0:
@@ -1216,6 +1263,12 @@ def close_us_positions(client: KISClient, dry_run: bool) -> None:
         return
 
     for symbol, pos in list(positions.items()):
+        if is_momentum_owned(symbol, pos):
+            # 모멘텀은 세션말 강제청산을 자기 루프에서 한다. 여기서 또 손대면
+            # 중복 매도가 되고, eod_us_hold_decision이 "보유"로 판단하면
+            # 모멘텀의 청산 의도와 정면으로 충돌한다.
+            print(f"  [US 마감] {symbol} — US-MOM 관리분, 마감청산 대상 제외")
+            continue
         exchange = pos.get("exchange", "NASD")
         qty = pos.get("qty", 0)
         cur_price = get_us_price(client, symbol, exchange)
