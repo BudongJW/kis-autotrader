@@ -344,8 +344,40 @@ def is_quote_stale() -> bool:
     return quote_lag_min() >= STALE_QUOTE_THRESHOLD_MIN
 
 
-def measure_quote_lag(client: KISClient, symbol: str = "SPLG",
-                      exchange: str = "AMEX") -> tuple[float | None, dict]:
+def quote_lag_probe_candidates() -> list[tuple[str, str]]:
+    """지연 실측에 쓸 (심볼, 거래소) 후보 — 앞에서부터 시도한다.
+
+    한 종목의 시세 조회가 일시적으로 비면 그 밤 전체가 측정 없이 끝나므로
+    설정에 실제로 쓰는 종목들을 후보로 깔아둔다.
+    """
+    out: list[tuple[str, str]] = []
+    try:
+        for item in (load_us_config().get("universe") or []):
+            sym, exch = item.get("symbol"), item.get("exchange", "NASD")
+            if sym:
+                out.append((str(sym), str(exch)))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        mom = load_us_momentum_config()
+        for key, exch_key, dflt in (("long_symbol", "long_exchange", "NASD"),
+                                    ("inverse_symbol", "inverse_exchange", "AMEX")):
+            sym = mom.get(key)
+            if sym:
+                out.append((str(sym), str(mom.get(exch_key, dflt))))
+    except Exception:  # noqa: BLE001
+        pass
+    out.append(("SPLG", "AMEX"))          # 최후 폴백
+    seen, uniq = set(), []
+    for pair in out:
+        if pair not in seen:
+            seen.add(pair)
+            uniq.append(pair)
+    return uniq[:4]
+
+
+def measure_quote_lag(client: KISClient, symbol: str | None = None,
+                      exchange: str | None = None) -> tuple[float | None, dict]:
     """KIS 시세가 몇 분 지연되는지 **실측**. (지연분, 상세) — 판정 불가면 (None, 상세).
 
     KIS 응답에는 지연 여부를 알려주는 필드가 없다. 그래서 독립 소스(yfinance
@@ -354,18 +386,34 @@ def measure_quote_lag(client: KISClient, symbol: str = "SPLG",
 
     정규장 중에만 의미가 있다(장외에는 양쪽 다 마지막 종가로 고정).
     best-effort — 실패해도 예외를 올리지 않는다.
-    """
-    detail: dict = {"symbol": symbol}
-    try:
-        _, kis_last = _us_quote(client, symbol, exchange)
-        detail["kis_last"] = kis_last
-        if kis_last <= 0:
-            detail["error"] = "kis_quote_empty"
-            return None, detail
 
+    심볼을 지정하지 않으면 후보를 순서대로 시도한다. 2026-07-28·29 이틀 연속
+    `kis_quote_empty`로 실측이 통째로 무산됐는데, 같은 세션에서 다른 AMEX 종목
+    시세는 멀쩡했다 — 단일 종목·단발 조회에 전부를 걸어둔 게 문제였다.
+    """
+    if symbol is not None:
+        candidates = [(symbol, exchange or "AMEX")]
+    else:
+        candidates = quote_lag_probe_candidates()
+
+    detail: dict = {}
+    for sym, exch in candidates:
+        detail = {"symbol": sym, "exchange": exch}
+        _, kis_last, err = _us_quote_err(client, sym, exch)
+        detail["kis_last"] = kis_last
+        if kis_last > 0:
+            break
+        # 사유를 남긴다 — 예전엔 예외를 통째로 삼켜 'kis_quote_empty'만 찍혔다.
+        detail["error"] = err or "kis_quote_empty"
+        log.info("us_quote_lag_candidate_failed", **detail)
+    else:
+        detail["tried"] = [f"{s}/{e}" for s, e in candidates]
+        return None, detail
+
+    try:
         import yfinance as yf
 
-        df = yf.download(symbol, period="1d", interval="1m",
+        df = yf.download(sym, period="1d", interval="1m",
                          auto_adjust=False, progress=False)
         if df is None or df.empty:
             detail["error"] = "yf_empty"
@@ -399,19 +447,46 @@ def measure_quote_lag(client: KISClient, symbol: str = "SPLG",
         return None, detail
 
 
-def report_quote_lag(client: KISClient) -> None:
-    """세션 시작 시 시세 지연을 실측해 로그·콘솔에 남긴다 (매매 동작은 바꾸지 않음).
+MAX_QUOTE_LAG_ATTEMPTS = 5
+_quote_lag_probe = {"done": False, "attempts": 0}
+
+
+def reset_quote_lag_probe() -> None:
+    """새 세션(또는 테스트) 시작 시 실측 시도 카운터를 초기화."""
+    _quote_lag_probe["done"] = False
+    _quote_lag_probe["attempts"] = 0
+
+
+def report_quote_lag(client: KISClient) -> bool:
+    """시세 지연을 실측해 로그·콘솔에 남긴다. 결론이 나면 True (매매는 안 바꿈).
 
     측정값으로 자동 매매를 바꾸지는 않는다 — 단발 측정은 노이즈가 있고, 조용히
     동작이 바뀌는 편이 더 위험하다. 실측치를 보여주고, 반영은 사용자가
     execution.quote_lag_min에 명시하는 방식.
+
+    예전엔 개장 직후 **1회만** 돌았다. 그 한 번이 실패하면 그 밤 전체가 측정 없이
+    끝난다 — 2026-07-28·29 이틀 연속 그렇게 무산됐다. 이제 False를 돌려주고,
+    호출부(night_run)가 결론이 날 때까지 다음 주기에 다시 부른다.
     """
+    if _quote_lag_probe["done"]:
+        return True
+    _quote_lag_probe["attempts"] += 1
+    n = _quote_lag_probe["attempts"]
+
     lag, detail = measure_quote_lag(client)
     if lag is None:
-        print(f"  시세 지연 실측: 판정 불가 ({detail.get('error', 'unknown')})")
-        log.info("us_quote_lag_probe_inconclusive", **detail)
-        return
+        err = detail.get("error", "unknown")
+        if n >= MAX_QUOTE_LAG_ATTEMPTS:
+            _quote_lag_probe["done"] = True
+            print(f"  시세 지연 실측: {n}회 시도 모두 실패 — 포기 ({err})")
+            log.warning("us_quote_lag_probe_gave_up", attempts=n, **detail)
+            return True
+        print(f"  시세 지연 실측: 판정 불가 ({err}) — "
+              f"다음 주기 재시도 [{n}/{MAX_QUOTE_LAG_ATTEMPTS}]")
+        log.info("us_quote_lag_probe_inconclusive", attempt=n, **detail)
+        return False
 
+    _quote_lag_probe["done"] = True
     configured = quote_lag_min()
     print(f"  시세 지연 실측: 약 {lag:.0f}분 "
           f"(KIS ${detail.get('kis_last', 0):.2f} vs 참조 ${detail.get('ref_last', 0):.2f}, "
@@ -424,6 +499,79 @@ def report_quote_lag(client: KISClient) -> None:
               f"{int(round(lag))}로 올려 방어 모드를 켜는 것을 검토할 것.")
         log.warning("us_quote_lag_config_mismatch",
                     measured_lag_min=lag, configured_lag_min=configured)
+    return True
+
+
+US_SLIPPAGE_PATH = Path("logs/us_slippage.json")
+SLIPPAGE_ALERT_PCT = 0.005      # 기준가 대비 0.5% 초과 괴리는 스프레드로 설명 안 됨
+MAX_SLIPPAGE_SAMPLES = 500
+
+
+def record_fill_slippage(client: KISClient, symbol: str, exchange: str, side: str,
+                         ref_price: float, limit_px: float, avg_price: float) -> dict:
+    """체결가와 기준호가의 괴리를 표본으로 남긴다 — 원인 규명용.
+
+    2026-07-28·29 이틀 연속으로 PSQ 매수 슬리피지가 **정확히 -0.96%** 로 같았다:
+
+        7/28  기준 $27.45 → 체결 $27.19
+        7/29  기준 $27.70 → 체결 $27.44
+
+    부호와 크기가 이틀 연속 같은 건 시장 슬리피지의 모습이 아니다. 시세 지연으로도
+    설명이 안 된다 — 두 번 다 QQQ 하락(=PSQ 상승) 구간 진입이라 지연이면 오히려
+    비싸게 사야 한다. KIS `last`와 잔고 `pchs_avg_pric` 사이의 계통 오차라면
+    `record_us_buy()`가 저장하는 진입가가 실제와 어긋나 손절 기준과 저널 손익이
+    매 왕복 ~1%씩 밀린다.
+
+    **체결 직후 재호가**를 함께 남기는 게 핵심이다. 재호가가 체결가에 붙으면
+    주문 시점 호가가 낡았던 것(지연)이고, 재호가가 여전히 기준가 쪽에 붙어 있으면
+    두 필드의 기준이 다른 것(계통 오차)이다. 한 밤만 더 모으면 갈린다.
+
+    추정하지 않고 데이터를 남기기만 한다 — 매매 동작은 바꾸지 않는다.
+    """
+    sample = {
+        "ts": kst_stamp(), "symbol": symbol, "side": side,
+        "ref_price": round(float(ref_price), 4),
+        "limit_px": round(float(limit_px), 4),
+        "avg_price": round(float(avg_price), 4),
+    }
+    if ref_price > 0:
+        sample["gap_vs_ref_pct"] = round((avg_price - ref_price) / ref_price * 100, 4)
+
+    try:                                   # 체결 직후 재호가
+        _, requote, err = _us_quote_err(client, symbol, exchange)
+        if requote > 0:
+            sample["requote"] = round(requote, 4)
+            sample["gap_vs_requote_pct"] = round(
+                (avg_price - requote) / requote * 100, 4)
+        else:
+            sample["requote_error"] = err
+    except Exception as e:  # noqa: BLE001
+        sample["requote_error"] = str(e)[:120]
+
+    gap = abs(sample.get("gap_vs_ref_pct", 0.0)) / 100
+    if gap >= SLIPPAGE_ALERT_PCT:
+        print(f"      ⚠️ 체결가 괴리 {sample['gap_vs_ref_pct']:+.2f}% — "
+              f"기준 ${ref_price:.2f} / 체결 ${avg_price:.2f}"
+              + (f" / 직후호가 ${sample['requote']:.2f}" if "requote" in sample else ""))
+        log.warning("us_fill_price_gap", **sample)
+    else:
+        log.info("us_fill_price_gap", **sample)
+
+    try:                                   # 표본 누적 (오프라인 분석용)
+        samples = []
+        if US_SLIPPAGE_PATH.exists():
+            samples = json.loads(US_SLIPPAGE_PATH.read_text(encoding="utf-8"))
+            if not isinstance(samples, list):
+                samples = []
+        samples.append(sample)
+        US_SLIPPAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        US_SLIPPAGE_PATH.write_text(
+            json.dumps(samples[-MAX_SLIPPAGE_SAMPLES:], ensure_ascii=False, indent=2),
+            encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        log.warning("us_slippage_save_failed", error=str(e))
+
+    return sample
 
 
 def _block_scalp_on_stale() -> bool:
@@ -1172,6 +1320,8 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
                         print(f"      부분체결 {filled}/{qty}주")
                     print(f"      체결: {filled}주 @ ${avg_px:.2f} "
                           f"(슬리피지 {(avg_px - cur_price) / cur_price:+.2%})")
+                    record_fill_slippage(client, symbol, exchange, "buy",
+                                         cur_price, buy_px, avg_px)
 
                     log_trade(symbol, name, "buy", filled, int(avg_px * 100),  # cents로 기록
                               market="US",
@@ -1340,18 +1490,36 @@ def _save_us_mom(d: dict) -> None:
         log.warning("us_mom_save_failed", error=str(e))
 
 
-def _us_quote(client: KISClient, symbol: str, exchange: str) -> tuple[float, float]:
-    """(전일종가 base, 현재가 last) — KIS 해외 현재가. 실패 시 (0,0)."""
+def _us_quote_err(client: KISClient, symbol: str,
+                  exchange: str) -> tuple[float, float, str | None]:
+    """(base, last, 실패사유) — 시세 조회. 성공 시 사유는 None.
+
+    `_us_quote()`가 예외를 통째로 삼켜, 지연 실측이 실패해도 로그에 남는 건
+    `kis_quote_empty`뿐이었다(2026-07-28·29 이틀 연속). 사유를 모르면 재시도
+    가치조차 판단할 수 없어 사유를 돌려주는 경로를 따로 뒀다.
+    """
     try:
         resp = client.get_overseas_price(symbol, exchange=exchange)
-        if resp.get("rt_cd") == "0":
-            o = resp.get("output", {}) or {}
-            base = float(str(o.get("base", 0) or 0).replace(",", ""))
-            last = float(str(o.get("last", 0) or 0).replace(",", ""))
-            return base, last
-    except Exception:
-        pass
-    return 0.0, 0.0
+    except Exception as e:  # noqa: BLE001
+        return 0.0, 0.0, f"exception: {type(e).__name__}: {str(e)[:120]}"
+    rt = resp.get("rt_cd")
+    if rt != "0":
+        return 0.0, 0.0, f"rt_cd={rt} msg={str(resp.get('msg1', ''))[:80]}"
+    o = resp.get("output", {}) or {}
+    try:
+        base = float(str(o.get("base", 0) or 0).replace(",", ""))
+        last = float(str(o.get("last", 0) or 0).replace(",", ""))
+    except (TypeError, ValueError) as e:
+        return 0.0, 0.0, f"parse_error: {str(e)[:80]}"
+    if last <= 0:
+        return base, 0.0, "last_is_zero (장외이거나 응답 공란)"
+    return base, last, None
+
+
+def _us_quote(client: KISClient, symbol: str, exchange: str) -> tuple[float, float]:
+    """(전일종가 base, 현재가 last) — KIS 해외 현재가. 실패 시 (0,0)."""
+    base, last, _err = _us_quote_err(client, symbol, exchange)
+    return base, last
 
 
 def _us_current_regime() -> str | None:
@@ -1570,6 +1738,8 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
                                         _avg = tbuy_px
                                     print(f"      체결: {_f}주 @ ${_avg:.2f} "
                                           f"(슬리피지 {(_avg - tprice) / tprice:+.2%})")
+                                    record_fill_slippage(client, tsym, texch, "buy",
+                                                         tprice, tbuy_px, _avg)
                                     log_trade(tsym, tsym, "buy", _f, int(_avg * 100),
                                               market="US",
                                               reason=f"US모멘텀 {tdir}: {sig.reason}")
