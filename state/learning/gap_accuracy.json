@@ -97,5 +97,14 @@
     "action": "reduce_size",
     "kospi_gap": -6.06,
     "correct": true
+  },
+  {
+    "date": "2026-07-30",
+    "nasdaq_change": -1.74,
+    "sp500_change": -1.52,
+    "direction": "bearish",
+    "action": "reduce_size",
+    "kospi_gap": -2.0,
+    "correct": true
   }
 ]
