@@ -383,3 +383,66 @@ artifact로 run 간 보존). 0.5% 초과 괴리는 경고로 승격.
 개장(22:30 KST) 71분 뒤인 23:41 KST에야 기동했다. 워크플로 설정 문제가 아니라
 (state=active, cron 정상) 플랫폼 측 배달 지연이다. cron 다중화로도 못 막는 구간이
 있다는 뜻 — 개장 후 일정 시간 내 기동 실패를 감지할 별도 수단이 필요하다.
+
+---
+
+## 6. 토큰 캐시 artifact — 자격증명 노출 (2026-07-31)
+
+### 발견 경위
+
+PR #2에서 `include-hidden-files: true`를 넣어 토큰 캐시 업로드를 고쳤고, 7/29
+로그에서 실제로 성공을 확인했다:
+
+```
+Artifact kis-token-cache has been successfully uploaded! Final size is 510 bytes.
+```
+
+그런데 같은 로그의 다운로드 쪽은 여전히 실패였다 — 토큰 캐시만이 아니라 **7개
+전부**:
+
+```
+##[error]Unable to download artifact(s): Artifact not found for name: trade-log
+##[error]Unable to download artifact(s): Artifact not found for name: kis-token-cache
+##[error]Unable to download artifact(s): Artifact not found for name: us-positions-state
+... (learning-data, bear-state, killswitch-state, ledger-db)
+```
+
+`actions/download-artifact@v4`는 artifact를 **run 단위로 스코프**한다. `run-id` +
+`github-token` 없이 이름만 주면 현재 run이 만든 것만 찾는다. 레포도 이미 알고
+있었다 — 워크플로 주석에 "artifact는 이전 run을 못 봐 매 run 리셋"이라 적혀 있고
+`trades.csv`·`positions.json`은 journal repo에서 curl로 복원하는 우회로가 있다.
+토큰 캐시엔 그 우회로가 없어서, 봇은 계속 run마다 토큰을 재발급받고 있었다.
+
+### 더 중요한 문제
+
+**이 레포는 public이다.** artifact는 레포 읽기 권한자면 누구나 내려받는다.
+`.kis_token_cache.json`에는 `access_token`이 평문으로 들어 있고, 그 토큰은
+**실계좌 주문 권한이 붙은 24시간짜리 자격증명**이다.
+
+즉 "run 간 재사용이 안 된다"를 artifact 쪽으로 고치는 방향은 이 노출을 더 길게
+유지할 뿐이다. 방향을 반대로 잡았다.
+
+### 조치
+
+1. **토큰 캐시 artifact 업로드·다운로드 전부 제거** — autotrader / us-night-trader
+   / market-learn / status-check 4개 워크플로, 총 7개 스텝. run 안에서의 디스크
+   캐시(원자적 쓰기·파일락·lock 안 재확인)는 그대로 둔다. 그건 ephemeral runner
+   안에서만 살고 밖으로 안 나간다.
+2. **"1분당 1회" 제한을 재시도로 흡수** — `_is_reissue_throttled()`가 제한 응답을
+   식별하고 62초 대기 후 재시도한다(최대 3회).
+
+2번이 필요한 이유: `get_token()`의 5번 단계("KIS API 실패 → 만료 안 된 캐시
+폴백")는 run 간 캐시가 있다는 전제 위에 있었다. 그 전제가 애초에 거짓이었으니
+**실환경에서 도달 불가능한 죽은 코드**였고, 제한에 걸리면 폴백할 캐시가 없어
+`RuntimeError`가 그대로 올라와 인증이 통째로 죽었다. 캐시를 공유할 수 없다면
+기다리는 수밖에 없다.
+
+제한을 오인하지 않는 것도 중요하다 — 앱키 오류처럼 기다려도 안 풀리는 실패는
+즉시 올려야 한다. 그래서 `_is_reissue_throttled()`는 성공·비제한 오류에
+대해서는 False를 돌려주고, 테스트로 고정했다.
+
+### 남은 권고 (코드 밖)
+
+이미 업로드된 artifact가 retention 기간(1일) 동안 남아 있다. 노출 창을 닫으려면
+**KIS 앱키·앱시크릿 재발급**을 검토할 것. 액세스 토큰 자체는 24시간이면 만료되지만,
+그 사이 발급된 토큰으로 주문이 가능했다.

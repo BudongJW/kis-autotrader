@@ -77,13 +77,6 @@ jobs:
           path: logs/
         continue-on-error: true
 
-      - name: Download token cache
-        uses: actions/download-artifact@v4
-        with:
-          name: kis-token-cache
-          path: logs/
-        continue-on-error: true
-
       - name: Download positions
         uses: actions/download-artifact@v4
         with:
@@ -236,20 +229,6 @@ jobs:
           path: logs/killswitch.json
           overwrite: true
           retention-days: 90
-        if: always()
-
-      - name: Upload token cache
-        uses: actions/upload-artifact@v4
-        with:
-          name: kis-token-cache
-          path: logs/.kis_token_cache.json
-          # 토큰 캐시는 닷파일이라 upload-artifact@v4가 기본으로 제외한다.
-          # 이 줄이 없으면 업로드가 매번 빈손("No files were found")이 되어
-          # 캐시가 run 간에 전혀 보존되지 않고 실행마다 토큰을 재발급받는다
-          # (KIS '1분 내 재발급 금지'에 걸릴 여지 + kis_auth의 락·race 처리 무력화).
-          include-hidden-files: true
-          overwrite: true
-          retention-days: 1
         if: always()
 
       - name: Upload slippage log

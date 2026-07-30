@@ -24,11 +24,41 @@ import requests
 
 from src.config import settings
 from src.utils.clock import now_kst, parse_kst
+from src.utils.logger import log
 
 TOKEN_CACHE_PATH = Path("logs/.kis_token_cache.json")
 TOKEN_LOCK_PATH = Path("logs/.kis_token_cache.lock")
 TOKEN_REFRESH_MARGIN_SEC = 1800  # 만료 30분 전엔 미리 갱신 (race 마진 ↑)
 TOKEN_LOCK_TIMEOUT_SEC = 30
+
+TOKEN_REQUEST_ATTEMPTS = 3
+NETWORK_RETRY_WAIT_SEC = 1.5
+# KIS는 같은 appkey로 1분에 한 번만 토큰을 준다. 제한이 풀릴 때까지 기다리는 것
+# 말고 방법이 없어서 넉넉히 62초. run 시작에 최대 ~2분이 붙지만, 인증이 죽어
+# 세션 전체가 날아가는 것보다는 낫다.
+REISSUE_RETRY_WAIT_SEC = 62
+
+# KIS가 재발급 제한을 알리는 방식이 문서·환경마다 달라(EGW00133 코드, 한글 메시지,
+# 403/500 혼재) 어느 하나에만 의존하지 않는다.
+_REISSUE_THROTTLE_MARKERS = (
+    "EGW00133",           # 접근토큰 발급 제한 에러코드
+    "1분당 1회",
+    "1분에 1회",
+    "잠시 후 다시",
+    "please try again",
+)
+
+
+def _is_reissue_throttled(resp) -> bool:
+    """응답이 '1분 내 재발급 금지'인가 — 기다렸다 재시도하면 풀리는 종류."""
+    if resp is None or resp.status_code == 200:
+        return False
+    try:
+        text = resp.text or ""
+    except Exception:  # noqa: BLE001
+        return False
+    low = text.lower()
+    return any(m.lower() in low for m in _REISSUE_THROTTLE_MARKERS)
 
 
 @dataclass
@@ -160,20 +190,35 @@ def _request_new_token() -> TokenBundle:
     }
     headers = {"Content-Type": "application/json"}
 
-    # 일시적 타임아웃·연결오류(서버 과부하 등) 재시도 — 폭락일 토큰 발급 실패로
-    # 봇이 통째로 멈추는 사태 방지. 마지막 시도 실패는 그대로 raise.
+    # 두 가지 일시적 실패를 재시도한다.
+    #   (a) 타임아웃·연결오류 — 폭락일 토큰 발급 실패로 봇이 통째로 멈추는 사태 방지.
+    #   (b) "1분당 1회" 재발급 제한 — 기다렸다 다시 받는 것 말고 방법이 없다.
+    # (b)는 예전엔 곧바로 RuntimeError → 만료 안 된 캐시로 폴백하는 설계였는데,
+    # GitHub Actions에선 run 간 캐시가 존재하지 않아 폴백 대상이 없다. 즉 그 경로는
+    # 실환경에서 도달 불가였고, 제한에 걸리면 인증이 통째로 죽었다.
     resp = None
-    for attempt in range(3):
+    for attempt in range(TOKEN_REQUEST_ATTEMPTS):
+        last = attempt >= TOKEN_REQUEST_ATTEMPTS - 1
         try:
             resp = requests.post(url, json=body, headers=headers, timeout=15)
-            break
         except (requests.exceptions.Timeout,
                 requests.exceptions.ConnectionError):
-            if attempt < 2:
-                time.sleep(1.5 * (2 ** attempt))
-            else:
+            if last:
                 raise
-    if resp.status_code != 200:
+            time.sleep(NETWORK_RETRY_WAIT_SEC * (2 ** attempt))
+            continue
+
+        if resp.status_code == 200:
+            break
+        if _is_reissue_throttled(resp) and not last:
+            log.warning("kis_token_reissue_throttled",
+                        attempt=attempt + 1, wait_sec=REISSUE_RETRY_WAIT_SEC,
+                        status=resp.status_code, body=resp.text[:200])
+            time.sleep(REISSUE_RETRY_WAIT_SEC)
+            continue
+        break
+
+    if resp is None or resp.status_code != 200:
         raise RuntimeError(
             f"KIS 토큰 발급 실패 (status={resp.status_code}): {resp.text}"
         )
