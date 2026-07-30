@@ -1,15 +1,32 @@
 """워크플로 artifact 설정 회귀 테스트.
 
-토큰 캐시(`logs/.kis_token_cache.json`)는 **닷파일**이라
-`actions/upload-artifact@v4`가 기본으로 제외한다. 그래서 다운로드 스텝은
-멀쩡한데 업로드가 매번 빈손("No files were found")이 되어, 캐시가 run 간에
-전혀 보존되지 않고 **봇 실행마다 KIS 토큰을 재발급**받고 있었다.
+## 토큰 캐시를 artifact로 올리지 않는다 (2026-07-31)
 
-실제 운영 로그에서 확인된 증상:
+원래 이 파일은 "토큰 캐시 업로드가 조용히 실패한다"를 고정한 테스트였다.
+`logs/.kis_token_cache.json`이 **닷파일**이라 `upload-artifact@v4`가 기본으로
+제외했고, 업로드가 매번 빈손이었다:
+
     ##[warning]No files were found with the provided path: logs/.kis_token_cache.json
 
-kis_auth.py의 원자적 쓰기·파일락·race 폴백은 전부 run **안**에서만 의미가 있고,
-run **간** 재사용은 이 artifact에 의존한다. 조용히 실패하는 종류라 테스트로 고정한다.
+`include-hidden-files: true`로 업로드는 고쳤는데(510 bytes 업로드 확인),
+그 다음 두 가지가 드러났다.
+
+1. **다운로드가 어차피 안 된다.** `download-artifact@v4`는 artifact를 **run
+   단위로 스코프**해서, `run-id` 없이 이름만 주면 현재 run이 만든 것만 찾는다.
+   실제 운영 로그에서 토큰 캐시뿐 아니라 7개 artifact 전부가 동일하게 실패했다:
+
+       ##[error]Unable to download artifact(s): Artifact not found for name: kis-token-cache
+
+2. **이 레포는 public이다.** artifact는 레포 읽기 권한자면 누구나 내려받을 수
+   있으므로, 살아 있는 KIS 액세스 토큰(주문 권한, 24시간 유효)을 공개된 곳에
+   올리고 있던 셈이다. 1번을 "고쳐서" run 간 재사용을 살리는 방향은 이 노출을
+   더 길게 유지할 뿐이다.
+
+그래서 토큰 캐시 artifact는 **업로드·다운로드 모두 제거**했다. run 안에서의
+디스크 캐시(원자적 쓰기·파일락)는 그대로 두고, run마다 새로 발급받되
+`kis_auth._is_reissue_throttled()`가 "1분당 1회" 제한을 잡아 재시도한다.
+
+이 파일은 이제 그 결정을 되돌리지 못하게 고정한다.
 """
 
 from pathlib import Path
@@ -57,31 +74,48 @@ def test_hidden_file_uploads_opt_in(wf):
     )
 
 
-def test_token_cache_is_actually_uploaded():
-    """토큰 캐시를 다운로드하는 워크플로는 업로드도 제대로 해야 한다.
+def _download_steps(wf: Path):
+    data = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
+    out = []
+    for job in (data.get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            if "download-artifact" in str(step.get("uses", "")):
+                out.append((step.get("name", "?"), step.get("with") or {}))
+    return out
 
-    다운로드만 있고 업로드가 (조용히) 실패하면 캐시가 영원히 비어 있어
-    매 run 토큰을 재발급받는다 — KIS '1분 내 재발급 금지'에 걸릴 여지가 있다.
+
+def test_token_cache_is_never_uploaded_as_artifact():
+    """살아 있는 KIS 토큰을 public 레포 artifact에 올리면 안 된다.
+
+    artifact는 레포 읽기 권한자면 누구나 내려받는다. 이 레포는 public이므로
+    (워크플로 주석: "public repo라 분 한도 무제한") 업로드하는 순간 주문 권한이
+    붙은 24시간짜리 자격증명이 공개된다.
     """
     from src.kis_auth import TOKEN_CACHE_PATH
 
     cache_name = TOKEN_CACHE_PATH.name
-    assert cache_name.startswith("."), (
-        "토큰 캐시가 더 이상 닷파일이 아니다 — 이 테스트의 전제를 재확인할 것"
+    offenders = []
+    for wf in _workflows():
+        for name, cfg in _upload_steps(wf):
+            if cache_name in str(cfg.get("path", "")):
+                offenders.append(f"{wf.name}: {name}")
+    assert not offenders, (
+        "토큰 캐시가 artifact로 업로드된다 — public 레포에 자격증명 노출:\n  "
+        + "\n  ".join(offenders)
     )
 
-    checked = 0
+
+def test_no_workflow_downloads_the_token_cache_artifact():
+    """업로드를 지웠으면 다운로드도 지워야 한다.
+
+    남겨두면 매 run "Artifact not found" 에러가 찍혀, 진짜 문제를 덮는 소음이 된다.
+    (`download-artifact@v4`는 run 단위 스코프라 애초에 이전 run 것을 못 본다.)
+    """
+    offenders = []
     for wf in _workflows():
-        text = wf.read_text(encoding="utf-8")
-        if cache_name not in text:
-            continue
-        uploads = [(n, c) for n, c in _upload_steps(wf)
-                   if cache_name in str(c.get("path", ""))]
-        if not uploads:
-            continue
-        checked += 1
-        for name, cfg in uploads:
-            assert cfg.get("include-hidden-files") is True, (
-                f"{wf.name}의 '{name}' 스텝이 토큰 캐시를 올리지 못한다"
-            )
-    assert checked >= 1, "토큰 캐시를 업로드하는 워크플로를 찾지 못했다"
+        for name, cfg in _download_steps(wf):
+            if "kis-token-cache" in str(cfg.get("name", "")):
+                offenders.append(f"{wf.name}: {name}")
+    assert not offenders, (
+        "토큰 캐시 artifact 다운로드 스텝이 남아 있다:\n  " + "\n  ".join(offenders)
+    )
