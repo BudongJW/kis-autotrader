@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.66
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -17,16 +17,15 @@ strategies:
     backtest_mdd: -1.85
   ta_weights:
     rsi: 0.049
-    macd: 0.184
-    bb: 0.083
-    stoch: 0.117
-    adx: 0.083
-    ma: 0.184
-    obv: 0.167
-    mfi: 0.067
-    atr: 0.067
+    macd: 0.166
+    bb: 0.09
+    stoch: 0.121
+    adx: 0.09
+    ma: 0.166
+    obv: 0.166
+    mfi: 0.076
+    atr: 0.076
 day_plan:
-  # 사용자 지시(2026-07-31): 인덱스 풀매수. RISK_ON = budget_pct 1.0, size_mult 1.0
   force_stance: RISK_ON
 costs:
   kr_fee_pct: 0.00015
@@ -276,8 +275,8 @@ risk:
   daily_profit_target_pct: 0.01
   sizing_ramp:
     enabled: true
-    base_weight: 1.0
-    hard_max: 1.0
+    base_weight: 0.35
+    hard_max: 0.65
     tiers:
     - trades: 20
       win_rate: 0.5
@@ -301,37 +300,36 @@ risk:
   - 나스닥
 market_regime:
   trend: sideways
-  volatility: normal
-  trend_score: -0.117
-  vol_percentile: 60.0
-  analyzed_at: 2026-07-30 09:52
-  hmm_state: bear
-  hmm_confidence: 0.7316084986795548
+  volatility: high
+  trend_score: -0.148
+  vol_percentile: 100.0
+  analyzed_at: 2026-07-31 10:00
+  hmm_state: sideways
+  hmm_confidence: 0.9951944930336606
   hmm_transition:
-    bear: 0.004002948347057597
-    sideways: 0.9957833001131592
-    bull: 0.00021375153978320704
-market_confidence: 0.271
+    bear: 0.8754226933553033
+    sideways: 0.0006682834793263429
+    bull: 0.12390902316537045
+market_confidence: 0.26
 strong_sectors:
 - IT
 overnight_signal:
+  nasdaq_change: 2.78
+  sp500_change: 1.66
   direction: bullish
+  strength: 0.78
+  confidence_boost: 0.14
   recommended_action: aggressive_buy
-  nasdaq_change: 3.78
-  sp500_change: 1.75
-  strength: 0.92
-  confidence_boost: 0.1
-  source: us_post_learning
 dynamic_universe:
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.525
-  trades: 55
+  win_rate: 0.5
+  trades: 58
 sector_momentum_effective: false
 eod_liquidation_exempt:
-- '114800'
+- 069500
 gap_adaptive_thresholds:
   bullish: 1.0
   bearish: -1.0
