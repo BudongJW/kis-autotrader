@@ -26,7 +26,8 @@ strategies:
     mfi: 0.067
     atr: 0.067
 day_plan:
-  force_stance: null
+  # 사용자 지시(2026-07-31): 인덱스 풀매수. RISK_ON = budget_pct 1.0, size_mult 1.0
+  force_stance: RISK_ON
 costs:
   kr_fee_pct: 0.00015
   kr_tax_pct: 0.0023
@@ -264,19 +265,19 @@ us_session:
   regime_linked: true
 risk:
   min_position_krw: 300000
-  max_position_weight: 0.35
-  conviction_strong_weight: 0.35
-  conviction_mid_weight: 0.22
-  conviction_weak_weight: 0.12
-  max_concurrent_positions: 5
+  max_position_weight: 1.0
+  conviction_strong_weight: 1.0
+  conviction_mid_weight: 1.0
+  conviction_weak_weight: 1.0
+  max_concurrent_positions: 1
   stop_loss_pct: 0.03
   take_profit_pct: 0.05
   daily_loss_limit_pct: 0.05
   daily_profit_target_pct: 0.01
   sizing_ramp:
     enabled: true
-    base_weight: 0.35
-    hard_max: 0.65
+    base_weight: 1.0
+    hard_max: 1.0
     tiers:
     - trades: 20
       win_rate: 0.5
