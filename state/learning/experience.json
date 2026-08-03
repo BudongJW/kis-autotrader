@@ -2505,5 +2505,28 @@
     "exit_price": 1151,
     "evaluated": true,
     "rebuilt": true
+  },
+  {
+    "timestamp": "2026-08-04T00:25:59",
+    "date": "2026-08-04",
+    "symbol": "QQQM",
+    "name": "QQQM",
+    "action": "buy",
+    "reason": "US모멘텀 long: 상승 아침추세 (전일대비 +1.35%, 시가대비 +0.00%)",
+    "price": 28694,
+    "qty": 1,
+    "strategy": "us_etf",
+    "regime": null,
+    "hmm_state": null,
+    "confidence": null,
+    "kelly_f": null,
+    "ta_scores": null,
+    "lgbm_prob": null,
+    "market_context": null,
+    "outcome": "win",
+    "pnl_pct": 0.51,
+    "exit_price": 28840,
+    "evaluated": true,
+    "rebuilt": true
   }
 ]

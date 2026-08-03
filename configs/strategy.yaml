@@ -308,7 +308,7 @@ market_regime:
   trend_score: -0.171
   vol_percentile: 98.0
   analyzed_at: 2026-08-03 13:35
-market_confidence: 0.435
+market_confidence: 0.485
 strong_sectors:
 - 반도체
 - 2차전지
@@ -321,12 +321,13 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 1.0
-  sp500_change: 0.7
   direction: bullish
-  strength: 0.29
-  confidence_boost: 0.035
   recommended_action: normal
+  nasdaq_change: 1.89
+  sp500_change: 1.5
+  strength: 0.56
+  confidence_boost: 0.05
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
