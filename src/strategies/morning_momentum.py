@@ -152,7 +152,10 @@ def should_exit_morning(*, entry_price: float, cur_price: float, direction: str,
     trail_act = float(cfg.get("trail_activate_pct", 0.015))
     trail_gap = float(cfg.get("trail_gap_pct", 0.008))
     be_trigger = float(cfg.get("breakeven_trigger_pct", 0.007))
-    be_buffer = float(cfg.get("breakeven_buffer_pct", 0.001))
+    # 왕복비용(매도세 0.23% + 수수료) 위에서만 청산 — 아래는 팔수록 손해.
+    be_min_exit = float(cfg.get("breakeven_min_exit_pct", 0.004))
+    # 고점 이익을 이 비율까지 반납하면 이익권에서 청산(반납 허용폭).
+    be_giveback = float(cfg.get("breakeven_giveback_ratio", 0.5))
 
     if entry_price <= 0 or cur_price <= 0:
         return False, "가격데이터 부족"
@@ -168,13 +171,14 @@ def should_exit_morning(*, entry_price: float, cur_price: float, direction: str,
             return True, (f"트레일링 익절 (고점 +{peak_gain*100:.2f}% 대비 "
                           f"-{drop*100:.2f}%, 손익 {pnl*100:+.2f}%)")
 
-    # 본전 보존: 한번 +be_trigger 이상 이익권에 올랐으면, 그 뒤엔 본전+버퍼로 내려올 때
-    # 이익권에서 청산(손절 -sl 기다리지 않음). "이겼다 손실로 넘기는" 라운드트립 차단.
+    # 이익권 청산: 고점이 be_trigger를 넘긴 뒤 이익의 be_giveback 이상을 반납하면 청산.
+    # **단 왕복비용(be_min_exit) 위에서만 판다.** 옛 로직은 '본전 근처로 내려오면 매도'라
+    # 비용(0.26%) 아래·마이너스에서도 팔려 61건 -17,449원을 흘렸다(2026-07-31 실측).
+    # 비용 아래로 이미 밀렸으면 여기서 팔지 않고 손절(-sl)에 맡긴다.
     if be_trigger > 0 and peak_gain >= be_trigger:
-        be_floor = entry_price * (1 + be_buffer)
-        if cur_price <= be_floor:
-            return True, (f"본전이익 보존 (고점 +{peak_gain*100:.2f}%였다가 반전 "
-                          f"→ {pnl*100:+.2f}%에서 청산, 손절 전 이익권 확보)")
+        if be_min_exit <= pnl <= peak_gain * be_giveback:
+            return True, (f"이익권 청산 (고점 +{peak_gain*100:.2f}% 중 절반 반납 "
+                          f"→ {pnl*100:+.2f}%, 비용 위에서 확보)")
 
     if pnl >= tp:
         return True, f"익절 +{pnl*100:.2f}% (>= +{tp*100:.1f}%)"

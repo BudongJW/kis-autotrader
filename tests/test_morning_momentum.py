@@ -159,26 +159,63 @@ def test_trailing_holds_near_peak():
     assert not out
 
 
-# ── 본전 보존 (이겼다 손실로 안 넘김) ──
-def test_breakeven_locks_after_profit_reversal():
-    # 고점 +0.9%(>=0.7% 트리거)였다 현재 본전(+0.05%<버퍼0.1%)으로 반전 → 이익권 청산
-    out, why = should_exit_morning(entry_price=100, cur_price=100.05, direction="long",
-                                   now_hhmm="09:40", cfg=CFG, peak_price=100.9)
-    assert out and "본전이익" in why
+# ── 이익권 청산 (2026-07-31 개선: 비용 위에서만 판다) ──
+# 옛 '본전보존'은 본전 근처로 내려오면 무조건 팔아 왕복비용(0.26%) 아래·마이너스에서도
+# 청산됐고, 실측 61건 합계 -17,449원의 최대 누수였다. 아래 테스트가 재발을 막는다.
+BE = {**CFG, "breakeven_trigger_pct": 0.015, "breakeven_min_exit_pct": 0.004,
+      "breakeven_giveback_ratio": 0.5, "stop_loss_pct": 0.02,
+      "take_profit_pct": 0.05,        # 운영값(추세 끝까지 태움). CFG 기본 1.2%는 너무 낮아 분리 검증 방해
+      "trail_activate_pct": 0.015, "trail_gap_pct": 0.008}
 
 
-def test_breakeven_not_armed_below_trigger():
-    # 고점 +0.4%(<0.7% 미도달) → 본전보존 미발동. 현재 +0.05%면 보유(손절 -0.7% 전)
-    out, _ = should_exit_morning(entry_price=100, cur_price=100.05, direction="long",
-                                 now_hhmm="09:40", cfg=CFG, peak_price=100.4)
+def test_no_breakeven_dump_in_noise_band():
+    """핵심 회귀(최대 누수): 고점이 0.7~1.5% 노이즈 밴드일 때 본전 근처에서 팔지 않는다.
+
+    옛 로직(트리거 0.7%, '본전+0.1% 이하로 오면 매도')은 이 구간에서 계속 발동해
+    비용(0.26%) 아래에서 청산 → 실측 61건 합계 -17,449원. 이제 보유하고 손절에 맡긴다.
+    """
+    for peak in (100.8, 101.0, 101.4):          # 고점 +0.8% ~ +1.4%
+        out, why = should_exit_morning(entry_price=100, cur_price=100.05, direction="long",
+                                       now_hhmm="09:40", cfg=BE, peak_price=peak)
+        assert not out, f"고점 +{peak-100:.1f}%에서 본전 덤핑하면 안 됨: {why}"
+
+
+def test_no_dump_below_cost_when_negative():
+    # 마이너스 구간에서도 이익권 청산이 발동하면 안 됨(손절 -2%가 담당)
+    out, why = should_exit_morning(entry_price=100, cur_price=99.5, direction="long",
+                                   now_hhmm="09:40", cfg=BE, peak_price=101.2)
+    assert not out, f"손실 구간 청산 금지: {why}"
+
+
+def test_profit_exit_fires_above_cost_after_giveback():
+    """이익권 청산은 비용 위에서만 발동. 트레일링 미발동 케이스로 분리 검증."""
+    cfg = {**BE, "trail_gap_pct": 0}            # 트레일링 끄고 이익권 분기만 본다
+    # 고점 +2%(트리거 1.5% 통과) → 현재 +0.6%(비용 0.4% 위, 고점 절반 1.0% 아래) → 청산
+    out, why = should_exit_morning(entry_price=100, cur_price=100.6, direction="long",
+                                   now_hhmm="09:40", cfg=cfg, peak_price=102.0)
+    assert out and "이익권" in why
+    # 같은 고점인데 현재가 비용 아래(+0.05%)면 청산 안 함 → 손절에 맡김
+    out2, why2 = should_exit_morning(entry_price=100, cur_price=100.05, direction="long",
+                                     now_hhmm="09:40", cfg=cfg, peak_price=102.0)
+    assert not out2, f"비용 아래 청산 금지: {why2}"
+
+
+def test_profit_exit_holds_while_still_near_peak():
+    # 고점 +2%, 현재 +1.8%(고점 절반 위) → 아직 추세 → 보유
+    cfg = {**BE, "trail_gap_pct": 0}
+    out, _ = should_exit_morning(entry_price=100, cur_price=101.8, direction="long",
+                                 now_hhmm="09:40", cfg=cfg, peak_price=102.0)
     assert not out
 
 
-def test_breakeven_holds_while_still_up():
-    # 고점 +1%였고 현재 +0.5%(본전버퍼 위) → 아직 이익권 → 보유(트레일링·본전 다 미발동)
-    out, _ = should_exit_morning(entry_price=100, cur_price=100.5, direction="long",
-                                 now_hhmm="09:40", cfg=CFG, peak_price=101.0)
-    assert not out
+def test_stop_widened_outside_noise():
+    """손절 1%는 국장 인트라데이 노이즈 안쪽이라 반복 whipsaw. 2%로 넓힘."""
+    import yaml
+    with open("configs/user_overrides.yaml", encoding="utf-8") as f:
+        mm = (yaml.safe_load(f) or {}).get("morning_momentum", {})
+    assert mm.get("stop_loss_pct", 0) >= 0.018
+    # 이익권 청산 하한이 왕복비용(0.26%)보다 커야 팔아서 손해 안 봄
+    assert mm.get("breakeven_min_exit_pct", 0) > 0.0026
 
 
 # ── 인트라데이 재진입(사이클 상한·쿨다운) ──

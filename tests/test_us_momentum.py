@@ -26,9 +26,12 @@ def test_instruments_are_affordable_nasdaq_pair():
     assert c.get("inverse_symbol") == "PSQ"  # 나스닥 1x 인버스(곱버스 아님)
 
 
-def test_breakeven_buffer_covers_roundtrip_fee():
-    # 본전버퍼 < 수수료면 "본전청산"이 실제론 순손실 → US는 버퍼가 수수료 이상이어야
-    assert _cfg().get("breakeven_buffer_pct", 0) >= US_ROUNDTRIP_FEE
+def test_profit_exit_floor_covers_roundtrip_fee():
+    # 이익권 청산 하한 < 수수료면 "청산"이 실제론 순손실 → 하한이 왕복수수료 위여야 한다.
+    # (2026-07-31 개선: breakeven_buffer_pct → breakeven_min_exit_pct 로 교체)
+    c = _cfg()
+    assert c.get("breakeven_min_exit_pct", 0) >= US_ROUNDTRIP_FEE
+    assert c.get("breakeven_trigger_pct", 0) > c.get("breakeven_min_exit_pct", 0)
 
 
 def test_thresholds_and_tp_clear_cost():

@@ -69,11 +69,15 @@ morning_momentum:
   intraday_confirm_pct: 0.0
   position_krw: 300000
   take_profit_pct: 0.05        # 추세추종: 트레일링이 추세 끝까지 타게 상한 상향(2.5→5%)
-  stop_loss_pct: 0.01
+  # 2026-07-31 실측 개선(103 라운드트립 진단):
+  #  - 손절 1%는 국장 인트라데이 노이즈 안쪽이라 정상 등락에 반복해 털렸다(whipsaw) → 2%
+  #  - 본전보존이 비용 아래에서도 팔아 최대 누수였다 → 이익권 청산으로 교체(비용 위에서만)
+  stop_loss_pct: 0.02
   trail_activate_pct: 0.015
   trail_gap_pct: 0.008
-  breakeven_trigger_pct: 0.007
-  breakeven_buffer_pct: 0.001
+  breakeven_trigger_pct: 0.015     # +1.5% 찍어야 발동(노이즈 위)
+  breakeven_min_exit_pct: 0.004    # 왕복비용 0.26% + 마진. 이 아래면 안 판다
+  breakeven_giveback_ratio: 0.5    # 고점 이익 절반 반납 시 청산
   reentry_cooldown_min: 30
   max_cycles_per_day: 3
   max_move_pct: 0             # 추격방지 삭제: 큰 추세(오늘 -4.5%)를 막던 원흉. 추세 방향이면 진입해 라이드
@@ -98,8 +102,10 @@ us_momentum:
   stop_loss_pct: 0.012
   trail_activate_pct: 0.015
   trail_gap_pct: 0.008
-  breakeven_trigger_pct: 0.01
-  breakeven_buffer_pct: 0.006
+  # 미장 왕복수수료 ~0.5%라 이익권 청산 하한을 그 위로. 국장과 같은 개선 적용.
+  breakeven_trigger_pct: 0.018     # +1.8% 찍어야 발동
+  breakeven_min_exit_pct: 0.007    # 왕복수수료 0.5% + 마진. 이 아래면 안 판다
+  breakeven_giveback_ratio: 0.5
   reentry_cooldown_min: 40
   max_cycles_per_day: 2
   max_move_pct: 0             # 추격방지 삭제: 강한 추세를 막지 않고 라이드

@@ -30,8 +30,14 @@ POSITIONS_PATH = Path("logs/positions.json")
 STOP_LOSS_PCT = -0.03        # -3% 손절 (ATR 없을 때 폴백)
 TRAILING_ACTIVATE_PCT = 0.02   # +2% 도달 시 추적 손절 활성화 (ATR 없을 때 폴백)
 TRAILING_STOP_PCT = 0.012     # 고점 대비 -1.2% 하락 시 매도 (ATR 없을 때 폴백)
-BREAKEVEN_TRIGGER_PCT = 0.007  # +0.7% 이익권 도달 후엔 본전 이하로 안 넘김(라운드트립 차단)
-BREAKEVEN_BUFFER_PCT = 0.001   # 본전 + 0.1% 에서 청산 (이익권 확보)
+# 이익권 청산(구 '본전보존') — 2026-07-31 실측 개선.
+# 옛 값(트리거 0.7% / 본전+0.1% 청산)은 노이즈에 너무 일찍 발동했고, '본전 근처로
+# 내려오면 매도'라 왕복비용 아래·마이너스에서도 팔려 61건 합계 -17,449원을 흘렸다.
+# 이제 (1) 트리거를 노이즈 위로 올리고 (2) **비용 위에서만** 판다.
+BREAKEVEN_TRIGGER_PCT = 0.015  # +1.5% 찍어야 이익권 청산 후보 (노이즈 위)
+ROUND_TRIP_COST_PCT = 0.0026   # 매도세 0.23% + 왕복 수수료 0.03% ≈ 0.26%
+BREAKEVEN_MIN_EXIT_PCT = 0.004  # 비용 + 마진. 이 아래면 팔지 않고 손절에 맡김
+BREAKEVEN_GIVEBACK_RATIO = 0.5  # 고점 이익의 절반을 반납하면 이익권에서 청산
 
 # ── ATR 기반 동적 손절 파라미터 ──
 ATR_STOP_MULTIPLIER = 2.0     # 손절 = 매수가 - ATR × 2.0 (Turtle 기준 확대)
@@ -276,15 +282,15 @@ def check_stop_loss(symbol: str, current_price: int) -> tuple[bool, str]:
                 return True, (f"추적 손절 (고점 {peak_price:,}원에서 "
                               f"{drop_from_peak:+.1%} 하락, 수익 {pnl_pct:+.1%})")
 
-    # ── 3b. 본전 보존: 한번 +0.7% 이익권에 올랐다 반전하면 본전+에서 청산 ──
-    # 트레일링 활성(+2%) 전 구간의 라운드트립 차단 — "이겼다 손실로 넘기는" 것 방지.
-    # 사용자 요청: 이익 볼 때 확실히 챙기고, 손절(-3%) 전에 이익권에서 익절.
+    # ── 3b. 이익권 청산: +1.5% 찍은 뒤 이익 절반을 반납하면 **비용 위에서** 청산 ──
+    # 옛 '본전보존'은 본전 근처로 내려오기만 하면 팔아 비용(0.26%) 아래에서도 청산됐고
+    # 그게 최대 누수였다(61건 -17,449원). 이제 비용 아래면 팔지 않고 손절에 맡긴다.
     if buy_price > 0 and peak_price > buy_price:
         peak_pnl = (peak_price - buy_price) / buy_price
         if (peak_pnl >= BREAKEVEN_TRIGGER_PCT
-                and current_price <= buy_price * (1 + BREAKEVEN_BUFFER_PCT)):
-            return True, (f"본전이익 보존 (고점 +{peak_pnl:.1%}였다가 반전 → "
-                          f"{pnl_pct:+.1%}, 손절 전 이익권 청산)")
+                and BREAKEVEN_MIN_EXIT_PCT <= pnl_pct <= peak_pnl * BREAKEVEN_GIVEBACK_RATIO):
+            return True, (f"이익권 청산 (고점 +{peak_pnl:.1%} 중 절반 반납 → "
+                          f"{pnl_pct:+.1%}, 비용 위에서 확보)")
 
     # ── 4. 동적 ROI: 보유 시간별 최소 수익률 ──
     if pnl_pct > 0:
