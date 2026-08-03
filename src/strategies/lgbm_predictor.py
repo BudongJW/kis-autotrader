@@ -31,6 +31,26 @@ from src.utils.logger import log
 
 MODEL_PATH = Path("logs/lgbm_model.pkl")
 FEATURE_IMPORTANCE_PATH = Path("logs/lgbm_features.json")
+# 매일의 예측을 적어두고 다음날 실현치로 채점하는 전방검증 기록.
+# 홀드아웃 지표는 부풀려질 수 있으므로 **실제 예측력은 이 파일로만 판정한다.**
+LIVE_ACCURACY_PATH = Path("logs/lgbm_live_accuracy.json")
+EMBARGO_DAYS = 2        # 학습/검증/테스트 경계 공백일 — 인접일 상관 누수 차단
+LIVE_MIN_HIT_RATE = 0.53   # 실측 적중률이 이 아래면 예측을 매매에 반영하지 않음
+LIVE_MIN_SAMPLES = 20      # 이만큼 채점되기 전엔 판정 보류(표본 부족)
+
+
+def live_hit_rate() -> float | None:
+    """전방검증 실측 적중률. 표본이 모자라면 None(판정 보류)."""
+    if not LIVE_ACCURACY_PATH.exists():
+        return None
+    try:
+        d = json.loads(LIVE_ACCURACY_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    s = d.get("summary") or {}
+    if (s.get("graded") or 0) < LIVE_MIN_SAMPLES:
+        return None
+    return s.get("hit_rate")
 
 # 예측 임계값
 BUY_THRESHOLD = 0.55    # 상승 확률 55% 이상일 때만 매수 허용
@@ -314,35 +334,42 @@ class LGBMPredictor:
             "seed": 42,
         }
 
-        # CV로 성능 측정
+        # CV로 성능 측정.
+        # 주의(2026-08-03 수정): 옛 코드는 fold의 **테스트셋으로 early stopping**을 한 뒤
+        # 같은 셋에서 AUC를 계산해 낙관 편향이 들어갔다. 이제 학습구간 안에서 다시
+        # 검증셋을 떼어 조기종료에 쓰고, 테스트 fold는 채점에만 쓴다.
         for train_idx, test_idx in tscv.split(features):
-            X_tr = features.iloc[train_idx]
-            X_te = features.iloc[test_idx]
-            y_tr = target.iloc[train_idx]
-            y_te = target.iloc[test_idx]
+            inner = int(len(train_idx) * 0.8)
+            if inner < 20 or len(train_idx) - inner < 5:
+                continue
+            tr_i, va_i = train_idx[:inner], train_idx[inner:]
+            X_tr, y_tr = features.iloc[tr_i], target.iloc[tr_i]
+            X_va, y_va = features.iloc[va_i], target.iloc[va_i]
+            X_te, y_te = features.iloc[test_idx], target.iloc[test_idx]
 
             tr_data = lgb.Dataset(X_tr, label=y_tr)
-            va_data = lgb.Dataset(X_te, label=y_te, reference=tr_data)
+            va_data = lgb.Dataset(X_va, label=y_va, reference=tr_data)
             fold_model = lgb.train(
                 params, tr_data, num_boost_round=200,
                 valid_sets=[va_data],
                 callbacks=[lgb.early_stopping(15), lgb.log_evaluation(0)],
             )
-            fold_prob = fold_model.predict(X_te)
+            fold_prob = fold_model.predict(X_te)   # 조기종료에 안 쓰인 구간
             try:
                 cv_aucs.append(roc_auc_score(y_te, fold_prob))
             except ValueError:
                 pass
 
-        # 최종 모델: 마지막 20%를 validation으로 전체 학습
-        split_idx = int(len(features) * (1 - test_ratio))
-        X_train = features.iloc[:split_idx]
-        X_test = features.iloc[split_idx:]
-        y_train = target.iloc[:split_idx]
-        y_test = target.iloc[split_idx:]
+        # 최종 모델: 학습 / 검증(조기종료) / 테스트(보고) 3분할 — 테스트는 학습에 미사용
+        n = len(features)
+        split_te = int(n * (1 - test_ratio))
+        split_va = int(split_te * 0.85)
+        X_train, y_train = features.iloc[:split_va], target.iloc[:split_va]
+        X_valid, y_valid = features.iloc[split_va:split_te], target.iloc[split_va:split_te]
+        X_test, y_test = features.iloc[split_te:], target.iloc[split_te:]
 
         train_data = lgb.Dataset(X_train, label=y_train)
-        valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
+        valid_data = lgb.Dataset(X_valid, label=y_valid, reference=train_data)
 
         callbacks = [lgb.early_stopping(20), lgb.log_evaluation(0)]
         self.model = lgb.train(
@@ -353,7 +380,7 @@ class LGBMPredictor:
             callbacks=callbacks,
         )
 
-        # 평가
+        # 평가 — 학습·조기종료에 한 번도 쓰이지 않은 테스트셋에서만
         y_pred_prob = self.model.predict(X_test)
         y_pred = (y_pred_prob > 0.5).astype(int)
         accuracy = accuracy_score(y_test, y_pred)
@@ -500,12 +527,38 @@ def daily_retrain(client, symbols: list[str], days: int = 120) -> dict | None:
         return None
 
     predictor.feature_names = list(X.columns)
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+    # ── 시계열 분할 (2026-08-03 누수 수정) ─────────────────────────────────
+    # 옛 코드는 종목별 데이터를 세로로 이어붙인 뒤 행 인덱스 80%로 잘랐다. 그러면
+    # 테스트셋은 사실상 '마지막 종목'이고, 학습셋에 **같은 날짜의 다른 종목**이 들어간다.
+    # 069500과 114800은 서로 역방향 ETF라 이건 라벨을 그대로 알려주는 누수다.
+    # → 날짜 기준으로 자르고, 경계에 embargo(공백일)를 둬 인접일 상관까지 끊는다.
+    dates = pd.to_datetime(pd.Series(X.index, index=X.index), errors="coerce")
+    if dates.isna().all():
+        return None
+    uniq = sorted(dates.dropna().unique())
+    if len(uniq) < 20:
+        return None
+    cut_tr = uniq[int(len(uniq) * 0.65)]      # 학습 65%
+    cut_va = uniq[int(len(uniq) * 0.80)]      # 검증 15% (early stopping 전용)
+    embargo = pd.Timedelta(days=EMBARGO_DAYS)  # 경계 공백 — 인접일 정보 누수 차단
+
+    tr_mask = dates <= cut_tr
+    va_mask = (dates > cut_tr + embargo) & (dates <= cut_va)
+    te_mask = dates > cut_va + embargo        # 테스트 20% — 보고 전용, 학습·조기종료에 미사용
+
+    X_train, y_train = X[tr_mask], y[tr_mask]
+    X_valid, y_valid = X[va_mask], y[va_mask]
+    X_test, y_test = X[te_mask], y[te_mask]
+    if len(X_train) < 40 or len(X_valid) < 10 or len(X_test) < 10:
+        return None
+    if y_test.nunique() < 2:                  # 한쪽 라벨뿐이면 AUC 계산 불가
+        return None
 
     train_data = lgb.Dataset(X_train, label=y_train)
-    valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
+    # early stopping은 **검증셋**으로. 옛 코드는 테스트셋으로 조기종료한 뒤 같은 셋에
+    # 정확도를 보고해 낙관 편향이 들어갔다(보고값 86%, AUC 0.95).
+    valid_data = lgb.Dataset(X_valid, label=y_valid, reference=train_data)
 
     params = {
         "objective": "binary",
@@ -523,17 +576,18 @@ def daily_retrain(client, symbols: list[str], days: int = 120) -> dict | None:
 
     callbacks = [lgb.early_stopping(10), lgb.log_evaluation(0)]
 
-    # warm-start: 기존 모델이 있으면 init_model로 사용
-    init_model = predictor.model if predictor.model is not None else None
+    # warm-start 제거(2026-08-03). 120일 롤링 윈도는 매일 99% 겹치므로, 어제 학습에 쓴
+    # 행이 오늘 테스트셋이 된다. warm-start로 그 모델을 이어받으면 '이미 본 데이터'를
+    # 평가하는 셈이라 지표가 부풀려진다. 표본이 작아(수백 행) 매일 새로 학습해도 저렴하다.
     predictor.model = lgb.train(
         params,
         train_data,
-        num_boost_round=50,  # 추가 50라운드만 (빠른 갱신)
+        num_boost_round=200,
         valid_sets=[valid_data],
         callbacks=callbacks,
-        init_model=init_model,
     )
 
+    # 보고 지표는 **테스트셋 전용**(학습·조기종료에 한 번도 안 쓰인 구간)
     y_pred_prob = predictor.model.predict(X_test)
     y_pred = (y_pred_prob > 0.5).astype(int)
     accuracy = accuracy_score(y_test, y_pred)
@@ -551,10 +605,16 @@ def daily_retrain(client, symbols: list[str], days: int = 120) -> dict | None:
     with FEATURE_IMPORTANCE_PATH.open("w", encoding="utf-8") as f:
         json.dump({
             "trained_at": pd.Timestamp.now().isoformat(),
-            "mode": "daily_warm_start",
+            "mode": "daily_timesplit_embargo",   # 구 daily_warm_start(누수) 대체
             "accuracy": round(accuracy, 4),
             "auc": round(auc, 4),
             "n_samples": len(X),
+            "n_train": len(X_train),
+            "n_valid": len(X_valid),
+            "n_test": len(X_test),
+            "embargo_days": EMBARGO_DAYS,
+            # 주의: 이 값은 홀드아웃 지표일 뿐 실거래 성적이 아니다. 실제 예측력은
+            # live_accuracy.json(매일 예측 -> 다음날 실현 대조)으로만 판단한다.
             "feature_importance": {k: round(v, 2) for k, v in sorted_imp[:20]},
         }, f, ensure_ascii=False, indent=2)
 
@@ -578,11 +638,22 @@ def get_prediction_filter(client, symbol: str, history=None) -> dict:
     if predictor.model is None:
         return {"allow": True, "up_prob": 0.5, "reason": "LGBM 모델 없음 — 필터 미적용"}
 
+    # 실측 적중률이 동전던지기 수준이면 예측을 매매에 반영하지 않는다(2026-08-03).
+    # 홀드아웃 지표는 부풀려질 수 있으므로, 전방검증(live_accuracy)만 신뢰한다.
+    live = live_hit_rate()
+    if live is not None and live < LIVE_MIN_HIT_RATE:
+        return {"allow": True, "up_prob": 0.5,
+                "reason": f"LGBM 실측 적중률 {live:.0%} < {LIVE_MIN_HIT_RATE:.0%} — 예측 미반영"}
+
     try:
         if history is None:
             from src.bot.runner import fetch_recent_history
             history = fetch_recent_history(client, symbol, days=70)
         result = predictor.predict(history)
+        try:
+            record_live_prediction(symbol, result.up_prob, history)
+        except Exception:  # noqa: BLE001 — 기록 실패가 매매를 막으면 안 됨
+            pass
         return {
             "allow": result.signal != "BLOCK",
             "up_prob": result.up_prob,
@@ -590,3 +661,59 @@ def get_prediction_filter(client, symbol: str, history=None) -> dict:
         }
     except Exception as e:
         return {"allow": True, "up_prob": 0.5, "reason": f"LGBM 예측 실패: {e}"}
+
+
+def record_live_prediction(symbol: str, up_prob: float, history) -> None:
+    """오늘의 예측을 적어두고, 지난 예측들을 실현치로 채점한다(전방검증).
+
+    홀드아웃 지표(accuracy/auc)는 분할·조기종료 설계에 따라 부풀려질 수 있다.
+    반면 '예측 시점 이후 실제로 올랐나'는 조작이 불가능하다. 이 기록이 모델을
+    믿을지 말지의 유일한 근거다. 하루 한 종목당 1건만 남긴다(중복 방지).
+    """
+    if history is None or len(history) < 2:
+        return
+    closes = history["close"] if "close" in history else history.iloc[:, -1]
+    today = str(pd.to_datetime(history.index[-1]).date())
+    last_close = float(closes.iloc[-1])
+
+    data = {"records": []}
+    if LIVE_ACCURACY_PATH.exists():
+        try:
+            data = json.loads(LIVE_ACCURACY_PATH.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            data = {"records": []}
+    recs = data.get("records", [])
+
+    # 1) 미채점 예측 채점: 예측일보다 뒤의 종가가 확보됐으면 상승 여부 확정
+    idx_by_date = {str(pd.to_datetime(d).date()): i for i, d in enumerate(history.index)}
+    for r in recs:
+        if r.get("realized") is not None or r.get("symbol") != symbol:
+            continue
+        i = idx_by_date.get(r.get("date", ""))
+        if i is None or i + 1 >= len(closes):
+            continue
+        nxt = float(closes.iloc[i + 1])
+        r["next_close"] = nxt
+        r["realized"] = 1 if nxt > r["close"] else 0
+        r["hit"] = int((r["up_prob"] > 0.5) == (r["realized"] == 1))
+
+    # 2) 오늘 예측 기록(같은 날 중복 방지)
+    if not any(r.get("date") == today and r.get("symbol") == symbol for r in recs):
+        recs.append({"date": today, "symbol": symbol, "up_prob": round(float(up_prob), 4),
+                     "close": last_close, "realized": None})
+
+    graded = [r for r in recs if r.get("hit") is not None]
+    hits = sum(r["hit"] for r in graded)
+    confident = [r for r in graded if abs(r["up_prob"] - 0.5) >= 0.10]
+    conf_hits = sum(r["hit"] for r in confident)
+    data["records"] = recs[-500:]
+    data["summary"] = {
+        "graded": len(graded),
+        "hit_rate": round(hits / len(graded), 4) if graded else None,
+        "confident_graded": len(confident),
+        "confident_hit_rate": round(conf_hits / len(confident), 4) if confident else None,
+        "note": "이 값이 0.5 근처면 예측력 없음 — 사이즈·게이트에 반영할 것",
+    }
+    LIVE_ACCURACY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LIVE_ACCURACY_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")

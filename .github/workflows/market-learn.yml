@@ -139,7 +139,8 @@ jobs:
           # 학습 상태(모델·경험·정확도)를 repo에 영속화 → 트레이딩 봇이 checkout으로 받아
           # LGBM 융합·자기학습에 사용. 아티팩트(현재 run만 보임) 미복원 문제 우회.
           mkdir -p state/learning
-          for f in lgbm_model.pkl lgbm_features.json experience.json ta_accuracy.json \
+          for f in lgbm_model.pkl lgbm_features.json lgbm_live_accuracy.json \
+                   experience.json ta_accuracy.json \
                    regime_memory.json gap_accuracy.json sector_accuracy.json \
                    market_history.json strategy_weights.json fusion_weights.json \
                    bear_state.json bear_performance.json; do
