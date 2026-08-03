@@ -115,5 +115,14 @@
     "action": "aggressive_buy",
     "kospi_gap": 24.17,
     "correct": true
+  },
+  {
+    "date": "2026-08-03",
+    "nasdaq_change": 1.0,
+    "sp500_change": 0.7,
+    "direction": "bullish",
+    "action": "normal",
+    "kospi_gap": -8.85,
+    "correct": false
   }
 ]
