@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.7
+    k: 0.66
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -18,13 +18,13 @@ strategies:
   ta_weights:
     rsi: 0.049
     macd: 0.171
-    bb: 0.085
-    stoch: 0.114
-    adx: 0.099
-    ma: 0.171
-    obv: 0.171
-    mfi: 0.071
-    atr: 0.071
+    bb: 0.079
+    stoch: 0.119
+    adx: 0.106
+    ma: 0.159
+    obv: 0.159
+    mfi: 0.079
+    atr: 0.079
 day_plan:
   force_stance: RISK_ON
 costs:
@@ -305,16 +305,16 @@ risk:
 market_regime:
   trend: down
   volatility: high
-  trend_score: -0.199
-  vol_percentile: 96.0
-  analyzed_at: 2026-08-04 09:58
-  hmm_state: bear
-  hmm_confidence: 1.0
+  trend_score: -0.217
+  vol_percentile: 98.0
+  analyzed_at: 2026-08-05 09:52
+  hmm_state: sideways
+  hmm_confidence: 0.9999872489348244
   hmm_transition:
-    bear: 1.0
-    bull: 6.062186578038174e-45
-    sideways: 7.211395370019069e-17
-market_confidence: 0.512
+    sideways: 3.6205327446430904e-06
+    bear: 0.999996340884381
+    bull: 3.8582874345744974e-08
+market_confidence: 0.436
 strong_sectors:
 - 반도체
 - 2차전지
@@ -327,13 +327,12 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
+  nasdaq_change: 2.59
+  sp500_change: 1.79
   direction: bullish
+  strength: 0.76
+  confidence_boost: 0.136
   recommended_action: aggressive_buy
-  nasdaq_change: 3.25
-  sp500_change: 2.02
-  strength: 0.88
-  confidence_boost: 0.1
-  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
@@ -355,8 +354,8 @@ dynamic_universe:
   name: KODEX KOSDAQ150
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.492
-  trades: 61
+  win_rate: 0.5
+  trades: 64
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - 069500
