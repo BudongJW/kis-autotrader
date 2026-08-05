@@ -327,12 +327,13 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: 2.59
-  sp500_change: 1.79
-  direction: bullish
-  strength: 0.76
-  confidence_boost: 0.136
-  recommended_action: aggressive_buy
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: -0.71
+  sp500_change: 0.07
+  strength: 0.11
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
