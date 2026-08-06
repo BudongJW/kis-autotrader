@@ -460,5 +460,26 @@
     "sector": "KODEX 인버스",
     "strong_sector": false,
     "pnl_pct": -2.08
+  },
+  {
+    "date": "2026-08-06",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 3.09
+  },
+  {
+    "date": "2026-08-06",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 2.54
+  },
+  {
+    "date": "2026-08-06",
+    "symbol": "114800",
+    "sector": "KODEX 인버스",
+    "strong_sector": false,
+    "pnl_pct": 0.09
   }
 ]
