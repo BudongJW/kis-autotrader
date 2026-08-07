@@ -1,8 +1,8 @@
 {
-  "trained_at": "2026-08-07T10:04:08.975301",
+  "trained_at": "2026-08-07T17:19:41.556082",
   "mode": "daily_timesplit_embargo",
-  "accuracy": 0.3667,
-  "auc": 0.3325,
+  "accuracy": 0.3333,
+  "auc": 0.3225,
   "n_samples": 180,
   "n_train": 120,
   "n_valid": 24,
