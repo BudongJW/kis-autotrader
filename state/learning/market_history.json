@@ -518,5 +518,27 @@
       "KOSDAQ150"
     ],
     "k_value": 0.65
+  },
+  {
+    "date": "2026-08-10",
+    "regime_trend": "down",
+    "regime_volatility": "high",
+    "trend_score": -0.28,
+    "vol_percentile": 88.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.7103653748862621,
+    "breadth": "mixed",
+    "kospi_5d": -2.23,
+    "kosdaq_5d": 2.06,
+    "confidence": 0.18168,
+    "strong_sectors": [
+      "2차전지",
+      "바이오",
+      "자동차",
+      "IT",
+      "철강",
+      "KOSDAQ150"
+    ],
+    "k_value": 0.65
   }
 ]

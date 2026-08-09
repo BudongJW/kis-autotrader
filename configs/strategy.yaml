@@ -17,14 +17,14 @@ strategies:
     backtest_mdd: -1.85
   ta_weights:
     rsi: 0.049
-    macd: 0.164
-    bb: 0.076
-    stoch: 0.127
-    adx: 0.102
-    ma: 0.164
-    obv: 0.164
-    mfi: 0.076
-    atr: 0.076
+    macd: 0.159
+    bb: 0.073
+    stoch: 0.134
+    adx: 0.098
+    ma: 0.17
+    obv: 0.17
+    mfi: 0.073
+    atr: 0.073
 day_plan:
   force_stance: RISK_ON
 costs:
@@ -305,16 +305,16 @@ risk:
 market_regime:
   trend: down
   volatility: high
-  trend_score: -0.261
-  vol_percentile: 90.0
-  analyzed_at: 2026-08-07 10:46
+  trend_score: -0.28
+  vol_percentile: 88.0
+  analyzed_at: 2026-08-10 08:54
   hmm_state: sideways
-  hmm_confidence: 0.7325528964042339
+  hmm_confidence: 0.7103653748862621
   hmm_transition:
-    sideways: 0.0002423121300639084
-    bear: 0.9997576797573604
-    bull: 8.112575621805065e-09
-market_confidence: 0.12
+    sideways: 0.007649641946676393
+    bear: 0.992350246747301
+    bull: 1.1130602273716067e-07
+market_confidence: 0.182
 strong_sectors:
 - 2차전지
 - 바이오
@@ -323,13 +323,12 @@ strong_sectors:
 - 철강
 - KOSDAQ150
 overnight_signal:
-  direction: neutral
-  recommended_action: normal
-  nasdaq_change: 1.14
-  sp500_change: 0.59
-  strength: 0.29
-  confidence_boost: 0.0
-  source: us_post_learning
+  nasdaq_change: 1.3
+  sp500_change: 0.62
+  direction: bullish
+  strength: 0.34
+  confidence_boost: 0.062
+  recommended_action: aggressive_buy
 dynamic_universe:
 - symbol: '305720'
   name: KODEX 2차전지
@@ -345,8 +344,8 @@ dynamic_universe:
   name: KODEX KOSDAQ150
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.521
-  trades: 67
+  win_rate: 0.534
+  trades: 69
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - 069500
