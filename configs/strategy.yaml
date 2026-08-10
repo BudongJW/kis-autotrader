@@ -323,12 +323,13 @@ strong_sectors:
 - 철강
 - KOSDAQ150
 overnight_signal:
-  nasdaq_change: 1.3
-  sp500_change: 0.62
-  direction: bullish
-  strength: 0.34
-  confidence_boost: 0.062
-  recommended_action: aggressive_buy
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: -0.22
+  sp500_change: -0.02
+  strength: 0.04
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: '305720'
   name: KODEX 2차전지
