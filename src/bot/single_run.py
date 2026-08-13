@@ -261,6 +261,44 @@ def get_quote(client: KISClient, symbol: str) -> dict:
     return out
 
 
+def _kr_held_qty(client: KISClient, symbol: str) -> int:
+    """국내 보유수량. 조회 실패 시 -1(모름)."""
+    try:
+        bal = client.get_balance()
+        if bal.get("rt_cd") != "0":
+            return -1
+        for it in (bal.get("output1") or []):
+            if it.get("pdno") == symbol:
+                return int(float(it.get("hldg_qty", 0) or 0))
+        return 0
+    except Exception:  # noqa: BLE001
+        return -1
+
+
+def _kr_confirm_fill(client: KISClient, symbol: str, qty_before: int,
+                     expected: int, wait_sec: float = 6.0,
+                     poll_sec: float = 1.5) -> int:
+    """매도 주문 후 잔고 변화로 **실제 체결 수량**을 확인.
+
+    Returns: 체결수량(0=미체결). 확인 불가면 -1 — 호출부는 기록하지 않는다.
+    'rt_cd=0이니 다 팔렸겠지'로 기록하면 유령 매도가 장부에 쌓인다.
+    """
+    import time as _t
+    if qty_before < 0:
+        return -1
+    deadline = _t.monotonic() + max(0.0, wait_sec)
+    best = -1
+    while True:
+        cur = _kr_held_qty(client, symbol)
+        if cur >= 0:
+            best = max(0, qty_before - cur)
+            if best >= expected:
+                return best
+        if _t.monotonic() >= deadline:
+            return best
+        _t.sleep(poll_sec)
+
+
 def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: set,
                   label: str, dry_run: bool,
                   twap_engine: TWAPEngine | None = None) -> None:
@@ -276,11 +314,28 @@ def sell_holdings(client: KISClient, holdings: dict[str, int], universe_syms: se
             continue
 
         if not dry_run:
+            held_before = _kr_held_qty(client, symbol)
             resp = _safe_order_cash(client, symbol, qty, price, "sell")
             rt = resp.get("rt_cd")
             print(f"    응답: rt_cd={rt}, msg={resp.get('msg1', '')}")
             if rt == "0":
-                log_trade(symbol, tag, "sell", qty, price, reason=f"매도: {label}")
+                # rt_cd=0은 '주문 접수'일 뿐 체결이 아니다. 옛 코드는 이걸 체결로 보고
+                # 요청 수량 전량을 기록해서 미체결·중복주문이 그대로 장부에 박혔다
+                # (2026-08 감사: 114800 순수량 -449주, 069500 -5주). 실제 잔고 변화로
+                # 체결분을 확인하고, 확인 실패면 **기록하지 않는다**.
+                filled = _kr_confirm_fill(client, symbol, held_before, qty)
+                if filled < 0:
+                    print("    ⚠️ 체결 확인 실패 — 기록 보류(다음 주기 잔고로 재확인)")
+                    log.warning(f"{label}_sell_fill_unknown_not_logged",
+                                symbol=symbol, qty=qty)
+                    continue
+                if filled == 0:
+                    print("    ⚠️ 미체결 — 포지션 유지")
+                    log.warning(f"{label}_sell_unfilled", symbol=symbol, qty=qty)
+                    continue
+                if filled < qty:
+                    print(f"    부분체결 {filled}/{qty}주")
+                log_trade(symbol, tag, "sell", filled, price, reason=f"매도: {label}")
                 # 보유 기간 결과 기록 (적응 학습용)
                 positions = load_positions()
                 pos = positions.get(symbol, {})

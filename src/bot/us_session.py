@@ -637,17 +637,25 @@ def _sell_and_record(client: KISClient, symbol: str, exchange: str, qty: int,
                     msg=resp.get("msg1", ""), eod=eod)
         return False
 
-    filled, _ = confirm_us_fill(client, symbol, "sell", max(0, qty_before), qty)
-    if filled < 0:                      # 확인 실패 → 기존 동작(접수=성공)으로 폴백
-        log.warning("us_sell_fill_check_failed", symbol=symbol, qty=qty)
-        filled = qty
+    filled, fill_avg = confirm_us_fill(client, symbol, "sell", max(0, qty_before), qty)
+    if filled < 0:
+        # 체결 확인 실패 = 팔렸는지 **모른다**. 옛 코드는 여기서 filled=qty로 두고
+        # 거래기록을 남겼다. 그래서 미체결·중복주문이 그대로 장부에 박혀 PSQ 순수량이
+        # -11주가 됐다(2026-08 실측). 모르는 건 기록하지 않는다 — 다음 주기에 잔고로
+        # 재확인해서 처리한다. 포지션도 지우지 않는다(지우면 관리 사각지대가 생긴다).
+        print("      ⚠️ 체결 확인 실패 — 기록 보류(다음 주기 잔고로 재확인)")
+        log.warning("us_sell_fill_unknown_not_logged", symbol=symbol, qty=qty,
+                    reason=reason, eod=eod)
+        return False
     if filled <= 0:
         print(f"      ⚠️ 미체결 — 포지션 유지(다음 주기 재시도)")
         log.warning("us_sell_unfilled", symbol=symbol, qty=qty,
                     limit=limit_px, eod=eod)
         return False
 
-    px = limit_px if ref_price <= 0 else ref_price
+    # 기록가는 **실제 체결 평단**을 우선. 옛 코드는 지정가/참조가를 적어 장부 손익이
+    # 실제와 달랐다. 평단을 못 얻은 경우에만 참조가로 폴백한다.
+    px = fill_avg if fill_avg and fill_avg > 0 else (limit_px if ref_price <= 0 else ref_price)
     log_trade(symbol, f"US_{symbol}", "sell", filled, int(px * 100),
               market="US", reason=reason)
     if filled < qty:
@@ -1310,11 +1318,15 @@ def run_us_strategy(client: KISClient, dry_run: bool) -> int:
                         log.warning("us_buy_unfilled", symbol=symbol, qty=qty,
                                     limit=buy_px)
                         continue
-                    if filled < 0:                    # 확인 실패 → 요청값으로 폴백
-                        filled, avg_px = qty, buy_px
-                        log.warning("us_fill_check_failed_fallback",
-                                    symbol=symbol, assumed_qty=qty, assumed_px=buy_px)
-                    elif avg_px <= 0:
+                    if filled < 0:
+                        # 확인 실패 = 체결됐는지 모른다. 요청값으로 기록하면 유령
+                        # 매수가 장부에 박힌다(2026-08 PSQ 순수량 -11 사고의 매수측).
+                        # 모르는 건 기록하지 않고 다음 주기 잔고로 재확인한다.
+                        print("      ⚠️ 체결 확인 실패 — 기록 보류(다음 주기 재확인)")
+                        log.warning("us_buy_fill_unknown_not_logged",
+                                    symbol=symbol, qty=qty, limit=buy_px)
+                        continue
+                    if avg_px <= 0:
                         avg_px = buy_px
                     if filled < qty:
                         print(f"      부분체결 {filled}/{qty}주")
@@ -1731,10 +1743,14 @@ def run_us_momentum_strategy(client: KISClient, dry_run: bool) -> bool:
                                     log.warning("us_mom_buy_unfilled", symbol=tsym,
                                                 qty=qty, limit=tbuy_px)
                                     _f = 0
+                                elif _f < 0:
+                                    # 확인 실패 = 모른다 → 기록·포지션 등록 금지
+                                    print("      ⚠️ 체결 확인 실패 — 기록 보류")
+                                    log.warning("us_mom_buy_fill_unknown_not_logged",
+                                                symbol=tsym, qty=qty, limit=tbuy_px)
+                                    _f = 0
                                 else:
-                                    if _f < 0:
-                                        _f, _avg = qty, tbuy_px
-                                    elif _avg <= 0:
+                                    if _avg <= 0:
                                         _avg = tbuy_px
                                     print(f"      체결: {_f}주 @ ${_avg:.2f} "
                                           f"(슬리피지 {(_avg - tprice) / tprice:+.2%})")

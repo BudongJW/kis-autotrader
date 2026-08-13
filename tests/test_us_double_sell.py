@@ -124,20 +124,26 @@ def test_normal_full_sell_unchanged(isolate, monkeypatch):
     assert "PSQ" not in us.load_us_positions()
 
 
-def test_lookup_failure_falls_back_to_old_behavior(isolate, monkeypatch):
-    """잔고 조회 실패(-1)면 판단 근거가 없다 — 막지 말고 기존 동작 유지.
+def test_lookup_failure_still_sends_order_but_does_not_log(isolate, monkeypatch):
+    """잔고 조회 실패(-1): 주문은 그대로 낸다(손절 누락이 더 위험). 단 **기록은 보류**.
 
-    조회 실패로 청산을 건너뛰면 손절이 통째로 누락된다. 그쪽이 더 위험하다.
+    2026-08 감사에서 PSQ 순수량 -11주, 114800 -449주가 나왔다. 원인은 체결을 확인하지
+    못했는데 '요청 수량대로 팔린 걸로 치고' 거래기록을 남긴 폴백이었다. 모르는 건
+    적지 않고 포지션도 유지해, 다음 주기에 실제 잔고로 정리되게 한다.
     """
     _held(monkeypatch, -1)
     us.save_us_positions({"PSQ": {"qty": 10, "buy_price": 27.44}})
     client = FakeClient()
     monkeypatch.setattr(us, "confirm_us_fill", lambda *a, **k: (-1, 0.0))
+    logged = []
+    monkeypatch.setattr(us, "log_trade", lambda *a, **k: logged.append((a, k)))
 
     ok = us._sell_and_record(client, "PSQ", "AMEX", 10, 27.61, 27.57, "손절")
 
-    assert len(client.orders) == 1 and client.orders[0]["qty"] == 10
-    assert ok is True
+    assert len(client.orders) == 1 and client.orders[0]["qty"] == 10  # 주문은 나갔다
+    assert logged == [], "확인 못 한 체결을 장부에 적으면 유령 매도가 쌓인다"
+    assert ok is False                                   # 다음 주기 재확인 대상
+    assert "PSQ" in us.load_us_positions()                # 포지션 유지
 
 
 def test_rejected_order_keeps_position(isolate, monkeypatch):
