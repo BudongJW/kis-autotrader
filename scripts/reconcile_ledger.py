@@ -40,20 +40,27 @@ def _n(v) -> int:
 def _fetch(path: str, tr: str, params: dict) -> list[dict]:
     """연속조회(fk/nk)까지 훑어 전체 레코드 수집."""
     url = f"{settings.base_url}{path}"
-    rows, fk, nk = [], "", ""
-    for _ in range(30):
+    rows, fk, nk, cont = [], "", "", ""
+    for _ in range(50):
         p = dict(params)
         p["CTX_AREA_FK100" if "domestic" in path else "CTX_AREA_FK200"] = fk
         p["CTX_AREA_NK100" if "domestic" in path else "CTX_AREA_NK200"] = nk
-        r = _request_with_retry("GET", url, headers=auth_headers(tr), params=p)
+        h = auth_headers(tr)
+        if cont:
+            h["tr_cont"] = "N"          # 연속조회 요청
+        r = _request_with_retry("GET", url, headers=h, params=p)
         d = r.json()
         if d.get("rt_cd") != "0":
             print(f"  [조회실패] {tr} {d.get('msg1', '')[:60]}")
             break
-        rows.extend(d.get("output") or d.get("output1") or [])
+        page = d.get("output") or d.get("output1") or []
+        rows.extend(page)
         fk = d.get("ctx_area_fk100") or d.get("ctx_area_fk200") or ""
         nk = d.get("ctx_area_nk100") or d.get("ctx_area_nk200") or ""
-        if (d.get("tr_cont") or "").strip() not in ("F", "M") or not nk.strip():
+        # tr_cont는 **응답 헤더**로 온다. 본문에서 읽으면 항상 빈 값이라 첫 페이지에서
+        # 멈춘다 — 그러면 과거 체결이 통째로 누락돼 정상 거래가 '유령'으로 오판된다.
+        cont = (r.headers.get("tr_cont") or "").strip()
+        if cont not in ("F", "M") or not nk.strip():
             break
     return rows
 
@@ -144,34 +151,48 @@ def main() -> None:
     real = kr_fills(start, end) + us_fills(start, end)
     print(f"실체결 {len(real)}건")
 
-    # 날짜·종목·방향 단위로 수량 집계 후 차이를 낸다(시각까지 맞추긴 어렵다)
+    # 종목·방향별 **총수량**으로 대조한다.
+    # 날짜 단위 비교는 쓸 수 없다: 미장은 KST 23:42 매수가 미국 주문일로는 전날이라
+    # 같은 거래가 '어제 누락 + 오늘 유령'으로 이중 계상된다(첫 실행에서 유령 95건).
+    # 총수량 차이는 이 시차에 영향받지 않고, 우리가 고치려는 것도 순수량 불일치다.
     def agg(rows):
         d = defaultdict(int)
         for r in rows:
-            d[(r["date"], r["symbol"], r["side"])] += r["qty"]
+            d[(r["symbol"], r["side"])] += r["qty"]
         return d
 
     ja, ra = agg(jr), agg(real)
     keys = sorted(set(ja) | set(ra))
     missing, phantom = [], []
-    for k in keys:
-        diff = ra.get(k, 0) - ja.get(k, 0)
-        if diff > 0:
-            missing.append({"date": k[0], "symbol": k[1], "side": k[2], "qty": diff,
-                            "note": "실체결에 있으나 장부에 없음(누락)"})
-        elif diff < 0:
-            phantom.append({"date": k[0], "symbol": k[1], "side": k[2], "qty": -diff,
-                            "note": "장부에만 있음(유령)"})
+    for sym, side in keys:
+        diff = ra.get((sym, side), 0) - ja.get((sym, side), 0)
+        if diff == 0:
+            continue
+        # 해당 종목·방향의 실체결 평균가(보정행 기록가로 사용)
+        px = [r["price"] for r in real
+              if r["symbol"] == sym and r["side"] == side and r["price"] > 0]
+        avg = round(sum(px) / len(px), 4) if px else 0
+        rec = {"symbol": sym, "side": side, "qty": abs(diff), "avg_price": avg,
+               "journal_qty": ja.get((sym, side), 0), "real_qty": ra.get((sym, side), 0)}
+        (missing if diff > 0 else phantom).append(rec)
 
     print(f"\n=== 누락(장부에 추가해야) {len(missing)}건 ===")
     for m in missing:
-        px = next((r["price"] for r in real
-                   if (r["date"], r["symbol"], r["side"]) == (m["date"], m["symbol"], m["side"])), 0)
-        m["price"] = px
-        print(f"  {m['date']} {m['symbol']} {m['side']} {m['qty']}주 @ {px}")
+        print(f"  {m['symbol']:<8}{m['side']:<5} 부족 {m['qty']:>5}주 "
+              f"(장부 {m['journal_qty']} / 실체결 {m['real_qty']}) @ {m['avg_price']}")
     print(f"\n=== 유령(장부에서 빼야) {len(phantom)}건 ===")
     for p in phantom:
-        print(f"  {p['date']} {p['symbol']} {p['side']} {p['qty']}주")
+        print(f"  {p['symbol']:<8}{p['side']:<5} 과다 {p['qty']:>5}주 "
+              f"(장부 {p['journal_qty']} / 실체결 {p['real_qty']})")
+
+    print("\n=== 종목별 순수량 대조 ===")
+    jn = {s: ja.get((s, "buy"), 0) - ja.get((s, "sell"), 0)
+          for s in {k[0] for k in keys}}
+    rn = {s: ra.get((s, "buy"), 0) - ra.get((s, "sell"), 0)
+          for s in {k[0] for k in keys}}
+    for s in sorted(jn):
+        mark = "OK" if jn[s] == rn[s] else "불일치"
+        print(f"  {s:<8} 장부 {jn[s]:>+6} / 실체결 {rn[s]:>+6}  {mark}")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({"start": start, "end": end,
