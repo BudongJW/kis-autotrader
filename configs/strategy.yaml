@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.6
+    k: 0.55
     trend_ma: 15
     optimized_at: '2026-07-05'
     train_sharpe: 1.56
@@ -304,21 +304,20 @@ risk:
   - 나스닥
 market_regime:
   trend: down
-  volatility: high
-  trend_score: -0.328
-  vol_percentile: 80.0
-  analyzed_at: 2026-08-13 09:04
+  volatility: low
+  trend_score: -0.342
+  vol_percentile: 10.0
+  analyzed_at: 2026-08-14 09:04
   hmm_state: sideways
-  hmm_confidence: 0.8827382828560653
+  hmm_confidence: 0.7311640393900948
   hmm_transition:
-    sideways: 0.00026892599703285346
-    bear: 0.9997178890957858
-    bull: 1.3184907181341103e-05
-market_confidence: 0.4
+    sideways: 0.009561945651139164
+    bear: 0.9904379127660312
+    bull: 1.4158282952006051e-07
+market_confidence: 0.56
 strong_sectors:
 - 반도체
 - 2차전지
-- 바이오
 - 자동차
 - 금융
 - IT
@@ -327,20 +326,17 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  direction: neutral
+  nasdaq_change: 0.81
+  sp500_change: 0.65
+  direction: bullish
+  strength: 0.25
+  confidence_boost: 0.03
   recommended_action: normal
-  nasdaq_change: 1.18
-  sp500_change: 0.72
-  strength: 0.32
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
 - symbol: '305720'
   name: KODEX 2차전지
-- symbol: '244580'
-  name: KODEX 바이오
 - symbol: 091180
   name: KODEX 자동차
 - symbol: '102110'
@@ -355,8 +351,8 @@ dynamic_universe:
   name: KODEX KOSDAQ150
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.534
-  trades: 69
+  win_rate: 0.57
+  trades: 75
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - 069500

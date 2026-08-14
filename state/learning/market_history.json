@@ -614,5 +614,30 @@
       "미국나스닥"
     ],
     "k_value": 0.6
+  },
+  {
+    "date": "2026-08-14",
+    "regime_trend": "down",
+    "regime_volatility": "low",
+    "trend_score": -0.342,
+    "vol_percentile": 10.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.7311640393900948,
+    "breadth": "moderate",
+    "kospi_5d": 12.45,
+    "kosdaq_5d": 1.62,
+    "confidence": 0.55984,
+    "strong_sectors": [
+      "반도체",
+      "2차전지",
+      "자동차",
+      "금융",
+      "IT",
+      "철강",
+      "KOSPI200",
+      "KOSDAQ150",
+      "미국나스닥"
+    ],
+    "k_value": 0.55
   }
 ]
