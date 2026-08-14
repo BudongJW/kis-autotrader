@@ -495,5 +495,47 @@
     "sector": "KODEX 인버스",
     "strong_sector": false,
     "pnl_pct": 0.09
+  },
+  {
+    "date": "2026-08-14",
+    "symbol": "PSQ",
+    "sector": "PSQ",
+    "strong_sector": false,
+    "pnl_pct": 0.57
+  },
+  {
+    "date": "2026-08-14",
+    "symbol": "QQQM",
+    "sector": "QQQM",
+    "strong_sector": false,
+    "pnl_pct": 0.43
+  },
+  {
+    "date": "2026-08-14",
+    "symbol": "SCHG",
+    "sector": "SCHG",
+    "strong_sector": false,
+    "pnl_pct": 0.09
+  },
+  {
+    "date": "2026-08-14",
+    "symbol": "SH",
+    "sector": "SH",
+    "strong_sector": false,
+    "pnl_pct": 0.36
+  },
+  {
+    "date": "2026-08-14",
+    "symbol": "TLT",
+    "sector": "TLT",
+    "strong_sector": false,
+    "pnl_pct": 0.02
+  },
+  {
+    "date": "2026-08-14",
+    "symbol": "XLF",
+    "sector": "XLF",
+    "strong_sector": false,
+    "pnl_pct": 0.08
   }
 ]
