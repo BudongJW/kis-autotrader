@@ -314,7 +314,7 @@ market_regime:
     bear: 3.1853109162991645e-07
     bull: 0.017784247013225635
     sideways: 0.9822154344556827
-market_confidence: 0.53
+market_confidence: 0.45
 strong_sectors:
 - 반도체
 - 2차전지
@@ -326,12 +326,13 @@ strong_sectors:
 - KOSDAQ150
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: -0.32
-  sp500_change: -0.52
-  direction: neutral
-  strength: 0.1
-  confidence_boost: 0
-  recommended_action: normal
+  direction: bearish
+  recommended_action: reduce_size
+  nasdaq_change: -1.78
+  sp500_change: -0.7
+  strength: 0.41
+  confidence_boost: -0.08
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
