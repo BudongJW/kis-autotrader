@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.52
+    k: 0.51
     trend_ma: 15
     optimized_at: '2026-08-16'
     train_sharpe: 1.03
@@ -305,42 +305,28 @@ risk:
 market_regime:
   trend: down
   volatility: low
-  trend_score: -0.367
+  trend_score: -0.387
   vol_percentile: 2.0
-  analyzed_at: 2026-08-19 08:43
+  analyzed_at: 2026-08-20 08:43
   hmm_state: sideways
-  hmm_confidence: 0.9477881590090748
+  hmm_confidence: 0.9020876474237526
   hmm_transition:
-    bear: 0.9653608924427264
-    sideways: 0.002486705113907123
-    bull: 0.03215240244336644
-market_confidence: 0.306
+    sideways: 0.00023483226657189366
+    bear: 0.9997651621624088
+    bull: 5.571019222858073e-09
+market_confidence: 0.17
 strong_sectors:
-- 반도체
-- 자동차
-- 금융
 - IT
-- KOSPI200
-- 미국나스닥
 overnight_signal:
+  nasdaq_change: 0.16
+  sp500_change: 0.21
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: -0.08
-  sp500_change: 0.22
-  strength: 0.02
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
-- symbol: 091160
-  name: KODEX 반도체
-- symbol: 091180
-  name: KODEX 자동차
-- symbol: '102110'
-  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
-- symbol: 069500
-  name: KODEX KOSPI200
 adaptive_allocation:
   etf: 1.0
   win_rate: 0.57
