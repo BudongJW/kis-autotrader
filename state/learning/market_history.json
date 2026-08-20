@@ -728,5 +728,23 @@
       "IT"
     ],
     "k_value": 0.51
+  },
+  {
+    "date": "2026-08-21",
+    "regime_trend": "down",
+    "regime_volatility": "low",
+    "trend_score": -0.386,
+    "vol_percentile": 2.0,
+    "hmm_state": "bear",
+    "hmm_confidence": 0.7715408243025863,
+    "breadth": "weak",
+    "kospi_5d": -1.7,
+    "kosdaq_5d": -1.45,
+    "confidence": 0.15208,
+    "strong_sectors": [
+      "반도체",
+      "IT"
+    ],
+    "k_value": 0.6
   }
 ]

@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.51
+    k: 0.6
     trend_ma: 15
     optimized_at: '2026-08-16'
     train_sharpe: 1.03
@@ -305,27 +305,29 @@ risk:
 market_regime:
   trend: down
   volatility: low
-  trend_score: -0.387
+  trend_score: -0.386
   vol_percentile: 2.0
-  analyzed_at: 2026-08-20 08:43
-  hmm_state: sideways
-  hmm_confidence: 0.9020876474237526
+  analyzed_at: 2026-08-21 08:46
+  hmm_state: bear
+  hmm_confidence: 0.7715408243025863
   hmm_transition:
-    sideways: 0.00023483226657189366
-    bear: 0.9997651621624088
-    bull: 5.571019222858073e-09
-market_confidence: 0.17
+    sideways: 0.9257348754478025
+    bear: 0.043101718270454274
+    bull: 0.03116340628174323
+market_confidence: 0.152
 strong_sectors:
+- 반도체
 - IT
 overnight_signal:
-  direction: neutral
-  recommended_action: normal
-  nasdaq_change: -0.7
-  sp500_change: -0.76
-  strength: 0.24
-  confidence_boost: 0.0
-  source: us_post_learning
+  nasdaq_change: -1.0
+  sp500_change: -0.87
+  direction: bearish
+  strength: 0.32
+  confidence_boost: -0.038
+  recommended_action: reduce_size
 dynamic_universe:
+- symbol: 091160
+  name: KODEX 반도체
 - symbol: 098560
   name: KODEX IT
 adaptive_allocation:
