@@ -537,5 +537,12 @@
     "sector": "XLF",
     "strong_sector": false,
     "pnl_pct": 0.08
+  },
+  {
+    "date": "2026-08-21",
+    "symbol": "PSQ",
+    "sector": "PSQ",
+    "strong_sector": false,
+    "pnl_pct": 0.53
   }
 ]
