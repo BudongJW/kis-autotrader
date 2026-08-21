@@ -39,6 +39,9 @@ LIVE_MIN_HIT_RATE = 0.53   # 실측 적중률이 이 아래면 예측을 매매�
 LIVE_MIN_SAMPLES = 20      # 이만큼 채점되기 전엔 판정 보류(표본 부족)
 
 
+MIN_HOLDOUT_AUC = 0.52     # 홀드아웃 AUC가 이 아래면 예측을 매매에 반영하지 않음
+
+
 def live_hit_rate() -> float | None:
     """전방검증 실측 적중률. 표본이 모자라면 None(판정 보류)."""
     if not LIVE_ACCURACY_PATH.exists():
@@ -51,6 +54,21 @@ def live_hit_rate() -> float | None:
     if (s.get("graded") or 0) < LIVE_MIN_SAMPLES:
         return None
     return s.get("hit_rate")
+
+
+def holdout_auc() -> float | None:
+    """최근 학습의 홀드아웃 AUC. 누수 제거 후 실측값(2026-08-03: 0.369)."""
+    if not FEATURE_IMPORTANCE_PATH.exists():
+        return None
+    try:
+        d = json.loads(FEATURE_IMPORTANCE_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    # 누수 버전(daily_warm_start)의 지표는 부풀려진 값이라 신뢰하지 않는다.
+    if str(d.get("mode", "")) == "daily_warm_start":
+        return None
+    v = d.get("auc")
+    return float(v) if isinstance(v, (int, float)) else None
 
 # 예측 임계값
 BUY_THRESHOLD = 0.55    # 상승 확률 55% 이상일 때만 매수 허용
@@ -638,12 +656,19 @@ def get_prediction_filter(client, symbol: str, history=None) -> dict:
     if predictor.model is None:
         return {"allow": True, "up_prob": 0.5, "reason": "LGBM 모델 없음 — 필터 미적용"}
 
-    # 실측 적중률이 동전던지기 수준이면 예측을 매매에 반영하지 않는다(2026-08-03).
-    # 홀드아웃 지표는 부풀려질 수 있으므로, 전방검증(live_accuracy)만 신뢰한다.
+    # 예측력이 없으면 매매에 반영하지 않는다. 두 관문 모두 통과해야 예측을 쓴다.
+    # (1) 전방검증 실측 적중률 — 가장 신뢰. 표본 20건 이상일 때만 판정.
     live = live_hit_rate()
     if live is not None and live < LIVE_MIN_HIT_RATE:
         return {"allow": True, "up_prob": 0.5,
                 "reason": f"LGBM 실측 적중률 {live:.0%} < {LIVE_MIN_HIT_RATE:.0%} — 예측 미반영"}
+    # (2) 홀드아웃 AUC — 전방검증 표본이 쌓이기 전의 방어선. 누수 제거 후 실측 0.369로
+    #     동전던지기(0.5)보다 나빴다(anti-predictive). 표본을 기다리는 동안 나쁜 예측이
+    #     계속 매수 판단에 반영되는 걸 막는다.
+    auc = holdout_auc()
+    if auc is not None and auc < MIN_HOLDOUT_AUC:
+        return {"allow": True, "up_prob": 0.5,
+                "reason": f"LGBM 홀드아웃 AUC {auc:.3f} < {MIN_HOLDOUT_AUC} — 예측력 없음, 미반영"}
 
     try:
         if history is None:

@@ -198,6 +198,23 @@ jobs:
           done
         continue-on-error: true
 
+      # 저널 기록은 이 봇의 유일한 영속 저장소다. 2026-08-08에 JOURNAL_PAT이 만료돼
+      # 체크아웃이 'Bad credentials'로 실패했는데 continue-on-error 때문에 run은 계속
+      # success로 표시됐고, **13일치 거래 기록이 조용히 유실**됐다(PSQ 44주 왕복 등).
+      # 다시는 조용히 넘어가지 않도록 여기서 명시적으로 실패시킨다.
+      - name: Verify journal write (실패를 조용히 넘기지 않음)
+        if: always()
+        run: |
+          if [ ! -d journal/.git ]; then
+            echo "::error::저널 체크아웃 실패 — JOURNAL_PAT 만료/무효 가능성. 거래기록이 저장되지 않는다."
+            exit 1
+          fi
+          if ! git -C journal log -1 --format=%H >/dev/null 2>&1; then
+            echo "::error::저널 저장소를 읽을 수 없다 — 기록 유실 위험."
+            exit 1
+          fi
+          echo "저널 정상: $(git -C journal log -1 --format='%h %ad %s' --date=short)"
+
       - name: Upload trade log
         uses: actions/upload-artifact@v4
         with:

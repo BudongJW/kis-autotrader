@@ -119,3 +119,29 @@ def test_live_hit_rate_holds_judgement_on_small_sample(tmp_path, monkeypatch):
                  encoding="utf-8")
     monkeypatch.setattr(lp, "LIVE_ACCURACY_PATH", p)
     assert lp.live_hit_rate() is None   # 표본 부족 → 판정 보류
+
+
+# ── 홀드아웃 AUC 게이트: 전방검증 표본 쌓이기 전 방어선 ──
+def test_filter_disabled_when_holdout_auc_below_coinflip(tmp_path, monkeypatch):
+    """누수 제거 후 실측 AUC 0.369(동전던지기 이하) — 그 예측을 매매에 쓰면 안 된다."""
+    import json
+    p = tmp_path / "feat.json"
+    p.write_text(json.dumps({"mode": "daily_timesplit_embargo", "auc": 0.369,
+                             "accuracy": 0.394}), encoding="utf-8")
+    monkeypatch.setattr(lp, "FEATURE_IMPORTANCE_PATH", p)
+    monkeypatch.setattr(lp, "LIVE_ACCURACY_PATH", tmp_path / "none.json")
+    assert lp.holdout_auc() == 0.369
+
+    monkeypatch.setattr(lp.LGBMPredictor, "__init__", lambda self: None)
+    monkeypatch.setattr(lp.LGBMPredictor, "model", object(), raising=False)
+    out = lp.get_prediction_filter(None, "069500")
+    assert out["up_prob"] == 0.5 and "AUC" in out["reason"]
+
+
+def test_leaky_holdout_metric_is_not_trusted(tmp_path, monkeypatch):
+    """옛 누수 버전(daily_warm_start)의 AUC 0.95는 신뢰하지 않는다(None 처리)."""
+    import json
+    p = tmp_path / "feat2.json"
+    p.write_text(json.dumps({"mode": "daily_warm_start", "auc": 0.9475}), encoding="utf-8")
+    monkeypatch.setattr(lp, "FEATURE_IMPORTANCE_PATH", p)
+    assert lp.holdout_auc() is None

@@ -42,8 +42,52 @@ jobs:
           ENVEOF
           sed -i 's/^[[:space:]]*//' .env
 
+      # 봇이 자기 포지션을 기억하려면 canonical 상태가 있어야 한다. 수동 주문 스크립트가
+      # record_buy/log_trade를 호출해도 이게 없으면 빈 상태에서 시작해 기존 보유를 잊는다.
+      - name: Restore canonical state
+        run: |
+          mkdir -p logs
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/trades.csv" \
+            -o logs/trades.csv || echo "trades.csv 없음"
+          curl -fsSL "https://raw.githubusercontent.com/BudongJW/kis-trading-journal/main/state/positions.json" \
+            -o logs/positions.json || echo "positions.json 없음"
+        continue-on-error: true
+
       - name: Run debug script
         env:
           PYTHONPATH: '.'
           PYTHONIOENCODING: 'utf-8'
         run: python -m ${{ github.event.inputs.script }}
+
+      # 수동 주문(scripts/manual_*.py, reposition_*, max_buy_*)이 낸 실제 체결이
+      # 저널에 남지 않아 장부 순수량이 어긋났다(2026-08: 069500 -5주, 114800 -449주).
+      # 이 워크플로도 거래를 낼 수 있으므로 저널에 누적한다.
+      - name: Checkout journal repo
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          repository: BudongJW/kis-trading-journal
+          token: ${{ secrets.JOURNAL_PAT }}
+          path: journal
+        continue-on-error: true
+
+      - name: Update journal (수동 주문 기록 누적)
+        if: always()
+        env:
+          PYTHONPATH: '.'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          [ -d journal/.git ] || { echo "::warning::저널 체크아웃 실패 — 수동 주문 기록 누락 위험"; exit 0; }
+          git -C journal config user.name "kis-autotrader-bot"
+          git -C journal config user.email "bot@kis-autotrader"
+          for i in 1 2 3; do
+            git -C journal fetch origin main && git -C journal reset --hard origin/main
+            python -m src.merge_trades journal/state/trades.csv logs/trades.csv || true
+            mkdir -p journal/state
+            [ -s logs/positions.json ] && cp logs/positions.json journal/state/positions.json || true
+            git -C journal add -A
+            if git -C journal diff --cached --quiet; then echo "변경 없음"; break; fi
+            git -C journal commit -m "auto: 수동 스크립트 실행 기록 (${{ github.event.inputs.script }}) $(date +'%m-%d %H:%M')"
+            if git -C journal push; then echo "푸시 완료"; break; else echo "푸시 거부 — 재시도 $i"; fi
+          done
+        continue-on-error: true
