@@ -3,7 +3,7 @@ strategies:
     short_window: 5
     long_window: 20
   volatility_breakout:
-    k: 0.65
+    k: 0.6
     trend_ma: 15
     optimized_at: '2026-08-23'
     train_sharpe: 1.02
@@ -16,15 +16,15 @@ strategies:
     backtest_return: 0.69
     backtest_mdd: -0.71
   ta_weights:
-    rsi: 0.17
-    macd: 0.17
-    bb: 0.12
-    stoch: 0.12
-    adx: 0.12
-    ma: 0.12
-    obv: 0.06
-    mfi: 0.06
-    atr: 0.06
+    rsi: 0.049
+    macd: 0.174
+    bb: 0.069
+    stoch: 0.127
+    adx: 0.105
+    ma: 0.174
+    obv: 0.162
+    mfi: 0.069
+    atr: 0.069
 day_plan:
   force_stance: RISK_ON
 costs:
@@ -74,8 +74,23 @@ morning_momentum:
   breakeven_giveback_ratio: 0.5
 universe:
   default:
-  - symbol: '143850'
-    name: TIGER 미국S&P500
+  - symbol: '395160'
+    name: KODEX 미국나스닥100TR
+  - symbol: 005930
+    name: 삼성전자
+    type: stock
+  - symbol: '000660'
+    name: SK하이닉스
+    type: stock
+  - symbol: '034220'
+    name: LG디스플레이
+    type: stock
+  - symbol: '010140'
+    name: 삼성중공업
+    type: stock
+  - symbol: '011200'
+    name: HMM
+    type: stock
   inverse:
   - symbol: '114800'
     name: KODEX 인버스
@@ -288,32 +303,44 @@ risk:
   - KOSDAQ150
   - 나스닥
 market_regime:
-  trend: sideways
+  trend: down
   volatility: low
-  trend_score: 0.021
-  vol_percentile: 12.0
-  analyzed_at: '2026-08-23'
-market_confidence: 0.152
+  trend_score: -0.384
+  vol_percentile: 2.0
+  analyzed_at: 2026-08-24 08:41
+  hmm_state: sideways
+  hmm_confidence: 1.0
+  hmm_transition:
+    bear: 0.016129032258061525
+    bull: 2.7625757937779976e-15
+    sideways: 0.9838709677419357
+market_confidence: 0.35
 strong_sectors:
 - 반도체
+- 금융
 - IT
+- KOSPI200
+- 미국나스닥
 overnight_signal:
+  nasdaq_change: 0.43
+  sp500_change: 0.43
   direction: neutral
+  strength: 0.1
+  confidence_boost: 0
   recommended_action: normal
-  nasdaq_change: 0.33
-  sp500_change: 0.48
-  strength: 0.13
-  confidence_boost: 0.0
-  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
+- symbol: '102110'
+  name: KODEX 금융
 - symbol: 098560
   name: KODEX IT
+- symbol: 069500
+  name: KODEX KOSPI200
 adaptive_allocation:
   etf: 1.0
-  win_rate: 0.57
-  trades: 75
+  win_rate: 0.58
+  trades: 77
 sector_momentum_effective: false
 eod_liquidation_exempt:
 - 069500
