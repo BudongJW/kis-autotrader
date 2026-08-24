@@ -1,23 +1,24 @@
 {
-  "trained_at": "2026-08-24T17:01:41.162099",
+  "trained_at": "2026-08-25T06:53:04.392243",
   "mode": "daily_timesplit_embargo",
   "accuracy": 0.6333,
-  "auc": 0.366,
-  "n_samples": 180,
-  "n_train": 120,
+  "auc": 0.5,
+  "n_samples": 177,
+  "n_train": 117,
   "n_valid": 27,
   "n_test": 30,
   "embargo_days": 2,
   "feature_importance": {
-    "vol_trend_5d": 14.85,
-    "vol_ma20_ratio": 8.19,
-    "momentum_accel_3d": 8.08,
-    "ret_1d": 8.05,
+    "price_position_20d": 10.33,
+    "obv_slope_10": 9.79,
+    "vol_trend_5d": 8.29,
+    "vol_20d": 8.13,
+    "vol_ma20_ratio": 6.59,
+    "ret_1d": 0.0,
     "ret_3d": 0.0,
     "ret_5d": 0.0,
     "ret_10d": 0.0,
     "vol_5d": 0.0,
-    "vol_20d": 0.0,
     "vol_ratio": 0.0,
     "rsi_14": 0.0,
     "macd": 0.0,
@@ -27,7 +28,6 @@
     "bb_width": 0.0,
     "stoch_k": 0.0,
     "stoch_d": 0.0,
-    "adx": 0.0,
-    "di_plus": 0.0
+    "adx": 0.0
   }
 }
