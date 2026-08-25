@@ -324,12 +324,13 @@ strong_sectors:
 - KOSPI200
 - 미국나스닥
 overnight_signal:
-  nasdaq_change: -0.76
-  sp500_change: -0.28
-  direction: bearish
-  strength: 0.19
-  confidence_boost: -0.023
-  recommended_action: reduce_size
+  direction: neutral
+  recommended_action: normal
+  nasdaq_change: 0.69
+  sp500_change: 0.32
+  strength: 0.17
+  confidence_boost: 0.0
+  source: us_post_learning
 dynamic_universe:
 - symbol: 091160
   name: KODEX 반도체
