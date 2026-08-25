@@ -790,5 +790,24 @@
       "미국나스닥"
     ],
     "k_value": 0.66
+  },
+  {
+    "date": "2026-08-26",
+    "regime_trend": "down",
+    "regime_volatility": "low",
+    "trend_score": -0.388,
+    "vol_percentile": 12.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.9993000200623091,
+    "breadth": "weak",
+    "kospi_5d": -1.29,
+    "kosdaq_5d": -2.16,
+    "confidence": 0.23096,
+    "strong_sectors": [
+      "2차전지",
+      "IT",
+      "철강"
+    ],
+    "k_value": 0.61
   }
 ]
