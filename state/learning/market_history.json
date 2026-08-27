@@ -809,5 +809,27 @@
       "철강"
     ],
     "k_value": 0.61
+  },
+  {
+    "date": "2026-08-27",
+    "regime_trend": "down",
+    "regime_volatility": "low",
+    "trend_score": -0.376,
+    "vol_percentile": 4.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 1.0,
+    "breadth": "mixed",
+    "kospi_5d": -0.56,
+    "kosdaq_5d": 4.2,
+    "confidence": 0.37,
+    "strong_sectors": [
+      "반도체",
+      "2차전지",
+      "바이오",
+      "IT",
+      "철강",
+      "KOSDAQ150"
+    ],
+    "k_value": 0.56
   }
 ]
