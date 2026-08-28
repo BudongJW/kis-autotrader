@@ -831,5 +831,29 @@
       "KOSDAQ150"
     ],
     "k_value": 0.56
+  },
+  {
+    "date": "2026-08-28",
+    "regime_trend": "down",
+    "regime_volatility": "low",
+    "trend_score": -0.367,
+    "vol_percentile": 2.0,
+    "hmm_state": "sideways",
+    "hmm_confidence": 0.689223953420125,
+    "breadth": "strong",
+    "kospi_5d": 1.12,
+    "kosdaq_5d": 2.84,
+    "confidence": 0.6838,
+    "strong_sectors": [
+      "반도체",
+      "2차전지",
+      "금융",
+      "IT",
+      "철강",
+      "KOSPI200",
+      "KOSDAQ150",
+      "미국나스닥"
+    ],
+    "k_value": 0.51
   }
 ]
