@@ -1,13 +1,8 @@
 name: Market Learning
 
 on:
-  schedule:
-    # 장 전 학습: 08:30 KST (= 23:30 전날 UTC)
-    - cron: '30 23 * * 0-4'
-    # 장 후 학습 (한국): 16:00 KST (= 07:00 UTC) — 한국장 종료 후
-    - cron: '0 7 * * 1-5'
-    # 장 후 학습 (미국): 06:30 KST (= 21:30 전날 UTC) — 미국장 종료 후
-    - cron: '30 21 * * 1-5'
+  # 운영 중지(2026-08-28, 사용자 지시): 자동 실행 스케줄 제거.
+  # workflow_dispatch는 남겨둬 필요 시 수동 실행 가능.
   workflow_dispatch:
     inputs:
       phase:

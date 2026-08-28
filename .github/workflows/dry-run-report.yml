@@ -4,11 +4,8 @@ name: Dry-Run Report
 # 매매 변경 전후로 수동 실행해 행동 차이를 검증한다. 주문 함수는 호출하지 않음.
 on:
   workflow_dispatch:
-  schedule:
-    # 세션 직전 자동 프리뷰(대시보드용). UTC 기준.
-    - cron: '50 23 * * 0-4'   # KR 개장 전 08:50 KST (월~금)
-    - cron: '20 13 * * 1-5'   # US 개장 전 22:20 KST (월~금)
-
+  # 운영 중지(2026-08-28, 사용자 지시): 자동 실행 스케줄 제거.
+  # workflow_dispatch는 남겨둬 필요 시 수동 실행 가능.
 # autotrader/us-night과 별도 그룹 — 매매 워크플로를 방해하지 않음
 concurrency:
   group: dry-run-report

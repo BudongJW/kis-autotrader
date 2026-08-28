@@ -1,10 +1,8 @@
 name: Weekly Optimize
 
 on:
-  schedule:
-    # 매주 일요일 10:00 KST (= 일요일 01:00 UTC)
-    # cron의 요일 0 = 일요일. UTC 01:00 + 9h = 같은 날 KST 10:00 (날짜 안 넘어감)
-    - cron: '0 1 * * 0'
+  # 운영 중지(2026-08-28, 사용자 지시): 자동 실행 스케줄 제거.
+  # workflow_dispatch는 남겨둬 필요 시 수동 실행 가능.
   workflow_dispatch:
 
 env:
