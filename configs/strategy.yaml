@@ -26,7 +26,9 @@ strategies:
     mfi: 0.069
     atr: 0.069
 day_plan:
-  force_stance: RISK_ON
+  # 사용자 지시(2026-08-28): 전량 청산 후 운영 중지.
+  # RISK_OFF = budget_pct 0.0, max_new_positions 0, allow_long False, size_mult 0.0
+  force_stance: RISK_OFF
 costs:
   kr_fee_pct: 0.00015
   kr_tax_pct: 0.0023
@@ -44,7 +46,7 @@ gap_recovery:
   size_factor: 0.4
   hard_stop_pct: 0.03
   max_krw: 300000
-kr_eod_liquidation: selective
+kr_eod_liquidation: all
 morning_momentum:
   enabled: true
   window_start_kst: 09:00
@@ -119,7 +121,7 @@ universe:
   - symbol: '132030'
     name: KODEX 골드선물(H)
 leveraged:
-  enabled: true
+  enabled: false
   dry_run: true
   min_hmm_confidence: 0.7
   hard_stop_pct: 0.04
@@ -167,7 +169,7 @@ us_momentum:
   inverse_exchange: AMEX
   position_usd: 300
   session_exit_min_before: 15
-  entry_window_min: 180
+  entry_window_min: 0   # 청산 국면 — 신규 진입 차단(청산·손절은 계속 동작)
   breakeven_min_exit_pct: 0.007
   breakeven_giveback_ratio: 0.5
 bear_strategy:
@@ -261,18 +263,18 @@ us_session:
     fill_poll_sec: 1.5
     quote_lag_min: 0
     block_scalp_on_stale: true
-  eod_hold_winners: true
+  eod_hold_winners: false   # 청산 국면 — winner도 들고 가지 않는다
   summer_time: true
-  max_positions: 3
+  max_positions: 0   # 청산 국면 — 신규 진입 차단
   budget_pct: 0.4
   regime_linked: true
 risk:
   min_position_krw: 300000
-  max_position_weight: 1.0
-  conviction_strong_weight: 1.0
-  conviction_mid_weight: 1.0
-  conviction_weak_weight: 1.0
-  max_concurrent_positions: 1
+  max_position_weight: 0.35
+  conviction_strong_weight: 0.35
+  conviction_mid_weight: 0.22
+  conviction_weak_weight: 0.12
+  max_concurrent_positions: 5
   stop_loss_pct: 0.03
   take_profit_pct: 0.05
   daily_loss_limit_pct: 0.05
