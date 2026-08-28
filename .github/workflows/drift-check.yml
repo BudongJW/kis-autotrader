@@ -5,8 +5,8 @@ name: Drift Detection
 # Sharpe 괴리 > 30%면 ledger 이벤트 + 텔레그램 알람.
 
 on:
-  schedule:
-    - cron: '30 1 * * 0'   # Sun 01:30 UTC = Sun 10:30 KST
+  # 운영 중지(2026-08-28, 사용자 지시): 자동 실행 스케줄 제거.
+  # workflow_dispatch는 남겨둬 필요 시 수동 실행 가능.
   workflow_dispatch:
 
 env:

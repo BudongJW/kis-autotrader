@@ -1,9 +1,8 @@
 name: Update Investment Journal
 
 on:
-  schedule:
-    # 매일 16:10 KST (= 07:10 UTC) — 장 마감 후 일일 노트 생성
-    - cron: '10 7 * * 1-5'
+  # 운영 중지(2026-08-28, 사용자 지시): 자동 실행 스케줄 제거.
+  # workflow_dispatch는 남겨둬 필요 시 수동 실행 가능.
   workflow_dispatch:
 
 env:

@@ -446,3 +446,43 @@ Artifact kis-token-cache has been successfully uploaded! Final size is 510 bytes
 이미 업로드된 artifact가 retention 기간(1일) 동안 남아 있다. 노출 창을 닫으려면
 **KIS 앱키·앱시크릿 재발급**을 검토할 것. 액세스 토큰 자체는 24시간이면 만료되지만,
 그 사이 발급된 토큰으로 주문이 가능했다.
+
+---
+
+## 7. 운영 중지 (2026-08-28)
+
+사용자 지시로 실거래 운영을 종료했다. 계좌는 청산·이체 완료.
+
+### 중지 방식
+
+`schedule:` 트리거만 제거했다. `workflow_dispatch`는 남겨뒀다 — 나중에 재개하거나
+수동으로 한 번 돌려볼 여지를 남기기 위해서다. `tests.yml`은 계좌를 건드리지 않는
+CI라 그대로 뒀다.
+
+| 워크플로 | 제거한 cron |
+|---|---|
+| autotrader.yml | 5 |
+| us-night-trader.yml | 4 |
+| market-learn.yml | 3 |
+| dry-run-report.yml | 2 |
+| daily-report.yml / drift-check.yml / journal.yml / optimize.yml | 각 1 |
+
+앞서 머지한 청산 설정(`4f18f42`)도 그대로 남아 있다 — `force_stance: RISK_OFF`,
+`us_session.max_positions: 0`, `us_momentum.entry_window_min: 0`. 즉 누군가
+실수로 수동 실행해도 신규 매수는 나가지 않는다. 이중 안전장치다.
+
+### 재개하려면
+
+1. 각 워크플로의 `schedule:` 블록 복원 (이 커밋 revert)
+2. `configs/strategy.yaml`의 `day_plan.force_stance`를 `null`로
+3. `us_session.max_positions`, `us_momentum.entry_window_min` 원복
+4. **KIS 앱키·앱시크릿 재발급 권장** — §6의 public artifact 노출 건이 있다
+
+### 미해결로 남긴 것
+
+- **자산 계산 불일치.** 봇은 마지막 run에서 총자산 809,449원(원화 26,971 + 외화
+  환산 782,478)으로 보고했는데, 앱에서는 국내·해외 보유 모두 0개였다. 외화
+  예수금을 끝내 확인하지 못한 채 종료했다. `get_us_assets_krw()`가 읽는
+  `ovrs_ord_psbl_amt`가 실보유 달러가 맞는지 재검증이 필요하다 — 통합증거금
+  여력을 실보유로 오인했다면 한 달간 포지션 사이징의 분모가 틀렸다는 뜻이다.
+- §5의 슬리피지 계통 오차(-0.96% 2일 연속), US 매도 실체결가 미기록도 그대로다.
