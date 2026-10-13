@@ -1,0 +1,51 @@
+name: Public Guard
+
+# 공개 저장소 안전 가드 — 금지 경로(.env·DB·로그·실거래 기록 등)와 비밀값 패턴을 검사한다.
+# 모든 브랜치 push와 PR에서 실행 (공개 저장소는 모든 브랜치가 공개다). 기준: docs/DATA_POLICY.md
+# push 후 검사라 노출 자체를 막지는 못한다 → 로컬 pre-commit 훅과 GitHub Push protection을 함께 쓴다.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Seoul   # 저장소 규칙 (tests/test_timezone_safety.py)
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check public safety
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            BASE="$PR_BASE"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            BASE="$BEFORE"
+          else
+            BASE=""   # 새 브랜치·강제 푸시·수동 실행 → 전체 감사
+          fi
+          if [ -n "$BASE" ]; then
+            python scripts/check_public_safety.py --base "$BASE"
+          else
+            python scripts/check_public_safety.py --all
+          fi
