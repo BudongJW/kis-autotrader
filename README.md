@@ -117,6 +117,14 @@ python -m src.bot.runner --strategy golden_cross --symbol 005930 --live
 pytest tests/
 ```
 
+## 🔒 공개 저장소 안전 가드
+이 저장소는 공개다. 실거래 기록·로그·학습 상태·비밀값은 커밋하지 않는다 ([docs/DATA_POLICY.md](docs/DATA_POLICY.md)).
+클론한 뒤 한 번 pre-commit 훅을 켠다 — 금지 경로나 비밀값 패턴이 있으면 커밋이 막힌다.
+```bash
+git config core.hooksPath .githooks
+python scripts/check_public_safety.py --all   # 전체 감사 (CI: .github/workflows/public-guard.yml)
+```
+
 ## 📚 참고 문서
 
 프로젝트 내부:

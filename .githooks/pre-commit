@@ -1,0 +1,9 @@
+#!/bin/sh
+# 공개 저장소 가드 — 커밋 대기 변경분에 금지 경로·비밀값이 있으면 커밋을 막는다.
+# 설치(클론마다 1회): git config core.hooksPath .githooks
+# 기준: docs/DATA_POLICY.md
+PY=$(command -v python3 || command -v python) || {
+    echo "pre-commit: python을 찾을 수 없어 공개 저장소 가드를 실행하지 못했다." >&2
+    exit 1
+}
+exec "$PY" scripts/check_public_safety.py --staged

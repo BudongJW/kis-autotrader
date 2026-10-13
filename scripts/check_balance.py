@@ -9,7 +9,7 @@ def main() -> None:
     client = KISClient()
 
     print("=" * 60)
-    print("KIS 잔고 조회 (44609714-01)")
+    print("KIS 잔고 조회")
     print("=" * 60)
 
     resp = client.get_balance()
