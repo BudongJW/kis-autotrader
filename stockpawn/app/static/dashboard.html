@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockPawn 운영 대시보드</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e4e7ec;
+    --accent: #2f5bea; --ok: #12805c; --warn: #b54708; --bad: #c01048; --chip: #eef2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11141a; --panel: #1a1e26; --text: #e6e8ec; --muted: #98a2b3; --line: #2b313c;
+      --accent: #7b9cff; --ok: #3ccb8f; --warn: #f5a524; --bad: #ff6b8b; --chip: #242a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 14px 16px;
+           border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 17px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card .label { color: var(--muted); font-size: 12px; }
+  .card .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.num, th.num { text-align: right; }
+  tr.click { cursor: pointer; } tr.click:hover { background: var(--chip); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--chip); }
+  .s-NORMAL { color: var(--ok); } .s-MARGIN_CALL { color: var(--warn); }
+  .s-LIQUIDATION_PENDING, .s-LIQUIDATING { color: var(--bad); } .s-CLOSED { color: var(--muted); }
+  form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--panel); color: var(--text); }
+  input { width: 120px; }
+  button { cursor: pointer; } button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .muted { color: var(--muted); } .err { color: var(--bad); }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+  .empty { color: var(--muted); padding: 8px 0; }
+  #detailBody h2 { margin-top: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>StockPawn 운영 대시보드</h1>
+  <span class="meta" id="asof">불러오는 중…</span>
+  <span class="spacer"></span>
+  <form class="inline" id="keyForm">
+    <input id="apiKey" type="password" placeholder="API 키(설정 시)" autocomplete="off">
+    <button type="submit">적용</button>
+    <button type="button" id="refresh" class="primary">새로고침</button>
+  </form>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+  <p class="err" id="error" hidden></p>
+
+  <div class="grid2">
+    <section><h2>상태별 현황</h2><div class="scroll"><table id="byStatus"></table></div></section>
+    <section><h2>담보비율 위험 구간 (미종결)</h2><div class="scroll"><table id="bands"></table></div></section>
+  </div>
+
+  <section><h2>위험 대출 (마진콜·처분)</h2><div class="scroll"><table id="atRisk"></table></div></section>
+  <section><h2>만기 임박·경과 (D-7 이내)</h2><div class="scroll"><table id="upcoming"></table></div></section>
+  <section><h2>전체 대출</h2><div class="scroll"><table id="loans"></table></div></section>
+
+  <div class="grid2">
+    <section>
+      <h2>담보평가 조회</h2>
+      <form class="inline" id="valForm">
+        <input id="valCode" placeholder="종목코드" maxlength="6" required>
+        <input id="valQty" type="number" min="1" placeholder="수량" required>
+        <button class="primary" type="submit">평가</button>
+      </form>
+      <div id="valResult" class="scroll" style="margin-top:10px"></div>
+    </section>
+    <section>
+      <h2>수동 실행 (운영자·테스트)</h2>
+      <form class="inline">
+        <button type="button" data-run="/admin/run-interest">이자 적립</button>
+        <button type="button" data-run="/admin/run-valuation">담보비율 평가</button>
+        <button type="button" data-run="/admin/run-valuation?refresh_tiers=true">평가+등급 재산정</button>
+        <button type="button" data-run="/admin/run-liquidation">처분 주문 실행</button>
+      </form>
+      <pre id="runResult" class="muted" style="margin-top:10px"></pre>
+    </section>
+  </div>
+
+  <section id="detail" hidden><h2 id="detailTitle">대출 상세</h2><div id="detailBody" class="scroll"></div></section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let apiKey = "";
+  try { apiKey = sessionStorage.getItem("stockpawn.apiKey") || ""; } catch (_) {}
+  $("apiKey").value = apiKey;
+
+  const won = (v) => v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString("ko-KR") + "원";
+  const pct = (v) => v === null || v === undefined ? "–" : (Number(v) * 100).toFixed(1) + "%";
+  const STATUS_KO = { NORMAL: "정상", MARGIN_CALL: "마진콜", LIQUIDATION_PENDING: "처분대기",
+                      LIQUIDATING: "처분중", CLOSED: "종결" };
+
+  async function api(path, opts = {}) {
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers["X-API-Key"] = apiKey;
+    const res = await fetch(path, { ...opts, headers });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const reasons = Array.isArray(body.reasons) && body.reasons.length ? " — " + body.reasons.join(", ") : "";
+      throw new Error((typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail)) + reasons);
+    }
+    return body;
+  }
+
+  function el(tag, text, cls) {
+    const e = document.createElement(tag);
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  function renderTable(table, cols, rows, onClick) {
+    table.replaceChildren();
+    if (!rows.length) { const tr = el("tr"); const td = el("td", "없음", "empty"); td.colSpan = cols.length; tr.append(td); table.append(tr); return; }
+    const head = el("tr");
+    cols.forEach((c) => head.append(el("th", c.label, c.num ? "num" : "")));
+    table.append(head);
+    rows.forEach((r) => {
+      const tr = el("tr", null, onClick ? "click" : "");
+      cols.forEach((c) => {
+        const td = el("td", null, c.num ? "num" : "");
+        const v = c.get(r);
+        if (v instanceof Node) td.append(v); else td.textContent = v;
+        tr.append(td);
+      });
+      if (onClick) tr.addEventListener("click", () => onClick(r));
+      table.append(tr);
+    });
+  }
+
+  const statusChip = (s) => el("span", STATUS_KO[s] || s, "chip s-" + s);
+
+  async function load() {
+    $("error").hidden = true;
+    try {
+      const [d, loans] = await Promise.all([api("/dashboard"), api("/loans")]);
+      $("asof").textContent = `기준 ${d.as_of.slice(0, 16).replace("T", " ")} · 연 ${pct(d.params.annual_rate)} 단리 · ` +
+        `유지 ${pct(d.params.maintenance_ratio)} / 처분 ${pct(d.params.liquidation_ratio)} · broker=${d.params.broker}`;
+      const t = d.totals;
+      const cards = [
+        ["대출 잔액", won(t.outstanding_principal)], ["미수이자", won(t.accrued_interest)],
+        ["누적 이자수입", won(t.interest_collected)], ["누적 실행액", won(t.principal_disbursed)],
+        ["잉여금 반환", won(t.surplus_returned)], ["미수채권(부족분)", won(t.shortfall)],
+      ];
+      $("cards").replaceChildren(...cards.map(([k, v]) => {
+        const c = el("div", null, "card"); c.append(el("div", k, "label"), el("div", v, "value")); return c;
+      }));
+      renderTable($("byStatus"), [
+        { label: "상태", get: (r) => statusChip(r[0]) }, { label: "건수", num: true, get: (r) => r[1].count },
+        { label: "원금 잔액", num: true, get: (r) => won(r[1].outstanding_principal) },
+        { label: "미수이자", num: true, get: (r) => won(r[1].accrued_interest) },
+      ], Object.entries(d.by_status));
+      renderTable($("bands"), [
+        { label: "담보비율", get: (r) => r[0] }, { label: "건수", num: true, get: (r) => r[1].count },
+        { label: "원금 잔액", num: true, get: (r) => won(r[1].outstanding_principal) },
+      ], Object.entries(d.risk_bands));
+      const riskCols = [
+        { label: "#", get: (r) => r.loan_id }, { label: "차주", get: (r) => r.borrower },
+        { label: "상태", get: (r) => statusChip(r.status) }, { label: "담보비율", num: true, get: (r) => pct(r.ratio) },
+        { label: "원금 잔액", num: true, get: (r) => won(r.outstanding_principal) },
+        { label: "마진콜 만료", get: (r) => r.margin_call_deadline || "–" },
+        { label: "만기", get: (r) => r.maturity_date }, { label: "처분 사유", get: (r) => r.liquidation_reasons.join(", ") || "–" },
+      ];
+      renderTable($("atRisk"), riskCols, d.at_risk, (r) => showDetail(r.loan_id));
+      renderTable($("upcoming"), riskCols, d.upcoming_maturities, (r) => showDetail(r.loan_id));
+      renderTable($("loans"), [
+        { label: "#", get: (r) => r.id }, { label: "상태", get: (r) => statusChip(r.status) },
+        { label: "원금", num: true, get: (r) => won(r.principal) },
+        { label: "원금 잔액", num: true, get: (r) => won(r.outstanding_principal) },
+        { label: "미수이자", num: true, get: (r) => won(r.accrued_interest) },
+        { label: "담보비율", num: true, get: (r) => pct(r.last_ratio) },
+        { label: "실행일", get: (r) => r.start_date }, { label: "만기", get: (r) => r.maturity_date },
+      ], loans.slice().reverse(), (r) => showDetail(r.id));
+    } catch (e) {
+      $("error").textContent = "불러오기 실패: " + e.message; $("error").hidden = false;
+    }
+  }
+
+  async function showDetail(id) {
+    try {
+      const l = await api(`/loans/${id}`);
+      $("detailTitle").textContent = `대출 #${l.id} · ${l.borrower_name}`;
+      const body = $("detailBody"); body.replaceChildren();
+      const summary = el("table");
+      renderTable(summary, [{ label: "항목", get: (r) => r[0] }, { label: "값", get: (r) => r[1] }], [
+        ["상태", STATUS_KO[l.status] || l.status], ["원금 / 잔액", `${won(l.principal)} / ${won(l.outstanding_principal)}`],
+        ["미수이자", won(l.accrued_interest)], ["오늘 완제 금액", won(l.payoff_today)],
+        ["담보비율", pct(l.last_ratio)], ["기간", `${l.start_date} ~ ${l.maturity_date}`],
+        ["실효 연이율", pct(l.interest.effective_annual_rate)], ["수납 이자", won(l.repaid_interest)],
+        ["잉여금 반환 / 미수채권", `${won(l.surplus_returned)} / ${won(l.shortfall)}`],
+      ]);
+      const coll = el("table");
+      renderTable(coll, [
+        { label: "종목", get: (r) => r.stock_code }, { label: "질권", num: true, get: (r) => r.qty },
+        { label: "유지", num: true, get: (r) => r.active_qty }, { label: "처분", num: true, get: (r) => r.liquidated_qty },
+        { label: "해제", num: true, get: (r) => r.released_qty }, { label: "설정가", num: true, get: (r) => won(r.pledge_price) },
+      ], l.collaterals);
+      const events = el("table");
+      renderTable(events, [
+        { label: "시각", get: (r) => r.ts.slice(0, 16).replace("T", " ") }, { label: "이벤트", get: (r) => r.type },
+        { label: "내용", get: (r) => r.payload.message || JSON.stringify(r.payload) },
+      ], l.events.slice().reverse());
+      body.append(summary, el("h2", "담보"), coll, el("h2", "이벤트"), events);
+      $("detail").hidden = false; $("detail").scrollIntoView({ behavior: "smooth" });
+    } catch (e) {
+      $("error").textContent = "상세 조회 실패: " + e.message; $("error").hidden = false;
+    }
+  }
+
+  $("keyForm").addEventListener("submit", (ev) => {
+    ev.preventDefault(); apiKey = $("apiKey").value.trim();
+    try { sessionStorage.setItem("stockpawn.apiKey", apiKey); } catch (_) {}
+    load();
+  });
+  $("refresh").addEventListener("click", load);
+
+  $("valForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const out = $("valResult"); out.replaceChildren(el("span", "평가 중…", "muted"));
+    try {
+      const v = await api("/valuations", { method: "POST",
+        body: JSON.stringify({ code: $("valCode").value.trim().toUpperCase(), qty: Number($("valQty").value) }) });
+      const t = el("table");
+      renderTable(t, [{ label: "항목", get: (r) => r[0] }, { label: "값", get: (r) => r[1] }], [
+        ["종목", `${v.name} (${v.code})`], ["등급 / LTV", `${v.tier} / ${pct(v.ltv)}`], ["종가", won(v.price)],
+        ["시가 평가액", won(v.raw_value)], ["유동성 한도", won(v.liquidity_cap)], ["변동성 σ", pct(v.volatility)],
+        ["헤어컷", pct(v.haircut)], ["담보평가액", won(v.collateral_value)], ["최대대출금", won(v.max_loan)],
+      ]);
+      const reasons = el("ul"); v.reasons.forEach((r) => reasons.append(el("li", r)));
+      out.replaceChildren(t, reasons);
+    } catch (e) { out.replaceChildren(el("span", e.message, "err")); }
+  });
+
+  document.querySelectorAll("[data-run]").forEach((b) => b.addEventListener("click", async () => {
+    $("runResult").textContent = "실행 중…";
+    try { $("runResult").textContent = JSON.stringify(await api(b.dataset.run, { method: "POST" }), null, 2); load(); }
+    catch (e) { $("runResult").textContent = "실패: " + e.message; }
+  }));
+
+  load();
+})();
+</script>
+</body>
+</html>

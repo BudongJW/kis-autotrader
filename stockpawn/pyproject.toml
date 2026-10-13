@@ -1,0 +1,51 @@
+[project]
+name = "stockpawn"
+version = "0.1.0"
+description = "주식 담보대출(주식 전당포) 백오피스 MVP — 담보평가·이자·담보비율 모니터링·처분 자동화"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "BudongJW" }]
+license = { text = "Proprietary" }
+
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "sqlmodel>=0.0.16",
+    "apscheduler>=3.10,<4",   # 4.x는 API가 완전히 다름
+    "pykrx>=1.0.45",
+]
+
+[project.optional-dependencies]
+# 미래 휴장일(음력 공휴일·대체공휴일) 판정 — 마진콜 유예 만료일 계산 정확도용
+calendar = ["exchange_calendars>=4.5"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = "test_*.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "scripts", "factories"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]

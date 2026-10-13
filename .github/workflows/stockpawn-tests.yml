@@ -1,0 +1,47 @@
+name: StockPawn Tests
+
+# stockpawn/ 하위 프로젝트(주식 담보대출 백오피스) 전용. 루트 tests.yml과 독립.
+# 이자·평가·리스크·처분 계산은 스펙 수치가 박힌 회귀 테스트로 보호한다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'stockpawn/**'
+      - '.github/workflows/stockpawn-tests.yml'
+  pull_request:
+    paths:
+      - 'stockpawn/**'
+      - '.github/workflows/stockpawn-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: stockpawn
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: stockpawn/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]" ruff
+
+      - name: Lint
+        run: ruff check app tests scripts
+
+      - name: Test
+        env:
+          PYTHONIOENCODING: 'utf-8'
+        run: pytest -q
+
+      - name: Replay demo
+        run: python -m scripts.simulate --demo --days 30

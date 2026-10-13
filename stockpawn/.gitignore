@@ -1,0 +1,4 @@
+# 루트 .gitignore가 *.html(백테스트 산출물)을 무시하므로 대시보드는 예외로 추적
+!app/static/*.html
+data/
+*.db
